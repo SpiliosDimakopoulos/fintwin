@@ -77,6 +77,30 @@ PRESETS: dict[str, dict[str, Any]] = {
         "desc": "Inventory +30 days, costs +3pp, sales -5%.",
         "knobs": {"dio_days": 30, "cost_pp": 3.0, "cost_duration": 4, "sales_depth": 0.05},
     },
+    # Calibrated to 2008-09 data from FRED, with quarter 0 = 2008Q4 (the quarter after Lehman):
+    # - sales: total business sales (TOTBUSSMSA, nominal like reported revenue) fell 20.3% from 2008Q2 to
+    #   2009Q2 and were back at the old peak in 2011Q3; 3 quarters at the trough and 7 to recover is the
+    #   least-squares fit of build_scenario's sales path to that drop at a 20% depth.
+    # - spreads: Moody's Baa minus 10-year Treasury (BAA10Y) went from 1.63% (2007H1 average) to 5.58%
+    #   (2008Q4 average), about +400bp, and stayed above half that widening for 3 quarters (2008Q4-2009Q2).
+    # - refi_freeze: the two loan-officer surveys after Lehman (Oct 2008, Jan 2009) had a net 84% and 64%
+    #   of banks tightening C&I standards (DRTSCILM); by Apr 2009 it was 40%.
+    # - rate_bp: the 3-month bill (TB3MS) fell 500bp, from 5.03% (Feb 2007) to 0.03% (Dec 2008). -300bp is
+    #   the lowest value the dashboard slider allows.
+    # Input costs fell in 2008-09 (PPIACO -15% from 2008Q3 to 2009Q1), so there is no cost shock.
+    "gfc_2008": {
+        "label": "Financial crisis (2008)",
+        "desc": "2008-09 style: revenue -20%, spreads +400bp, debt markets shut 2 quarters, rates -300bp.",
+        "knobs": {
+            "sales_depth": 0.2,
+            "sales_duration": 3,
+            "sales_recovery": 7,
+            "spread_bp": 400,
+            "spread_duration": 3,
+            "refi_freeze": 2,
+            "rate_bp": -300,
+        },
+    },
 }
 
 DEFAULT_LEVERS = {
