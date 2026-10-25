@@ -27,6 +27,8 @@ dev = [
     "ruff>=0.17.1",
     "mypy>=2.4.0",
     "pytest-cov>=7.1.0",
+    "fastapi>=0.110",
+    "httpx2>=2.0.0",
 ]
 
 [build-system]

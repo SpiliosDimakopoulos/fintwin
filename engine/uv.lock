@@ -668,6 +668,8 @@ api = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "fastapi" },
+    { name = "httpx2" },
     { name = "hypothesis" },
     { name = "lxml" },
     { name = "matplotlib" },
@@ -693,6 +695,8 @@ provides-extras = ["api", "ai"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "fastapi", specifier = ">=0.110" },
+    { name = "httpx2", specifier = ">=2.0.0" },
     { name = "hypothesis", specifier = ">=6.100" },
     { name = "lxml", specifier = ">=6.1.3" },
     { name = "matplotlib", specifier = ">=3.8" },

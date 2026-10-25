@@ -9,6 +9,7 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -21,6 +22,7 @@ load_dotenv(ROOT / ".env")
 
 _MIN_INTERVAL = 0.15  # seconds between requests (< 10 req/s)
 _last_request = 0.0
+_REQUEST_LOCK = threading.Lock()
 
 
 def _user_agent() -> str:
@@ -39,20 +41,20 @@ def _get_json(url: str, cache_name: str, max_age_hours: float) -> dict:
 
     global _last_request
     for attempt in range(4):  # transient network errors, SEC throttling (429) and 5xx are retried with backoff
-        wait = _MIN_INTERVAL - (time.time() - _last_request)
-        if wait > 0:
-            time.sleep(wait)
         try:
-            resp = requests.get(
-                url, headers={"User-Agent": _user_agent(), "Accept-Encoding": "gzip, deflate"}, timeout=60
-            )
+            with _REQUEST_LOCK:
+                wait = _MIN_INTERVAL - (time.monotonic() - _last_request)
+                if wait > 0:
+                    time.sleep(wait)
+                _last_request = time.monotonic()
+                resp = requests.get(
+                    url, headers={"User-Agent": _user_agent(), "Accept-Encoding": "gzip, deflate"}, timeout=60
+                )
         except (requests.ConnectionError, requests.Timeout):
             if attempt == 3:
                 raise
             time.sleep(5 * 2**attempt)
             continue
-        finally:
-            _last_request = time.time()
         if (resp.status_code == 429 or resp.status_code >= 500) and attempt < 3:
             time.sleep(5 * 2**attempt)
             continue
