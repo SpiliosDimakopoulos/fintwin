@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 340
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - run: uv sync && uv run python scripts/data_audit.py
       - uses: actions/upload-artifact@v4
@@ -35,7 +35,7 @@ jobs:
       matrix: { i: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - uses: actions/cache/restore@v4
         with:
@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - uses: actions/download-artifact@v4
         with: { pattern: "sobol-*", merge-multiple: true, path: engine/.cache/sobol }
@@ -71,7 +71,7 @@ jobs:
       matrix: { i: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       # each shard always gets the same companies, so it keeps its own EDGAR cache between runs
       - uses: actions/cache/restore@v4
@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - uses: actions/download-artifact@v4
         with: { pattern: "research-*", merge-multiple: true, path: engine/.cache/research }

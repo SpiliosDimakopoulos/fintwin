@@ -19,7 +19,7 @@ jobs:
     defaults: { run: { working-directory: engine } }
     outputs: { week: "${{ steps.week.outputs.week }}" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - id: week
         run: echo "week=$(date +%G-%V)" >> "$GITHUB_OUTPUT"
@@ -42,7 +42,7 @@ jobs:
       matrix: { i: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - uses: actions/cache/restore@v4
         with: { path: engine/.cache/edgar, key: "edgar-${{ needs.norms.outputs.week }}", restore-keys: "edgar-" }
@@ -70,7 +70,7 @@ jobs:
     permissions: { contents: write, actions: read }
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
       - uses: actions/cache/restore@v4
         with: { path: engine/.cache/edgar, key: "edgar-${{ needs.norms.outputs.week }}", restore-keys: "edgar-" }
