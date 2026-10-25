@@ -8,6 +8,8 @@
 ![lighthouse](https://img.shields.io/badge/lighthouse-94%20%C2%B7%20100%20%C2%B7%20100%20%C2%B7%20100-brightgreen)
 ![licence](https://img.shields.io/badge/licence-MIT-lightgrey)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23434606.svg)](https://doi.org/10.5281/zenodo.23434606)
+[![good first issues](https://img.shields.io/github/issues/SpiliosDimakopoulos/fintwin/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/SpiliosDimakopoulos/fintwin/labels/good%20first%20issue)
+[![discussions](https://img.shields.io/github/discussions/SpiliosDimakopoulos/fintwin)](https://github.com/SpiliosDimakopoulos/fintwin/discussions)
 
 **[Live dashboard](https://spiliosdimakopoulos.github.io/fintwin/)** · **[Paper (PDF)](docs/paper/fintwin.pdf)** · [Methodology](docs/METHODOLOGY.md) · [Backtest report](docs/BACKTEST.md) · [Carnival case study](docs/CASE_STUDY_CCL.md)
 
@@ -66,7 +68,7 @@ Where it fails, in the paper's own words ([docs/paper/fintwin.pdf](docs/paper/fi
 
 ```bash
 cp .env.example .env                       # SEC_USER_AGENT (required by SEC)
-cd engine && uv sync && uv run pytest -q   # 39 tests: balance-sheet identity (Hypothesis), offline XBRL end-to-end, 52/53-week calendars, point-in-time, the transmission nulls, CRPS...
+cd engine && uv sync && uv run pytest -q   # tests: balance-sheet identity (Hypothesis), offline XBRL end-to-end, 52/53-week calendars, point-in-time, the transmission nulls, CRPS...
 bash scripts/full_pipeline.sh              # validation (~30k forecasts) + all snapshots + backtests (hours; CI shards it)
 cd ../web && npm ci && npm test && npm run dev    # includes Python <-> TypeScript parity
 ```
@@ -85,5 +87,15 @@ engine/fintwin/   data/ (EDGAR, facts, FRED) · model/ (stock-and-flow core, rat
 web/src/          engine/ (TS port + parity tests) · views/ · charts/
 docs/             paper/ (LaTeX + figures, numbers generated from data) · METHODOLOGY · BACKTEST · CASE_STUDY_CCL · CV_KIT
 ```
+
+## Contributing
+
+Contributions are welcome, from a typo fix to a new stress scenario or a better test of the method.
+
+- Start with an issue labelled [`good first issue`](https://github.com/SpiliosDimakopoulos/fintwin/labels/good%20first%20issue) or [`help wanted`](https://github.com/SpiliosDimakopoulos/fintwin/labels/help%20wanted).
+- See [ROADMAP.md](ROADMAP.md) for the open research questions and [CONTRIBUTING.md](CONTRIBUTING.md) for setup and PR guidelines.
+- Questions and ideas: [Discussions](https://github.com/SpiliosDimakopoulos/fintwin/discussions).
+
+If you find FinTwin useful, a ⭐ helps others find it. To cite it, use [CITATION.cff](CITATION.cff) or the [Zenodo DOI](https://doi.org/10.5281/zenodo.23434606).
 
 *Data: SEC EDGAR XBRL, FRED. Rating table: A. Damodaran (Jan 2026). MIT licence. Not investment advice.*

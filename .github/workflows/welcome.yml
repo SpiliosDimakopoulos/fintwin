@@ -1,0 +1,16 @@
+name: welcome
+on:
+  issues: { types: [opened] }
+  pull_request_target: { types: [opened] }
+permissions: { issues: write, pull-requests: write }
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/first-interaction@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-message: |
+            Thanks for opening your first issue in FinTwin. I usually reply within a couple of days. If it's a question about the method or the paper, [Discussions](https://github.com/SpiliosDimakopoulos/fintwin/discussions) is also a good place.
+          pr-message: |
+            Thanks for your first pull request to FinTwin! CI runs once a maintainer approves it for first-time contributors. Please check the [contributing guide](https://github.com/SpiliosDimakopoulos/fintwin/blob/main/CONTRIBUTING.md), especially the note on keeping the Python and TypeScript models in sync.
