@@ -104,6 +104,9 @@ export default function App() {
               <span className="kbd">{shortcutLabel}</span>
               <IconChevron />
             </button>
+            <a className="star-btn" href="https://github.com/SpiliosDimakopoulos/fintwin" target="_blank" rel="noreferrer" aria-label="Star FinTwin on GitHub" title="Star FinTwin on GitHub">
+              <span aria-hidden="true">★</span><span className="star-label">Star</span>
+            </a>
             <button className="icon-btn" onClick={toggleTheme} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}>
               {dark ? <IconSun /> : <IconMoon />}
             </button>
