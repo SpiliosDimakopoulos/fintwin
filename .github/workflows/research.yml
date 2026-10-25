@@ -57,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { pattern: "sobol-*", merge-multiple: true, path: engine/.cache/sobol }
       - run: uv sync && uv run python -m fintwin.research sobol-stats
       - uses: actions/upload-artifact@v4
@@ -98,7 +98,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { pattern: "research-*", merge-multiple: true, path: engine/.cache/research }
       - run: uv sync && uv run python -m fintwin.research stats
       - uses: actions/upload-artifact@v4

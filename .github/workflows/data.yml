@@ -46,7 +46,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - uses: actions/cache/restore@v4
         with: { path: engine/.cache/edgar, key: "edgar-${{ needs.norms.outputs.week }}", restore-keys: "edgar-" }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: norms, path: engine/fintwin/data }
       - run: uv sync
       - name: Start from empty output folders (only this shard's files are uploaded)
@@ -74,9 +74,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - uses: actions/cache/restore@v4
         with: { path: engine/.cache/edgar, key: "edgar-${{ needs.norms.outputs.week }}", restore-keys: "edgar-" }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: norms, path: engine/fintwin/data }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { pattern: "shard-*", merge-multiple: true, path: . }
       - name: Index, calibration, backtests, goldens, analyst notes
         working-directory: engine
