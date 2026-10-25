@@ -30,7 +30,7 @@ jobs:
         run: uv run python -m fintwin.pipeline norms
       - uses: actions/cache/save@v4
         with: { path: engine/.cache/edgar, key: "edgar-${{ steps.week.outputs.week }}" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: norms, path: engine/fintwin/data/sector_norms.json }
 
   shard:
@@ -53,7 +53,7 @@ jobs:
         run: rm -rf ../web/public/data/companies ../web/public/data/timeline .cache/batch .cache/failed
       - name: Company twins, validation and time machine (shard ${{ matrix.i }})
         run: uv run python -m fintwin.pipeline shard ${{ matrix.i }} $SHARDS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: shard-${{ matrix.i }}
           include-hidden-files: true
@@ -91,7 +91,7 @@ jobs:
         run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with: { path: web/dist }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: site-data, path: web/public/data/, retention-days: 90 }
       - name: Record the refresh in the repository (small summary files only)
         run: |

@@ -26,7 +26,7 @@ jobs:
           fi
           ls .cache/research | wc -l
       - run: uv sync && uv run python -m fintwin.research stats
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: research-stats, path: docs/paper/research.json }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: research-results, include-hidden-files: true, path: engine/.cache/research/ }

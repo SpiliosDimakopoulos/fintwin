@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync && uv run python scripts/data_audit.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: data-audit, path: docs/paper/data_audit.json }
   sobol-shard:
     if: ${{ inputs.mode == 'sobol' }}
@@ -46,7 +46,7 @@ jobs:
             edgar-
       - run: uv sync
       - run: timeout 320m uv run python -m fintwin.research sobol-shard ${{ matrix.i }} 16 || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: "sobol-${{ matrix.i }}", include-hidden-files: true, path: engine/.cache/sobol/ }
   sobol-stats:
@@ -60,7 +60,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { pattern: "sobol-*", merge-multiple: true, path: engine/.cache/sobol }
       - run: uv sync && uv run python -m fintwin.research sobol-stats
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: sobol-assumptions, path: docs/paper/sobol_assumptions.json }
   shard:
     if: ${{ inputs.mode != 'audit' && inputs.mode != 'sobol' }}
@@ -87,7 +87,7 @@ jobs:
       - uses: actions/cache/save@v4
         if: always()
         with: { path: engine/.cache/edgar, key: "edgar-shard-${{ matrix.i }}-${{ github.run_id }}" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: "research-${{ matrix.i }}", include-hidden-files: true, path: engine/.cache/research/ }
   stats:
@@ -101,7 +101,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { pattern: "research-*", merge-multiple: true, path: engine/.cache/research }
       - run: uv sync && uv run python -m fintwin.research stats
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: research-results
           include-hidden-files: true
