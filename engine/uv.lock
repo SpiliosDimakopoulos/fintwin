@@ -668,6 +668,7 @@ api = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "anthropic" },
     { name = "hypothesis" },
     { name = "lxml" },
     { name = "matplotlib" },
@@ -693,6 +694,7 @@ provides-extras = ["api", "ai"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "anthropic", specifier = ">=0.70" },
     { name = "hypothesis", specifier = ">=6.100" },
     { name = "lxml", specifier = ">=6.1.3" },
     { name = "matplotlib", specifier = ">=3.8" },
