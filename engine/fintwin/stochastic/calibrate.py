@@ -47,7 +47,8 @@ def _fixed_variable_split(
     """Penalized least squares costs = F + v*rev, F >= 0.
 
     When revenue barely moves the regression cannot tell fixed from variable costs, so the fit is shrunk
-    toward a 35% fixed-cost share; the data dominate once revenue has varied enough to identify the slope.
+    toward `prior_share` (FIXED_SHARE_PRIOR, 5% by default); the data dominate once revenue has varied enough to
+    identify the slope.
     """
     ratio = float(np.median(costs / rev))
     v_prior = ratio * (1 - prior_share)

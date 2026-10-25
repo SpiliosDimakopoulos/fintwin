@@ -1,8 +1,9 @@
 """Calibration of the twin's predictive distributions, unconditionally and where it matters (reviewer point 9).
 
 Online conformal rescaling: the interval for a forecast made at origin O is widened by the 90% quantile of past
-normalized errors, using only forecasts whose target quarter had been *reported* by O (quarter end + 75 days). The
-first version used every forecast from earlier origins, which can include quarters reported after O.
+normalized errors, using only forecasts whose target quarter had been *reported* by O (quarter end + 90 days,
+`REPORT_LAG`). The first version used every forecast from earlier origins, which can include quarters reported
+after O.
 """
 
 from __future__ import annotations
