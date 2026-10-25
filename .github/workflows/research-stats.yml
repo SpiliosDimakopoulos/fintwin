@@ -11,8 +11,8 @@ jobs:
     timeout-minutes: 150
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - name: Download the shard outputs
         env: { GH_TOKEN: "${{ github.token }}" }
         # the merged outputs if that run's stats job finished, otherwise the 16 shard artifacts
@@ -26,7 +26,7 @@ jobs:
           fi
           ls .cache/research | wc -l
       - run: uv sync && uv run python -m fintwin.research stats
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: research-stats, path: docs/paper/research.json }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: research-results, include-hidden-files: true, path: engine/.cache/research/ }

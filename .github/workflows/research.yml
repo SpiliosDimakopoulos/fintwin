@@ -21,10 +21,10 @@ jobs:
     timeout-minutes: 340
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - run: uv sync && uv run python scripts/data_audit.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: data-audit, path: docs/paper/data_audit.json }
   sobol-shard:
     if: ${{ inputs.mode == 'sobol' }}
@@ -35,9 +35,9 @@ jobs:
       matrix: { i: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/cache/restore@v4
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/cache/restore@v6
         with:
           path: engine/.cache/edgar
           key: "edgar-shard-${{ matrix.i }}-${{ github.run_id }}"
@@ -46,7 +46,7 @@ jobs:
             edgar-
       - run: uv sync
       - run: timeout 320m uv run python -m fintwin.research sobol-shard ${{ matrix.i }} 16 || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: "sobol-${{ matrix.i }}", include-hidden-files: true, path: engine/.cache/sobol/ }
   sobol-stats:
@@ -55,12 +55,12 @@ jobs:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/download-artifact@v8
         with: { pattern: "sobol-*", merge-multiple: true, path: engine/.cache/sobol }
       - run: uv sync && uv run python -m fintwin.research sobol-stats
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: sobol-assumptions, path: docs/paper/sobol_assumptions.json }
   shard:
     if: ${{ inputs.mode != 'audit' && inputs.mode != 'sobol' }}
@@ -71,10 +71,10 @@ jobs:
       matrix: { i: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       # each shard always gets the same companies, so it keeps its own EDGAR cache between runs
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: engine/.cache/edgar
           key: "edgar-shard-${{ matrix.i }}-${{ github.run_id }}"
@@ -84,10 +84,10 @@ jobs:
       - run: uv sync
       # stop cleanly before the job limit so finished companies are always uploaded
       - run: timeout 320m uv run python -m fintwin.research shard ${{ matrix.i }} $SHARDS || true
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@v6
         if: always()
         with: { path: engine/.cache/edgar, key: "edgar-shard-${{ matrix.i }}-${{ github.run_id }}" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: "research-${{ matrix.i }}", include-hidden-files: true, path: engine/.cache/research/ }
   stats:
@@ -96,12 +96,12 @@ jobs:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/download-artifact@v8
         with: { pattern: "research-*", merge-multiple: true, path: engine/.cache/research }
       - run: uv sync && uv run python -m fintwin.research stats
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: research-results
           include-hidden-files: true
