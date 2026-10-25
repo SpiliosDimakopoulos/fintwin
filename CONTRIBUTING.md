@@ -10,6 +10,8 @@ Thanks for taking a look. Bug reports, questions, new scenarios, data fixes and 
 
 ## Setup
 
+The quickest start is [GitHub Codespaces](https://codespaces.new/SpiliosDimakopoulos/fintwin): it installs Python, uv, Node and all dependencies for you. Locally:
+
 ```bash
 cp .env.example .env                       # set SEC_USER_AGENT (required by the SEC)
 cd engine && uv sync && uv run pytest -q   # Python engine and tests

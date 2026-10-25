@@ -94,6 +94,7 @@ Contributions are welcome, from a typo fix to a new stress scenario or a better 
 
 - Start with an issue labelled [`good first issue`](https://github.com/SpiliosDimakopoulos/fintwin/labels/good%20first%20issue) or [`help wanted`](https://github.com/SpiliosDimakopoulos/fintwin/labels/help%20wanted).
 - See [ROADMAP.md](ROADMAP.md) for the open research questions and [CONTRIBUTING.md](CONTRIBUTING.md) for setup and PR guidelines.
+- One-click dev environment: [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/SpiliosDimakopoulos/fintwin)
 - Questions and ideas: [Discussions](https://github.com/SpiliosDimakopoulos/fintwin/discussions).
 
 If you find FinTwin useful, a ⭐ helps others find it. To cite it, use [CITATION.cff](CITATION.cff) or the [Zenodo DOI](https://doi.org/10.5281/zenodo.23434606).
