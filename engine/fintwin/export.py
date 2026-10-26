@@ -158,11 +158,13 @@ def _clean(o, sig: int = 10):
 
 
 def _write(path: Path, obj, sig: int = 10) -> None:
+    """Write a JSON-safe object to ``path``, creating parent directories as needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_clean(obj, sig), separators=(",", ":")), encoding="utf-8")
 
 
 def history_block(c, n: int = 28) -> dict:
+    """Build recent quarterly history series and SEC filing provenance for a company."""
     q = c.quarters.tail(n)
     ebitda = q["operating_income"] + q["da"]
 
@@ -204,6 +206,7 @@ def history_block(c, n: int = 28) -> dict:
 
 
 def company_block(ticker: str, macro: pd.DataFrame, n_paths: int = 5000, with_sobol: bool = False) -> dict:
+    """Build one company's dashboard payload using macro data and Monte Carlo paths."""
     c = load_company(ticker)
     p = calibrate(c, macro, HORIZON)
     eps = draw_shocks(p, n_paths, HORIZON, seed=7)
@@ -290,6 +293,7 @@ def golden_cases(macro: pd.DataFrame) -> None:
 
 
 def meta_block() -> dict:
+    """Return dashboard metadata for ratings, scenario presets, knobs, and levers."""
     return {
         "generated": date.today().isoformat(),
         "horizon": HORIZON,
@@ -305,6 +309,7 @@ def meta_block() -> dict:
 
 
 def build(tickers: list[str], with_backtests: bool = True) -> None:
+    """Generate company JSON, index metadata, and optionally backtests under ``web/public``."""
     macro = macro_quarterly()
     OUT.mkdir(parents=True, exist_ok=True)
     index_path = OUT / "index.json"
@@ -341,6 +346,7 @@ def build(tickers: list[str], with_backtests: bool = True) -> None:
 
 
 def build_backtests() -> None:
+    """Run forecast and cross-sectional backtests and write their JSON output under ``web/public``."""
     if True:
         bt: dict[str, Any] = {"cutoffs": CUTOFFS, "forecast": {}, "aggregate": {}}
         for t in SHOWCASE:

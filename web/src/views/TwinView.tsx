@@ -167,6 +167,7 @@ export function TwinView({ c, meta, index, onStress, onMachine, onOpen, onRewind
               <div className="chart-title">{title}</div>
               <div className="chart-sub">{sub}</div>
               <FanChart histLabels={tailLabels} history={tail(key)} futureLabels={fut} legend={false}
+                ariaLabel={`${title} ${key === "revenue" ? "per quarter" : key === "cash" ? "at quarter end" : "including new issuance"}, simulated 5-95% band`}
                 layers={[{ label: "Simulated", color: "var(--s1)", bands }]} format={(x) => money(x)} tick={moneyTick} height={210} />
             </div>
           ))}

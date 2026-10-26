@@ -34,6 +34,7 @@ EXTRAS = [
 
 @lru_cache(maxsize=1)
 def universe() -> pd.DataFrame:
+    """Load, augment, and return the sorted company universe DataFrame."""
     u = pd.read_csv(UNIVERSE_CSV)
     extra = pd.DataFrame(EXTRAS, columns=["ticker", "name", "sector", "industry"])
     extra = extra[~extra["ticker"].isin(u["ticker"])]
@@ -41,6 +42,7 @@ def universe() -> pd.DataFrame:
 
 
 def tickers() -> list[str]:
+    """Return the company tickers in the configured universe."""
     return universe()["ticker"].tolist()
 
 
@@ -72,6 +74,7 @@ def _norms() -> dict:
 
 
 def sector_tolerance(ticker: str) -> float:
+    """Return the sector leverage tolerance for ``ticker``, defaulting to 1.0."""
     return float(_norms().get("tolerance", {}).get(classify(ticker)[0], 1.0))
 
 

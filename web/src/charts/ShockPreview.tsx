@@ -12,10 +12,12 @@ export function ShockPreview({ knobs, T }: { knobs: Knobs; T: number }) {
   const y = (v: number) => top + (1 - v) * (H - top - bottom);
   const pts = Array.from(s.sales_shock).map((v, i) => `${(i + 0.5) * step},${y(1 + v)}`);
   const anyRate = s.rate_shift.some((v) => v !== 0), anySpread = s.spread_shift.some((v) => v !== 0);
+  const shockParts = [s.refi_access.some((a) => a === 0) && "markets shut", anySpread && "spreads", anyRate && "rates"].filter(Boolean);
+  const scenarioLabel = shockParts.length > 0 ? shockParts.join(", ") : "no markets-shut, spread, or rate shocks";
   return (
-    <div ref={ref} aria-label="Shape of the shock">
+    <div ref={ref}>
       {width > 0 && (
-        <svg width={w} height={H} style={{ display: "block" }}>
+        <svg width={w} height={H} role="img" aria-label={`Revenue shock preview; ${scenarioLabel}`} style={{ display: "block" }}>
           {Array.from(s.refi_access).map((a, i) => a === 0 && <rect key={`f${i}`} x={i * step} y={top} width={step - 1} height={H - top - bottom} fill="var(--s2)" opacity={0.12} />)}
           {Array.from(s.spread_shift).map((v, i) => v !== 0 && <rect key={`s${i}`} x={i * step} y={H - bottom - 3} width={step - 1} height={3} fill="var(--s2)" opacity={0.55} />)}
           <line x1={0} x2={w} y1={y(1)} y2={y(1)} stroke="var(--rule-2)" strokeDasharray="2 3" />

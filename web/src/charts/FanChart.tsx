@@ -24,6 +24,7 @@ type Props = {
   yMax?: number;
   samplePaths?: number[][];
   legend?: boolean;
+  ariaLabel?: string;
 };
 
 const M = { top: 12, right: 12, bottom: 24, left: 46 };
@@ -109,7 +110,7 @@ export function FanChart(p: Props) {
   return (
     <div className="chart" ref={ref}>
       {width > 0 && (
-        <svg width={w} height={H} role="img" aria-label="Fan chart of simulated outcomes">
+        <svg width={w} height={H} role="img" aria-label={p.ariaLabel ?? "Fan chart of simulated outcomes"}>
           {yt.map((t) => (
             <g key={t}>
               <line className="gridline" x1={M.left} x2={w - M.right} y1={y(t)} y2={y(t)} />
