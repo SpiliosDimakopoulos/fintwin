@@ -22,18 +22,18 @@ import numpy as np
 
 from .ratings import ICR_LOWER, ICR_MATERIALITY, SPREADS, effective_icr
 
-try:  # revision-3 specification switches (workstream B1)
+try:  # revision-3 specification switches: B1's spec module is the single source of truth
     from ..stochastic.spec import active as _spec_active
-except ImportError:  # pragma: no cover - B1 not merged yet: same env semantics, B2's ids only
+except ImportError:  # pragma: no cover - only if spec.py is missing (stripped install): plain env semantics
     _spec_active = None
 
-# Fixes of this module that each specification turns on. M1, M4 and M5 are pre-specified extensions, off in every
-# specification (REVISION_PLAN_3 §1: switches, closed in the H2 comparisons); they are turned on with FINTWIN_FIXES.
-_SPEC_FIXES = {"v2-pre": set(), "v2-rev": set(), "v3": {"F11"}}
+# Used only by the fallback. M1, M4 and M5 are pre-specified extensions, off in every specification
+# (REVISION_PLAN_3 §1: switches, closed in the H2 comparisons); they are turned on with FINTWIN_FIXES.
+_SPEC_FIXES = {"v2-pre": set(), "v2-rev": set(), "v3": {"F3", "F6", "F11"}}
 
 
 def active(fix_id: str) -> bool:
-    """Is a revision-3 fix or extension switched on? FINTWIN_FIXES (comma list) overrides FINTWIN_SPEC."""
+    """Is a revision-3 fix or extension switched on? Delegates to fintwin.stochastic.spec.active."""
     if _spec_active is not None:
         return bool(_spec_active(fix_id))
     fixes = os.environ.get("FINTWIN_FIXES", "").strip()
@@ -143,7 +143,8 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
 
     base = np.full(N, p["base_rev0"], f)
     g_prev = np.full(N, p["g0"], f)
-    m_dev = np.zeros(N, f)
+    # MM-F6: start from the current margin deviation (calibrated), which then decays at rho_m
+    m_dev = np.full(N, p.get("m_dev0", 0.0), f) if _switch(levers, "F6") else np.zeros(N, f)
     rate = np.full(N, p["r0"], f)
     coupon = np.full(N, p["coupon"], f)
     cut_mult = np.ones(N, f)
@@ -166,6 +167,12 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
     # revision-3 switches; every branch below is skipped when they are off, so v2-pre outputs are unchanged
     on_m1, on_f11, on_m5 = _switch(levers, "M1"), _switch(levers, "F11"), _switch(levers, "M5")
     mat = p.get("icr_materiality", ICR_MATERIALITY)
+    lam_up = lam_dn = 0.0  # MM-F3 off: lambda 0 is exactly the v2 recursion
+    if _switch(levers, "F3"):
+        lam_up = p.get("fixed_adj_lambda", 0.0)
+        lam_dn = p.get("fixed_adj_lambda_down", lam_up)
+        f_adj = p.get("fixed_adj_f", 0.0)
+        F_t = np.full(N, p["F"], f)
     if on_m1 or on_f11:
         rev_hist = np.full((N, 4), p.get("rev_ttm0", 4.0 * p["base_rev0"]) / 4.0, f)
     if on_f11:
@@ -210,7 +217,16 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
         # --- costs: fixed (inflating, cuttable) + variable ratio with mean-reverting shocks ---
         m_dev = p["rho_m"] * m_dev + p["sigma_m"] * e_m
         v = np.maximum(p["v"] + m_dev + scn["cost_shift"][t], 0.0)
-        fixed = p["F"] * (1.0 + p["infl"]) ** (t + 1) * cut_mult
+        if lam_up > 0 or lam_dn > 0:
+            # MM-F3: fixed costs adjust partially (lambda per quarter) toward f_adj x deseasonalized revenue;
+            # the revenue is taken after the override, so realized revenue drives it in the transmission test
+            F_t = F_t * (1.0 + p["infl"])
+            rbar = rev / seasonal[(p["season0"] + t) % 4]
+            gap = f_adj * rbar - F_t
+            F_t = F_t + np.where(gap > 0, lam_up, lam_dn) * gap
+            fixed = F_t * cut_mult
+        else:
+            fixed = p["F"] * (1.0 + p["infl"]) ** (t + 1) * cut_mult
         costs = fixed + v * rev
         ebitda = rev - costs
         da = p["dep_rate"] * ppe
