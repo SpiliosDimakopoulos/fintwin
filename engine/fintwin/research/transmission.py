@@ -50,9 +50,61 @@ STATIC = {
     "capex_cut": ("rev4", -1),
 }
 LAMBDAS = np.round(np.arange(0.0, 1.51, 0.05), 2)
+LAG = 3  # a cutoff year's eight-quarter outcomes are known three cutoffs later (the Y-3 rule)
+MIN_TRAIN = 200  # earlier firm-years needed to choose a combination weight
+# out-of-sample combinations base + lambda * (adjuster - base)
+COMBOS = {
+    "N1+T1": ("N1", "T1"),
+    "N3+T1": ("N3", "T1"),
+    "N4+T1": ("N4", "T1"),
+    "N6+T1": ("N6", "T1"),
+    "N1+N3": ("N1", "N3"),
+    "N1+N6": ("N1", "N6"),
+    "N3+N6": ("N3", "N6"),
+    # combination-puzzle controls: any second, noisier estimate given a small weight
+    "N3+N1": ("N3", "N1"),
+    "N3+N2": ("N3", "N2"),
+    "N3+N5": ("N3", "N5"),
+    "N3+T0": ("N3", "T0"),
+}
+FORECASTERS = [*MODELS, *COMBOS]
+# the pre-specified family (REVISION_PLAN_3 2.1): {twin, twin+16q, 16q+4q, regression+16q} x {OCF, FCF} x {median,
+# mean absolute error}, each against the 16-quarter margin: 16 comparisons
+FAMILY = ("T1", "N3+T1", "N3+N1", "N3+N5")
+FAMILY_BENCH = "N3"
+# combination gains reported with DM (firm x year) and the year-block bootstrap (E3)
+GAINS = (
+    ("N3+T1", "N3"),
+    ("N3+T1", "N3+N1"),
+    ("N3+T1", "N3+N2"),
+    ("N3+T1", "N3+N5"),
+    ("N3+T1", "N3+N6"),
+    ("N3+T1", "N3+T0"),
+    ("T1", "N3"),
+)
 
 
 # ---------------------------------------------------------------- frame
+def point(st: dict, key: str) -> float:
+    """E1: the specification's 8-quarter point forecast of a structural output (`twin_cfo`, `noloops_fcf`, ...).
+
+    `<key>_point` when the shard stores it (the median of path totals in v3, the sum of per-quarter medians in
+    v2-pre); else `<key>_tot` when the shard says E1 is on; else the revision-2 sum of the per-quarter medians."""
+    if st.get(f"{key}_point") is not None:
+        return float(st[f"{key}_point"])
+    if st.get("e1") and st.get(f"{key}_tot") is not None:
+        return float(st[f"{key}_tot"])
+    v = st.get(key)
+    return float(np.sum(np.asarray(v, float))) if v is not None else np.nan
+
+
+def sens_point(path: dict, var: str, e1: bool) -> float:
+    """The same for a sensitivity variant (`cfo_tot` under E1, else the summed per-quarter medians)."""
+    if e1 and path.get(f"{var}_tot") is not None:
+        return float(path[f"{var}_tot"])
+    return float(np.sum(np.asarray(path[var], float)))
+
+
 def frame(rows: pd.DataFrame) -> pd.DataFrame:
     """One row per firm-cutoff with 8-quarter totals (and worst cumulative values) of every model, % of revenue."""
     recs = []
@@ -83,10 +135,16 @@ def frame(rows: pd.DataFrame) -> pd.DataFrame:
                 x = np.asarray(path if path is not None else [np.nan] * len(rev), float)
                 rec[f"{k}_{var}"] = float(x.sum())
                 rec[f"{k}_{var}_w"] = float(np.min(np.cumsum(x)))
+            # E1: the twin's totals are the specification's point forecast; the v2 sum of medians is kept beside it
+            rec[f"T1sm_{var}"] = rec[f"T1_{var}"]
+            if st.get(f"twin_{var}") is not None:
+                rec[f"T1_{var}"] = point(st, f"twin_{var}")
+            if st.get(f"noloops_{var}") is not None:
+                rec[f"T0_{var}"] = point(st, f"noloops_{var}")
             rec[f"m4_{var}"] = m.get(f"{var}4")
             rec["revsum"] = float(rev.sum())
         for k, path in (st.get("sens") or {}).items():
-            rec[f"S_{k}_cfo"] = float(np.sum(np.asarray(path["cfo"], float)))
+            rec[f"S_{k}_cfo"] = sens_point(path, "cfo", bool(st.get("e1")))
             rec[f"S_{k}_health"] = path.get("health")
             for e in EVENTS:
                 rec[f"S_{k}_pb_{e}"] = (path.get("probs") or {}).get(e)
@@ -185,9 +243,20 @@ def levels(df: pd.DataFrame, var: str) -> dict:
             "n": int(ok.sum()),
             "median_ae": float(np.nanmedian(e[ok])),
             "mae_w": float(np.nanmean(np.abs(_wins(x, lo, hi) - _wins(real, lo, hi))[ok])),
+            "mae": float(np.nanmean(e[ok])),  # unwinsorized (E6)
             "rho": S.rho(x, real),
             "share_closer_than_N1": float(np.nanmean((e < np.abs(base - real))[ok & np.isfinite(base)])),
         }
+    if f"T1sm_{var}" in df:  # E1: the twin as the sum of per-quarter medians (the v2-pre estimator), for comparison
+        x = df[f"T1sm_{var}"].to_numpy(float)
+        ok = np.isfinite(x) & np.isfinite(real)
+        if ok.any():
+            out["T1_sum_of_medians"] = {
+                "n": int(ok.sum()),
+                "median_ae": float(np.median(np.abs(x - real)[ok])),
+                "mae": float(np.mean(np.abs(x - real)[ok])),
+                "rho": S.rho(x, real),
+            }
     return out
 
 
@@ -284,41 +353,132 @@ def encompassing(df: pd.DataFrame, var: str) -> dict:
             "n": int(m.nobs),
             "t_two_way": {k: float(m2.tvalues[k]) for k in use},
         }
+    out |= _encompassing_v3(d, var, X, lo, hi, cols)
     return out
 
 
-def hybrid(df: pd.DataFrame, var: str, firms: np.ndarray, b: int) -> dict:
+def _one_sided(t: float, df: int) -> float:
+    from scipy.stats import t as t_dist
+
+    return float(t_dist.sf(t, df))
+
+
+def _encompassing_v3(d: pd.DataFrame, var: str, X: pd.DataFrame, lo: float, hi: float, cols: list[str]) -> dict:
+    """E9 / SW-14: the two-way clustered tests with t(G-1) critical values and a PSD check, beside the firm-only ones.
+    E7: encompassing and DM under absolute loss, the loss lambda is chosen on, and a LAD (median) regression."""
+    firms, years = d["ticker"].to_numpy(), d["year"].to_numpy()
+    real = d[f"real_{var}"].to_numpy(float)
+    yfe = [c for c in X if c.startswith("y_")]
+    out: dict = {}
+    Xs = np.column_stack([np.ones(len(X)), X[[*cols, *yfe]].to_numpy(float)])
+    yv = (_wins(real, lo, hi) - _wins(d[f"N1_{var}"].to_numpy(float), lo, hi)).astype(float)
+    tw = S.cluster_ols(yv, Xs, [firms, years])
+    fo = S.cluster_ols(yv, Xs, [firms])
+    out["all_two_way_tG1"] = {
+        "coef": {k: float(tw["params"][1 + i]) for i, k in enumerate(cols)},
+        "t": {k: float(tw["t"][1 + i]) for i, k in enumerate(cols)},
+        "p": {k: float(tw["p"][1 + i]) for i, k in enumerate(cols)},
+        "p_firm": {k: float(fo["p"][1 + i]) for i, k in enumerate(cols)},
+        "G": tw["G"],
+        "t_crit": tw["t_crit"],
+        "psd": tw["psd"],
+    }
+    rw = _wins(real, lo, hi)
+    hln, absl, dm = {}, {}, {}
+    for a_, b_ in (("N3", "T1"), ("T1", "N3"), ("N6", "T1"), ("T1", "N6")):
+        e_a = rw - _wins(d[f"{a_}_{var}"].to_numpy(float), lo, hi)
+        e_b = rw - _wins(d[f"{b_}_{var}"].to_numpy(float), lo, hi)
+        r = S.two_way_mean(e_a * (e_a - e_b), firms, years)
+        hln[f"{a_}_encompasses_{b_}"] = {"t": r["t"], "p_one_sided": _one_sided(r["t"], r["G"] - 1), "psd": r["psd"]}
+        # absolute loss: d/dlambda E|e_a - lambda (e_a - e_b)| at 0 is -E[sign(e_a)(e_a - e_b)], so a positive mean
+        # of sign(e_a)(e_a - e_b) means moving toward b lowers the MAE: a does not encompass b
+        ra, rb = real - d[f"{a_}_{var}"].to_numpy(float), real - d[f"{b_}_{var}"].to_numpy(float)
+        r = S.two_way_mean(np.sign(ra) * (ra - rb), firms, years)
+        absl[f"{a_}_encompasses_{b_}"] = {
+            "mean": r["mean"],
+            "t": r["t"],
+            "p_one_sided": _one_sided(r["t"], r["G"] - 1),
+            "psd": r["psd"],
+        }
+    for a_, b_ in (("T1", "N3"), ("T1", "N6"), ("T1", "N1"), ("N6", "N3")):
+        ea = np.abs(real - d[f"{a_}_{var}"].to_numpy(float))
+        eb = np.abs(real - d[f"{b_}_{var}"].to_numpy(float))
+        dm[f"{a_}_vs_{b_}"] = S.two_way_mean(ea - eb, firms, years)  # negative mean = a better
+    out["hln_tG1"], out["abs_loss_encompassing"], out["dm_abs"] = hln, absl, dm
+    out["lad_levels"] = _lad(d, var, ["N1", *cols], yfe, X)
+    return out
+
+
+def _lad(d: pd.DataFrame, var: str, use: list[str], yfe: list[str], X: pd.DataFrame, b: int | None = None) -> dict:
+    """Median (LAD) regression of the realized outcome on every forecast in levels (Fair-Shiller form under absolute
+    loss), unwinsorized; standard errors from a firm bootstrap of `b` resamples."""
+    import statsmodels.api as sm
+
+    b = S.B_LAD if b is None else b
+    y = d[f"real_{var}"].to_numpy(float)
+    A = np.column_stack([np.ones(len(d)), d[[f"{k}_{var}" for k in use]].to_numpy(float), X[yfe].to_numpy(float)])
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            beta = np.asarray(sm.QuantReg(y, A).fit(q=0.5, max_iter=2000).params)[1 : 1 + len(use)]
+            groups = S._clusters(d["ticker"].to_numpy())
+            g = S.rng("lad")
+            bs = np.full((b, len(use)), np.nan)
+            for k in range(b):
+                idx = np.concatenate([groups[i] for i in g.integers(0, len(groups), len(groups))])
+                bs[k] = np.asarray(sm.QuantReg(y[idx], A[idx]).fit(q=0.5, max_iter=2000).params)[1 : 1 + len(use)]
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
+    se = np.nanstd(bs, axis=0, ddof=1)
+    return {
+        "coef": dict(zip(use, beta.tolist(), strict=True)),
+        "se_firm_boot": dict(zip(use, se.tolist(), strict=True)),
+        "t": dict(zip(use, (beta / se).tolist(), strict=True)),
+        "B": b,
+        "n": int(len(y)),
+    }
+
+
+def train_bounds(real: np.ndarray, yrs: np.ndarray, mode: str = "train") -> dict[int, tuple[float, float]]:
+    """Winsorization limits (1st and 99th percentiles of the realized outcome) for each cutoff year.
+
+    "train" (E6): from the years whose outcomes were known at that cutoff (<= Y-3) only; "full": the revision-2 limits
+    from every year, test years included."""
+    real = np.asarray(real, float)
+    years = sorted({int(y) for y in yrs})
+    if mode == "full":
+        lo, hi = np.nanpercentile(real, [1, 99])
+        return {y: (float(lo), float(hi)) for y in years}
+    out = {}
+    for y in years:
+        m = (yrs <= y - LAG) & np.isfinite(real)
+        if m.sum() >= 20:
+            lo, hi = np.percentile(real[m], [1, 99])
+            out[y] = (float(lo), float(hi))
+    return out
+
+
+def hybrid(df: pd.DataFrame, var: str, firms: np.ndarray, b: int, bounds: str = "full") -> dict:
     """Out-of-sample combinations base + lambda * (adjuster - base), lambda chosen on earlier cutoff years.
 
     Evaluated on years with at least 200 earlier observations; the null hybrid (N1 adjusted by N6) is the control.
+    `bounds="full"` is the revision-2 computation (winsorization limits from every year, test years included);
+    `bounds="train"` takes each test year's limits from its training years only (E6) and adds unwinsorized errors.
     """
     real = df[f"real_{var}"].to_numpy(float)
-    lo, hi = np.nanpercentile(real, [1, 99])
     yrs = df["year"].to_numpy()
-    pairs = {
-        "N1+T1": ("N1", "T1"),
-        "N3+T1": ("N3", "T1"),
-        "N4+T1": ("N4", "T1"),
-        "N6+T1": ("N6", "T1"),
-        "N1+N3": ("N1", "N3"),
-        "N1+N6": ("N1", "N6"),
-        "N3+N6": ("N3", "N6"),
-        # combination-puzzle controls: any second, noisier estimate given a small weight
-        "N3+N1": ("N3", "N1"),
-        "N3+N2": ("N3", "N2"),
-        "N3+N5": ("N3", "N5"),
-        "N3+T0": ("N3", "T0"),
-    }
+    bnd = train_bounds(real, yrs, bounds)
     preds: dict[str, np.ndarray] = {}
     lambdas: dict[str, dict[int, float]] = {}
-    for name, (base, adj) in pairs.items():
+    for name, (base, adj) in COMBOS.items():
         bx, ax = df[f"{base}_{var}"].to_numpy(float), df[f"{adj}_{var}"].to_numpy(float)
         p = np.full(len(df), np.nan)
         lambdas[name] = {}
         for y in sorted(set(yrs)):
-            tr = (yrs <= y - 3) & np.isfinite(bx) & np.isfinite(ax) & np.isfinite(real)
-            if tr.sum() < 200:
+            tr = (yrs <= y - LAG) & np.isfinite(bx) & np.isfinite(ax) & np.isfinite(real)
+            if tr.sum() < MIN_TRAIN or int(y) not in bnd:
                 continue
+            lo, hi = bnd[int(y)]
             err = [
                 np.nanmean(np.abs(_wins(bx[tr] + lam * (ax[tr] - bx[tr]), lo, hi) - _wins(real[tr], lo, hi)))
                 for lam in LAMBDAS
@@ -332,14 +492,20 @@ def hybrid(df: pd.DataFrame, var: str, firms: np.ndarray, b: int) -> dict:
     for k in MODELS:
         preds[k] = df[f"{k}_{var}"].to_numpy(float)
     test &= np.all([np.isfinite(v) for v in preds.values()], axis=0)
+    LO = np.array([bnd.get(int(y), (np.nan, np.nan))[0] for y in yrs])
+    HI = np.array([bnd.get(int(y), (np.nan, np.nan))[1] for y in yrs])
 
-    def mae(x, t):
+    def mae(x, t, lo, hi):
         return float(np.mean(np.abs(_wins(x, lo, hi) - _wins(t, lo, hi))))
 
     out: dict = {"n": int(test.sum()), "lambda": lambdas, "mae_w": {}, "median_ae": {}}
+    if bounds != "full":
+        out["bounds"], out["mae"] = bounds, {}
     for k, v in preds.items():
-        out["mae_w"][k] = mae(v[test], real[test])
+        out["mae_w"][k] = mae(v[test], real[test], LO[test], HI[test])
         out["median_ae"][k] = float(np.median(np.abs(v[test] - real[test])))
+        if bounds != "full":
+            out["mae"][k] = float(np.mean(np.abs(v[test] - real[test])))
     f = firms[test]
     for a, c in (
         ("N1+T1", "N1"),
@@ -356,8 +522,340 @@ def hybrid(df: pd.DataFrame, var: str, firms: np.ndarray, b: int) -> dict:
         ("T1", "N3"),
         ("T1", "N6"),
     ):
-        d = S.boot(lambda u, v, t: mae(u, t) - mae(v, t), [preds[a][test], preds[c][test], real[test]], f, b=b)
-        out[f"{a}_vs_{c}"] = {"diff": float(np.mean(d)), "ci": S.ci(d), "p": S.p_two_sided(d)}
+        cols = [preds[a][test], preds[c][test], real[test], LO[test], HI[test]]
+        d = S.boot(lambda u, v, t, lo, hi: mae(u, t, lo, hi) - mae(v, t, lo, hi), cols, f, b=b)
+        est = mae(cols[0], *cols[2:]) - mae(*cols[1:])
+        out[f"{a}_vs_{c}"] = {
+            "diff": float(np.mean(d)),
+            "ci": S.ci(d),
+            "p": S.p_two_sided(d),
+            "est": est,
+            "p_centered": S.p_centered(est, d),
+        }
+    return out
+
+
+# ---------------------------------------------------------------- resampling engine for the comparison family
+# Every loss is a sum over firm x year cells, so a bootstrap resample is a vector of firm counts w (multinomial over
+# firms) and of cutoff-year counts v (multinomial over years); a firm-year's weight is w_f * v_t. The combination
+# weight lambda is re-chosen in every resample from the reweighted training years (E3) by one matrix product
+# W (B x F) @ S (F x years*lambdas) per test year, instead of a Python loop over resamples.
+def _draws(n_f: int, n_t: int, b: int, scheme: str, g: np.random.Generator):
+    W = g.multinomial(n_f, np.full(n_f, 1 / n_f), size=b).astype(float) if scheme in ("firm", "firm_year") else None
+    V = g.multinomial(n_t, np.full(n_t, 1 / n_t), size=b).astype(float) if scheme in ("year", "firm_year") else None
+    return W, V
+
+
+def _wsum(W: np.ndarray | None, M: np.ndarray, b: int) -> np.ndarray:
+    """(b x ...) firm-weighted sums of the cell array M (F x ...); unit firm weights when W is None."""
+    if W is None:
+        return np.broadcast_to(M.sum(axis=0), (b, *M.shape[1:]))
+    return (W @ M.reshape(M.shape[0], -1)).reshape(b, *M.shape[1:])
+
+
+def _ysum(A: np.ndarray, V: np.ndarray | None, ny: int) -> np.ndarray:
+    """Sum over the first `ny` year columns of A (b x years x ...), weighted by the year counts V."""
+    A = A[:, :ny]
+    if V is not None:
+        A = A * V[:, :ny].reshape(V.shape[0], ny, *([1] * (A.ndim - 2)))
+    return A.sum(axis=1)
+
+
+def wmedian(e: np.ndarray, w: np.ndarray, o: np.ndarray | None = None) -> np.ndarray:
+    """Weighted medians of the values e (n) under each row of weights w (b x n); equals np.median for unit weights.
+    `o`, if given, is an argsort of e."""
+    o = np.argsort(e, kind="stable") if o is None else o
+    # resample weights are integer counts, exact in float32 far beyond any cumulative total here
+    es, c = e[o], np.cumsum(np.atleast_2d(w)[:, o], axis=1, dtype=np.float32)
+    half = c[:, -1] / 2
+    out = np.full(len(c), np.nan)
+    for r in np.flatnonzero(half > 0):
+        lo, hi = np.searchsorted(c[r], half[r], "left"), np.searchsorted(c[r], half[r], "right")
+        out[r] = 0.5 * (es[lo] + es[min(hi, len(es) - 1)])
+    return out
+
+
+class _Losses:
+    """One outcome variable: the common test sample of the forecasters `names`, winsorization limits per test year,
+    and cell sums (firm x year) of training and test losses for every lambda of every combination."""
+
+    def __init__(self, df: pd.DataFrame, var: str, names: list[str], bounds: str, fcode, tcode, years: list[int]):
+        self.names, self.F, self.T = names, int(fcode.max()) + 1, len(years)
+        real = df[f"real_{var}"].to_numpy(float)
+        yrs = df["year"].to_numpy()
+        X = {k: df[f"{k}_{var}"].to_numpy(float) for k in MODELS}
+        combos = [k for k in names if k in COMBOS]
+        bnd = train_bounds(real, yrs, bounds)
+
+        def trained(y, b_, a_):
+            return (yrs <= y - LAG) & np.isfinite(X[b_]) & np.isfinite(X[a_]) & np.isfinite(real)
+
+        test_years = [y for y in years if y in bnd and all(trained(y, *COMBOS[c]).sum() >= MIN_TRAIN for c in combos)]
+        need = {m for k in names for m in (COMBOS[k] if k in COMBOS else (k,))}
+        test = np.isin(yrs, test_years) & np.isfinite(real) & np.all([np.isfinite(X[m]) for m in need], axis=0)
+        order = np.flatnonzero(test)
+        order = order[np.argsort(yrs[order], kind="stable")]  # test rows grouped by year
+        self.idx, self.test_years = order, [y for y in test_years if (yrs[order] == y).any()]
+        self.fc, self.tc, self.yt = fcode[order], tcode[order], yrs[order]
+        r = real[order]
+        lo = np.array([bnd[int(y)][0] for y in self.yt])
+        hi = np.array([bnd[int(y)][1] for y in self.yt])
+        cell = self.fc * self.T + self.tc
+        self.N = np.bincount(cell, minlength=self.F * self.T).reshape(self.F, self.T).astype(float)
+        # plain forecasters: winsorized-error cell sums, per-row winsorized and raw absolute errors
+        self.plain: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+        for k in names:
+            if k not in COMBOS:
+                x = X[k][order]
+                ew = np.abs(np.clip(x, lo, hi) - np.clip(r, lo, hi))
+                C = np.bincount(cell, weights=ew, minlength=self.F * self.T).reshape(self.F, self.T)
+                self.plain[k] = (C, ew, np.abs(x - r))
+        tpos = {y: i for i, y in enumerate(years)}
+        nl = len(LAMBDAS)
+        self.combo: dict[str, list[dict]] = {}
+        for k in combos:
+            bx, ax = X[COMBOS[k][0]], X[COMBOS[k][1]]
+            per_year = []
+            for y in self.test_years:
+                lo_y, hi_y = bnd[y]
+                tr = trained(y, *COMBOS[k])
+                ntr = max(tpos[t] for t in years if t <= y - LAG) + 1  # training years are a prefix of `years`
+                p = bx[tr][:, None] + LAMBDAS[None, :] * (ax[tr] - bx[tr])[:, None]
+                L = np.abs(np.clip(p, lo_y, hi_y) - np.clip(real[tr], lo_y, hi_y)[:, None])
+                c_tr = fcode[tr] * ntr + tcode[tr]
+                S_ = np.stack([np.bincount(c_tr, weights=L[:, j], minlength=self.F * ntr) for j in range(nl)], 1)
+                rows = np.flatnonzero(self.yt == y)
+                bt, at = bx[order][rows], ax[order][rows]
+                pt = bt[:, None] + LAMBDAS[None, :] * (at - bt)[:, None]
+                Lt = np.abs(np.clip(pt, lo_y, hi_y) - np.clip(r[rows], lo_y, hi_y)[:, None])
+                Ct = np.stack([np.bincount(self.fc[rows], weights=Lt[:, j], minlength=self.F) for j in range(nl)], 1)
+                per_year.append(
+                    {
+                        "t": tpos[y],
+                        "ntr": ntr,
+                        "S": S_.reshape(self.F, ntr, nl),
+                        "Ntr": np.bincount(c_tr, minlength=self.F * ntr).reshape(self.F, ntr).astype(float),
+                        "Ct": Ct,
+                        "Lt": Lt,
+                        "E": np.abs(pt - r[rows][:, None]),
+                        "Eo": np.argsort(np.abs(pt - r[rows][:, None]), axis=0, kind="stable") + rows[0],
+                    }
+                )
+            self.combo[k] = per_year
+        self.lam_point = {k: self.lambdas(k, None, None, 1)[0] for k in combos} if len(order) else {}
+
+    def lambdas(self, k: str, W, V, b: int) -> np.ndarray:
+        """(b x test years) index of the lambda chosen on the reweighted training years; a resample that leaves a
+        test year no training weight keeps the point lambda."""
+        out = np.empty((b, len(self.combo[k])), int)
+        for j, c in enumerate(self.combo[k]):
+            out[:, j] = np.argmin(_ysum(_wsum(W, c["S"], b), V, c["ntr"]), axis=1)
+            if (W is not None or V is not None) and k in getattr(self, "lam_point", {}):
+                dead = _ysum(_wsum(W, c["Ntr"], b), V, c["ntr"]) <= 0
+                out[dead, j] = self.lam_point[k][j]
+        return out
+
+    def losses(self, W, V, b: int) -> tuple[np.ndarray, np.ndarray]:
+        """(b x K) mean winsorized and median raw absolute errors of every forecaster under the weights."""
+        K = len(self.names)
+        mean, med = np.full((b, K), np.nan), np.full((b, K), np.nan)
+        if not len(self.idx):
+            return mean, med
+        den = _ysum(_wsum(W, self.N, b), V, self.T)
+        wf = np.ones((b, self.F), np.float32) if W is None else W.astype(np.float32)
+        wt = np.ones((b, self.T), np.float32) if V is None else V.astype(np.float32)
+        omega = wf[:, self.fc] * wt[:, self.tc]  # b x n weights of the test rows
+        with np.errstate(invalid="ignore", divide="ignore"):
+            for i, k in enumerate(self.names):
+                if k in self.plain:
+                    C, _, e = self.plain[k]
+                    mean[:, i] = _ysum(_wsum(W, C, b), V, self.T) / den
+                    med[:, i] = wmedian(e, omega)
+                    continue
+                lam = self.lambdas(k, W, V, b)
+                num = np.zeros(b)
+                for j, c in enumerate(self.combo[k]):
+                    s = _wsum(W, c["Ct"], b)[np.arange(b), lam[:, j]]
+                    num += s * (V[:, c["t"]] if V is not None else 1.0)
+                mean[:, i] = num / den
+                pats, inv = np.unique(lam, axis=0, return_inverse=True)
+                inv = np.asarray(inv).reshape(-1)
+                for p_i, pat in enumerate(pats):  # resamples that chose the same lambdas share one sort
+                    cs = self.combo[k]
+                    e = np.concatenate([c["E"][:, pat[j]] for j, c in enumerate(cs)])
+                    # each year's errors are pre-sorted, so the stable sort (timsort) only merges a few runs
+                    run = np.concatenate([c["Eo"][:, pat[j]] for j, c in enumerate(cs)])
+                    o = run[np.argsort(e[run], kind="stable")]
+                    sel = np.flatnonzero(inv == p_i)
+                    med[sel, i] = wmedian(e, omega[sel], o)
+        return mean, med
+
+    def rows(self, k: str) -> tuple[np.ndarray, np.ndarray]:
+        """Per test row at the point lambdas: winsorized and raw absolute error."""
+        if k in self.plain:
+            return self.plain[k][1], self.plain[k][2]
+        lp, cs = self.lam_point[k], self.combo[k]
+        return (
+            np.concatenate([c["Lt"][:, lp[j]] for j, c in enumerate(cs)]),
+            np.concatenate([c["E"][:, lp[j]] for j, c in enumerate(cs)]),
+        )
+
+
+def boot_losses(
+    df: pd.DataFrame,
+    names: list[str],
+    b: int,
+    scheme: str = "firm_year",
+    seed: int | None = None,
+    bounds: str = "train",
+    variables: tuple[str, ...] = ("cfo", "fcf"),
+    chunk: int = 500,
+) -> dict:
+    """Point and bootstrap losses (mean winsorized, median raw absolute error) of the forecasters `names` for each
+    variable, on their common test sample, with every combination weight re-chosen inside each resample.
+
+    `scheme`: "firm" (resample firms), "year" (resample cutoff years, the year-block bootstrap) or "firm_year" (both,
+    the pigeonhole bootstrap). The variables share the same resamples, so a family across them is coherent."""
+    years = sorted({int(y) for y in df["year"]})
+    fcode = pd.factorize(df["ticker"])[0]
+    tcode = np.searchsorted(years, df["year"].to_numpy().astype(int))
+    data = {v: _Losses(df, v, names, bounds, fcode, tcode, years) for v in variables}
+    g = np.random.default_rng(S.SEEDS["family"][0] if seed is None else seed)
+    out: dict = {}
+    for v, d in data.items():
+        pm, pd_ = d.losses(None, None, 1)
+        out[v] = {
+            "names": names,
+            "n": int(len(d.idx)),
+            "test_years": d.test_years,
+            "point_mean": pm[0],
+            "point_median": pd_[0],
+            "boot_mean": np.empty((b, len(names))),
+            "boot_median": np.empty((b, len(names))),
+            "lambda": {
+                k: {y: float(LAMBDAS[li]) for y, li in zip(d.test_years, lp, strict=True)}
+                for k, lp in d.lam_point.items()
+            },
+            "_data": d,
+        }
+    for start in range(0, b, chunk):
+        bc = min(chunk, b - start)
+        W, V = _draws(int(fcode.max()) + 1, len(years), bc, scheme, g)
+        for v, d in data.items():
+            mn, md = d.losses(W, V, bc)
+            out[v]["boot_mean"][start : start + bc] = mn
+            out[v]["boot_median"][start : start + bc] = md
+    return out
+
+
+def _gain(L: np.ndarray, a: int, c: int) -> np.ndarray:
+    """Relative gain of forecaster a over c: 1 - loss_a / loss_c (positive = a better)."""
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return 1 - L[..., a] / L[..., c]
+
+
+def inference(df: pd.DataFrame, b: int, seed_family: int | None = None, seed_year: int | None = None) -> dict:
+    """The pre-specified inference of REVISION_PLAN_3 2.1 (E3, E4, E5, E6, E7).
+
+    family: the 16 comparisons {twin, twin+16q, 16q+4q, regression+16q} x {OCF, FCF} x {median, mean absolute error}
+        against the 16-quarter margin; Romano-Wolf stepdown (studentized, two-sided) over the firm x year bootstrap,
+        with Holm on the same raw p-values for continuity.
+    spa: Hansen's SPA with the 16-quarter margin as benchmark, over the family's models and over every forecaster.
+    mcs: model confidence set (alpha = 0.10) over every forecaster.
+    gains: combination gains with lambda re-chosen in each year-block resample, firm x year DM tests (absolute and
+        squared loss), year-by-year gains and the count of positive years.
+    Mean errors are winsorized at limits from training years only; median errors are unwinsorized.
+    """
+    from .plan2 import holm
+
+    fy = boot_losses(df, FORECASTERS, b, "firm_year", S.SEEDS["family"][0] if seed_family is None else seed_family)
+    out: dict = {"B": int(b), "scheme_family": "firm_year", "bounds": "train", "family": {}, "spa": {}, "mcs": {}}
+    idx = {k: i for i, k in enumerate(FORECASTERS)}
+    ib = idx[FAMILY_BENCH]
+    names, theta, star = [], [], []
+    for var in ("cfo", "fcf"):
+        r = fy[var]
+        out[f"n_{var}"], out[f"test_years_{var}"], out[f"lambda_{var}"] = r["n"], r["test_years"], r["lambda"]
+        for loss in ("median", "mean"):
+            P, Bs = r[f"point_{loss}"], r[f"boot_{loss}"]
+            for k in FAMILY:
+                names.append(f"{var}_{loss}_{k}_vs_{FAMILY_BENCH}")
+                theta.append(P[idx[k]] - P[ib])
+                star.append(Bs[:, idx[k]] - Bs[:, ib])
+            # SPA: d = loss(benchmark) - loss(model)
+            for scope, models in (("family", FAMILY), ("all", [k for k in FORECASTERS if k != FAMILY_BENCH])):
+                ii = [idx[k] for k in models]
+                sp = S.spa(P[ib] - P[ii], Bs[:, [ib]] - Bs[:, ii], r["n"])
+                out["spa"][f"{var}_{loss}_{scope}"] = {
+                    "models": list(models),
+                    "t": dict(zip(models, sp["t"].tolist(), strict=True)),
+                    **{k: sp[k] for k in ("stat", "p_consistent", "p_lower", "p_upper", "B")},
+                }
+            mc = S.mcs(P, Bs, FORECASTERS, alpha=0.10)
+            out["mcs"][f"{var}_{loss}"] = mc | {"loss": dict(zip(FORECASTERS, P.tolist(), strict=True))}
+    theta, star = np.array(theta), np.column_stack(star)
+    rw = S.stepm(theta, star, side="two-sided")
+    hp = holm({n: float(p) for n, p in zip(names, rw["p_raw"], strict=True)})
+    for j, n in enumerate(names):
+        out["family"][n] = {
+            "diff": float(theta[j]),  # loss(model) - loss(16q margin): negative = model better
+            "se": float(rw["se"][j]),
+            "t": float(rw["t"][j]),
+            "ci": S.ci(star[:, j]),
+            "p": float(rw["p_raw"][j]),
+            "p_romano_wolf": float(rw["p_adj"][j]),
+            "p_holm": hp.get(n),
+            "reject_05": bool(rw["p_adj"][j] <= 0.05),
+            "reject_10": bool(rw["p_adj"][j] <= 0.10),
+        }
+    out["gains"] = _gains(df, b, fy, S.SEEDS["year_block"][0] if seed_year is None else seed_year)
+    return out
+
+
+def _gains(df: pd.DataFrame, b: int, fy: dict, seed: int) -> dict:
+    """E3: combination gains with lambda re-estimated in every year-block resample, DM with firm x year clustering,
+    year-by-year gains."""
+    names = sorted({k for pair in GAINS for k in pair}, key=FORECASTERS.index)
+    yb = boot_losses(df, names, b, "year", seed)
+    idx = {k: i for i, k in enumerate(names)}
+    out: dict = {}
+    for var in ("cfo", "fcf"):
+        r = yb[var]
+        d: _Losses = r["_data"]
+        firms, years = df["ticker"].to_numpy()[d.idx], d.yt
+        res: dict = {"n": r["n"], "test_years": r["test_years"]}
+        for a, c in GAINS:
+            ia, ic = idx[a], idx[c]
+            ew_a, e_a = d.rows(a)
+            ew_c, e_c = d.rows(c)
+            g = float(_gain(r["point_mean"], ia, ic))
+            gs = _gain(r["boot_mean"], ia, ic)
+            dg = float(r["point_mean"][ic] - r["point_mean"][ia])
+            dgs = r["boot_mean"][:, ic] - r["boot_mean"][:, ia]
+            per_year = {}
+            for y in d.test_years:
+                m = years == y
+                la, lc = float(np.mean(ew_a[m])), float(np.mean(ew_c[m]))
+                per_year[int(y)] = {"n": int(m.sum()), "gain": float(1 - la / lc) if lc else None}
+            pos = sum(1 for v in per_year.values() if v["gain"] is not None and v["gain"] > 0)
+            res[f"{a}_vs_{c}"] = {
+                "gain_pct": g,  # 1 - MAE_a / MAE_c, winsorized at training-year limits
+                "gain_pct_ci_year_block": S.ci(gs),
+                "mae_diff": dg,  # MAE_c - MAE_a
+                "p_year_block": S.p_centered(dg, dgs),
+                "p_year_block_positive": float((1 + np.sum(dgs - dg >= dg)) / (np.isfinite(dgs).sum() + 1)),
+                "dm_abs": S.two_way_mean(ew_c - ew_a, firms, years),
+                "dm_abs_raw": S.two_way_mean(e_c - e_a, firms, years),
+                "dm_sq": S.two_way_mean(ew_c**2 - ew_a**2, firms, years),
+                "by_year": per_year,
+                "positive_years": pos,
+                "n_years": len(per_year),
+            }
+        # the same gains under the firm x year bootstrap of the family, for comparison
+        fr = fy[var]
+        fidx = {k: i for i, k in enumerate(fr["names"])}
+        res["firm_year_ci"] = {f"{a}_vs_{c}": S.ci(_gain(fr["boot_mean"], fidx[a], fidx[c])) for a, c in GAINS}
+        out[var] = res
     return out
 
 
@@ -504,7 +1002,8 @@ def sensitivity(df: pd.DataFrame, firms: np.ndarray, b: int) -> dict:
     return out
 
 
-def section(rows: pd.DataFrame, b: int, panel: bool = True) -> dict:
+def section(rows: pd.DataFrame, b: int, panel: bool = True, b_family: int | None = None) -> dict:
+    """`b_family`: bootstrap size of the pre-specified comparison family (default stats.B_FAMILY); panel only."""
     df = add_shrunk(frame(rows))
     if df.empty:
         return {}
@@ -536,11 +1035,13 @@ def section(rows: pd.DataFrame, b: int, panel: bool = True) -> dict:
         )
         if panel:
             e["encompassing"] = encompassing(df, var)
-            e["hybrid"] = hybrid(df, var, firms, b)
+            e["hybrid"] = hybrid(df, var, firms, b)  # revision 2: winsorization limits from all years
+            e["hybrid_train"] = hybrid(df, var, firms, b, bounds="train")  # E6
             e["by_year"] = by_year(df, var)
             e["heterogeneity"] = heterogeneity(df, var)
         out[var] = e
     if panel:
+        out["inference"] = inference(df, S.B_FAMILY if b_family is None else int(b_family))
         out["decisions"] = decisions(df, firms, b)
         out["sensitivity"] = sensitivity(df, firms, b)
         inc = out["cfo"]["incremental"]
@@ -557,6 +1058,8 @@ def section(rows: pd.DataFrame, b: int, panel: bool = True) -> dict:
             "twin_vs_best_null": twin_vs_best["rho"],
             "twin_vs_best_null_ci": twin_vs_best.get("ci"),
             "encompassing_p_twin": out["cfo"]["encompassing"]["all"]["p"]["T1"],
+            # E9: the same coefficient with firm x year clustering and t(G-1) critical values
+            "encompassing_p_twin_two_way_tG1": out["cfo"]["encompassing"]["all_two_way_tG1"]["p"]["T1"],
         }
         v = out["verdict"]
         v["twin_vs_each_null_ci_low"] = {k: (inc[k]["T1"].get("ci") or [np.nan])[0] for k in ("N3", "N4", "N6")}
