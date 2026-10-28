@@ -75,7 +75,8 @@ export function TimeMachineView({ ticker, name, meta }: { ticker: string; name: 
         <div className="eyebrow">{ticker} · time machine</div>
         <h1 className="display h-l" style={{ margin: "8px 0 10px" }}>Rewind {prettyName(name)}</h1>
         <p className="lede">Pick a date. The twin is rebuilt from only the filings that existed then, simulated live in your
-          browser, and laid over what actually happened next.</p>
+          browser, and laid over what actually happened next. Ratings and spreads use today's rating table (Damodaran, Jan 2026),
+          not the table of that date, so this is a replay of the filings, not a strict point-in-time test.</p>
       </Section>
 
       <div className="timeline-bar" role="group" aria-label="Point in time">
@@ -85,7 +86,8 @@ export function TimeMachineView({ ticker, name, meta }: { ticker: string; name: 
         <div className="years">
           {tl.vintages.map((x, k) => (
             <button key={x.asof} aria-pressed={k === i} onClick={() => { setPlaying(false); setI(k); }}
-              title={`Filings available on ${x.asof === "latest" ? "today" : x.asof}`}>
+              title={`Filings available on ${x.asof === "latest" ? "today" : x.asof}`}
+              aria-label={`${yearOf(x)}: health ${x.health.toFixed(0)}, ${x.health >= 70 ? "low" : x.health >= 50 ? "moderate" : x.health >= 30 ? "elevated" : "high"} model stress`}>
               <span className="yr">{yearOf(x)}</span>
               <span className="mini" style={{ background: `var(--${x.health >= 70 ? "good" : x.health >= 50 ? "warning" : x.health >= 30 ? "serious" : "critical"})`, height: `${Math.max(3, x.health * 0.28)}px` }} />
             </button>
@@ -144,14 +146,16 @@ function VerdictChart({ tl, selected, onPick }: { tl: Timeline; selected: number
   return (
     <div className="chart" ref={ref}>
       {width > 0 && (
-        <svg width={width} height={H} role="img" aria-label="Health score at each vintage">
+        <svg width={width} height={H} role="group" aria-label={`Health score at each yearly vintage: ${vs.map((v) => `${v.asof === "latest" ? "now" : v.asof.slice(0, 4)} ${v.health.toFixed(0)}`).join(", ")}`}>
           {[30, 50, 70].map((t) => (
             <g key={t}><line className="gridline" x1={M.l} x2={width - M.r} y1={y(t)} y2={y(t)} strokeDasharray="2 3" /><text className="tick" x={M.l - 6} y={y(t)} dy="0.32em" textAnchor="end">{t}</text></g>
           ))}
           <path d={area<number>().x((_, k) => x(k)).y0((_, k) => y(vs[k].health_p10)).y1((_, k) => y(vs[k].health))(vs.map((_, k) => k)) ?? ""} fill="var(--s1)" opacity={0.12} />
           <path d={line<number>().x((_, k) => x(k)).y((_, k) => y(vs[k].health))(vs.map((_, k) => k)) ?? ""} fill="none" stroke="var(--s1)" strokeWidth={2} />
           {vs.map((v, k) => (
-            <g key={v.asof} style={{ cursor: "pointer" }} onClick={() => onPick(k)}>
+            <g key={v.asof} style={{ cursor: "pointer" }} tabIndex={0} role="button" className="dot-focus" aria-label={`Go to ${v.asof === "latest" ? "now" : v.asof}: health ${v.health.toFixed(0)}`}
+              aria-pressed={k === selected}
+              onClick={() => onPick(k)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(k); } }}>
               <circle cx={x(k)} cy={y(v.health)} r={14} fill="transparent" />
               <circle cx={x(k)} cy={y(v.health)} r={k === selected ? 6 : 4} fill={k === selected ? "var(--s2)" : "var(--s1)"} stroke="var(--page)" strokeWidth={2} />
               <text className="tick" x={x(k)} y={H - 6} textAnchor="middle">{v.asof === "latest" ? "now" : `'${v.asof.slice(2, 4)}`}</text>

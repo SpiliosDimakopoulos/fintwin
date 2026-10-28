@@ -2,7 +2,9 @@ import { useMemo, useState } from "react";
 import type { Index } from "../data";
 import { pct } from "../format";
 import { StripPlot } from "../charts/StripPlot";
-import { Section } from "../ui";
+import { useEffect } from "react";
+import { loadBuildReport, type BuildReport } from "../data";
+import { ModelNote, rowActions, Section } from "../ui";
 
 type Metric = "health" | "p_breach";
 type Mode = "level" | "change";
@@ -16,6 +18,8 @@ function tint(t: number) {
 
 export function CompareView({ index, onOpen }: { index: Index; onOpen: (t: string) => void }) {
   const presets = Object.entries(index.meta.presets);
+  const [report, setReport] = useState<BuildReport | null>(null);
+  useEffect(() => { loadBuildReport().then(setReport); }, []);
   const [sortKey, setSortKey] = useState("pandemic");
   const [desc, setDesc] = useState(false);
   const [metric, setMetric] = useState<Metric>("health");
@@ -43,6 +47,7 @@ export function CompareView({ index, onOpen }: { index: Index; onOpen: (t: strin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, sortKey, desc, q, sector, metric, mode]);
 
+  const ariaSort = (k: string): "ascending" | "descending" | "none" => (k === sortKey ? (desc ? "descending" : "ascending") : "none");
   const sortBy = (k: string) => { if (k === sortKey) setDesc(!desc); else { setSortKey(k); setDesc(false); } };
   const cell = (t: string, k: string) => {
     const v = value(t, k);
@@ -63,7 +68,7 @@ export function CompareView({ index, onOpen }: { index: Index; onOpen: (t: strin
       <Section>
         <div className="eyebrow">Matrix</div>
         <h1 className="display h-l" style={{ margin: "8px 0 10px" }}>{Object.keys(index.companies).length} companies, eight crises</h1>
-        <p className="eyebrow" style={{ marginBottom: 8 }}>S&amp;P 500 outside financials and real estate · rebuilt weekly</p>
+        <p className="eyebrow" style={{ marginBottom: 8 }}>S&amp;P 500 outside financials and real estate, US-GAAP filers reporting in USD · rebuilt weekly</p>
         <p className="lede">Every cell is a full Monte Carlo run of 5,000 paths over 12 quarters on that company's own calibrated twin.
           Sort by any scenario to see who is most exposed to it.</p>
       </Section>
@@ -103,20 +108,20 @@ export function CompareView({ index, onOpen }: { index: Index; onOpen: (t: strin
         <table style={{ borderCollapse: "separate", borderSpacing: 0 }}>
           <thead>
             <tr>
-              <th onClick={() => sortBy("name")} style={{ cursor: "pointer", position: "sticky", top: 0, left: 0, zIndex: 3, background: "var(--paper)", paddingLeft: 14, minWidth: 220 }}>
-                Company {sortKey === "name" ? (desc ? "↓" : "↑") : ""}
+              <th aria-sort={ariaSort("name")} style={{ position: "sticky", top: 0, left: 0, zIndex: 3, background: "var(--paper)", paddingLeft: 14, minWidth: 220 }}>
+                <button type="button" className="th-sort" onClick={() => sortBy("name")}>Company {sortKey === "name" ? (desc ? "↓" : "↑") : ""}</button>
               </th>
               {presets.map(([k, v]) => (
-                <th key={k} className="r" onClick={() => sortBy(k)} title={v.desc}
-                  style={{ cursor: "pointer", position: "sticky", top: 0, zIndex: 2, background: "var(--paper)", minWidth: 92, color: sortKey === k ? "var(--ink)" : undefined }}>
-                  {v.label} {sortKey === k ? (desc ? "↓" : "↑") : ""}
+                <th key={k} className="r" aria-sort={ariaSort(k)} title={v.desc}
+                  style={{ position: "sticky", top: 0, zIndex: 2, background: "var(--paper)", minWidth: 92, color: sortKey === k ? "var(--ink)" : undefined }}>
+                  <button type="button" className="th-sort" onClick={() => sortBy(k)}>{v.label} {sortKey === k ? (desc ? "↓" : "↑") : ""}</button>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {rows.map(([t, e]) => (
-              <tr key={t} className="clickable" onClick={() => onOpen(t)}>
+              <tr key={t} className="clickable" aria-label={`Open ${t}`} {...rowActions(() => onOpen(t))}>
                 <td style={{ position: "sticky", left: 0, background: "var(--paper)", zIndex: 1, paddingLeft: 14, whiteSpace: "nowrap" }}>
                   <span className="tk-cell" style={{ display: "inline-block", width: 52 }}>{t}</span>
                   <span className="muted" style={{ fontSize: 12 }}>{e.sector}</span>
@@ -139,8 +144,12 @@ export function CompareView({ index, onOpen }: { index: Index; onOpen: (t: strin
         <span><span className="sw" style={{ background: tint(-1) }} />{metric === "health" ? "weaker" : "more likely to run out of cash"}</span>
         <span><span className="sw" style={{ background: "var(--wash)" }} />neutral</span>
         <span><span className="sw" style={{ background: tint(1) }} />{metric === "health" ? "stronger" : "safer"}</span>
-        <span className="muted" style={{ marginLeft: "auto" }}>Leverage thresholds are not sector-adjusted, so regulated utilities read weaker than a credit analyst would rate them.</span>
+        <span className="muted" style={{ marginLeft: "auto" }}>Leverage thresholds are only partly sector-adjusted, so regulated utilities can still read weaker than a credit analyst would rate them.</span>
       </div></>}
+      <ModelNote />
+      {report && Object.keys(report.failed).length > 0 && (
+        <p className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>Not built this week: {Object.entries(report.failed).map(([t, why]) => `${t} (${why.split("\n")[0].slice(0, 80)})`).join("; ")}.</p>
+      )}
     </div>
   );
 }

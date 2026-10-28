@@ -16,6 +16,16 @@ export function Scatter({ points, xLabel, yLabel, xFmt, yFmt, labelIds = [], onC
   const x = scaleLinear().domain([Math.min(0, ...xs), Math.max(...xs)]).nice().range([M.l, width - M.r]);
   const y = scaleLinear().domain([Math.min(...ys), Math.max(0, ...ys)]).nice().range([H - M.b, M.t]);
   const hp = points.find((p) => p.id === hover);
+  // keyboard: arrows walk the dots left to right, Enter/Space opens the focused one
+  const order = [...points].sort((a, b) => a.x - b.x || a.y - b.y).map((p) => p.id);
+  const dotKey = (e: React.KeyboardEvent<SVGGElement>, id: string) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick?.(id); return; }
+    const step = e.key === "ArrowRight" || e.key === "ArrowUp" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = order[(order.indexOf(id) + step + order.length) % order.length];
+    (e.currentTarget.parentElement?.querySelector(`[data-dot="${CSS.escape(next)}"]`) as SVGGElement | null)?.focus();
+  };
 
   // Greedy label placement: try four offsets around each labelled dot and keep the first that clears
   // every label already placed, so clustered names (the cruise lines) stay readable.
@@ -38,7 +48,7 @@ export function Scatter({ points, xLabel, yLabel, xFmt, yFmt, labelIds = [], onC
   return (
     <div className="chart" ref={ref}>
       {width > 0 && (
-        <svg width={width} height={H} role="img" aria-label={`${yLabel} versus ${xLabel}`}>
+        <svg width={width} height={H} role="group" aria-label={`${yLabel} versus ${xLabel}: ${points.length} companies. Tab to a company; Enter opens it.`}>
           {y.ticks(5).map((t) => (
             <g key={t}>
               <line className="gridline" x1={M.l} x2={width - M.r} y1={y(t)} y2={y(t)} />
@@ -50,8 +60,11 @@ export function Scatter({ points, xLabel, yLabel, xFmt, yFmt, labelIds = [], onC
           <text className="tick" x={(M.l + width - M.r) / 2} y={H - 4} textAnchor="middle" style={{ fill: "var(--ink-2)" }}>{xLabel}</text>
           <text className="tick" transform={`translate(12 ${(M.t + H - M.b) / 2}) rotate(-90)`} textAnchor="middle" style={{ fill: "var(--ink-2)" }}>{yLabel}</text>
           {points.map((p) => (
-            <g key={p.id} style={{ cursor: onClick ? "pointer" : undefined }}
-              onPointerEnter={() => setHover(p.id)} onPointerLeave={() => setHover(null)} onClick={() => onClick?.(p.id)}>
+            <g key={p.id} style={{ cursor: onClick ? "pointer" : undefined }} className="dot-focus" data-dot={p.id}
+              tabIndex={p.id === order[0] ? 0 : -1} role={onClick ? "button" : "img"}
+              aria-label={`${p.label}: ${xLabel} ${xFmt(p.x)}, ${yLabel} ${yFmt(p.y)}`}
+              onPointerEnter={() => setHover(p.id)} onPointerLeave={() => setHover(null)} onFocus={() => setHover(p.id)} onBlur={() => setHover(null)}
+              onKeyDown={(e) => dotKey(e, p.id)} onClick={() => onClick?.(p.id)}>
               <circle cx={x(p.x)} cy={y(p.y)} r={12} fill="transparent" />
               <circle cx={x(p.x)} cy={y(p.y)} r={hover === p.id ? 6 : 5} fill={labelIds.includes(p.id) || hover === p.id ? "var(--s1)" : "color-mix(in srgb, var(--s1) 55%, var(--page))"} stroke="var(--page)" strokeWidth={1.5} />
               {placed[p.id] ? (

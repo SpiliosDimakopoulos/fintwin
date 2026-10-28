@@ -111,15 +111,19 @@ export type ResearchSummary = {
   combination: Record<"cfo" | "fcf", Record<"N3" | "N3+N5" | "N3+T1", number>>;
   bankruptcy: Record<"all" | "weak", Record<"twin" | "formula" | "ohlson_o" | "altman_z2", number>> & { weak_share: number };
 };
+export type BuildReport = { generated: string; failed: Record<string, string>; n_companies: number };
+export const loadBuildReport = () => getJson<BuildReport>("data/build_report.json").catch(() => null);
 export const loadResearch = () => getJson<ResearchSummary>("data/research_summary.json").catch(() => null);
 export const loadMemo = (t: string) => getJson<Memo>(`data/memos/${t}.json`).catch(() => null);
 
 /** Snapshot first; fall back to the optional local live API (`python -m fintwin.api`) for unseen tickers. */
 export async function loadCompany(ticker: string): Promise<Company> {
   try {
-    return await getJson<Company>(`data/companies/${ticker}.json`);
+    return await getJson<Company>(`data/companies/${encodeURIComponent(ticker)}.json`);
   } catch {
-    cache.delete(`data/companies/${ticker}.json`);
+    cache.delete(`data/companies/${encodeURIComponent(ticker)}.json`);
+    // The local live API exists only in development; on the static site an unknown ticker is simply not in the snapshot.
+    if (!import.meta.env.DEV) throw new Error(`No snapshot for ${ticker}. The static site covers the companies listed in the matrix.`);
     const r = await fetch(`/api/company/${encodeURIComponent(ticker)}`);
     if (!r.ok) throw new Error(r.status === 404 ? `No snapshot for ${ticker}. Start the live API to fetch any ticker.` : `Live API error ${r.status}`);
     return r.json();

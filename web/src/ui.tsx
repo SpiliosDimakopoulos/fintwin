@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { healthStatus } from "./format";
+import { healthStatus, MODEL_LIMIT_NOTE } from "./format";
 
 /* ---------- motion ---------- */
 
@@ -22,6 +22,18 @@ export function useTween(value: number, ms = 260) {
     return () => { cancelAnimationFrame(raf); from.current = value; };
   }, [value, ms]);
   return shown;
+}
+
+/** Make a clickable <tr> reachable and operable from the keyboard (Tab, Enter, Space). */
+export function rowActions(fn: () => void) {
+  return {
+    tabIndex: 0,
+    onClick: fn,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.target !== e.currentTarget) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); }
+    },
+  };
 }
 
 /* ---------- icons (1.5px strokes, 16px grid) ---------- */
@@ -60,6 +72,21 @@ export function InfoTip({ children }: { children: ReactNode }) {
 export function Status({ health, label }: { health: number; label?: string }) {
   const s = healthStatus(health);
   return <span className="status"><i style={{ background: `var(--${s.key})` }} />{label ?? s.label}</span>;
+}
+
+/** One-line limit statement placed under model-implied risk numbers. */
+export function ModelNote({ children }: { children?: ReactNode }) {
+  return <p className="muted model-note" style={{ marginTop: 10, fontSize: 12.5, maxWidth: 820 }}>{children ?? MODEL_LIMIT_NOTE}</p>;
+}
+
+/** Says which specification and sample a block of dashboard numbers comes from. */
+export function SpecStamp({ generated, children }: { generated?: string; children?: ReactNode }) {
+  return (
+    <p className="muted spec-stamp" style={{ fontSize: 12.5, maxWidth: 820, margin: "0 0 14px" }}>
+      {children ?? <>Dashboard sample, run with the product specification{generated ? `, built ${generated}` : ""}. The paper reports a pre-specified and a revised
+        specification on a separate research sample, so its figures differ from the ones on this page.</>}
+    </p>
+  );
 }
 
 export function Section({ eyebrow, title, note, right, children, id }: {
@@ -119,7 +146,7 @@ export function HealthScale({ value, p10 }: { value: number; p10?: number }) {
   const zones = ["critical", "serious", "warning", "good"];
   return (
     <div className="hscale" role="img" aria-label={`Health score ${value.toFixed(0)} of 100`}>
-      <div className="zone-labels"><span>Distressed</span><span>Strained</span><span>Watch</span><span style={{ textAlign: "right" }}>Healthy</span></div>
+      <div className="zone-labels"><span>High stress</span><span>Elevated</span><span>Moderate</span><span style={{ textAlign: "right" }}>Low stress</span></div>
       <div className="track">{zones.map((z) => <i key={z} style={{ background: `var(--${z})` }} />)}</div>
       {p10 != null && <div className="range" style={{ left: `${p10}%`, width: `${Math.max(value - p10, 0.5)}%` }} title="Unluckiest 10% of paths to median" />}
       <div className="marker" style={{ left: `${Math.min(Math.max(value, 0), 100)}%` }} />

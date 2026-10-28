@@ -1,7 +1,7 @@
 import { Section } from "../ui";
 
 const STEPS: [string, string, string][] = [
-  ["Point-in-time filings", "SEC EDGAR XBRL", "Every number a company has tagged in its 10-K and 10-Q filings, with ordered fallbacks for tags that change over time. Year-to-date cash flows are de-cumulated into quarters (Q4 = full year minus nine months). Impairments are added back to operating income, as a credit analyst would. Each fact keeps the date it was filed, so a backtest only sees what an analyst could have seen."],
+  ["Point-in-time filings", "SEC EDGAR XBRL", "Every number a US-GAAP filer reporting in USD has tagged in its 10-K and 10-Q filings, with ordered fallbacks for tags that change over time. Year-to-date cash flows are de-cumulated into quarters (Q4 = full year minus nine months). Impairments are added back to operating income, as a credit analyst would. Each fact keeps the date it was filed, so a backtest only sees the filings an analyst could have seen. Rating spreads, however, come from a single recent table (Damodaran, Jan 2026)."],
   ["A stock-and-flow twin", "system dynamics", "Nine stocks: cash, receivables, inventory, payables, customer deposits, PP&E, debt, revolver and equity. Flows connect them through first-order delays, and four feedback loops tie coverage, credit ratings, market access and management responses together. The balance sheet balances on every path, every quarter, and property-based tests enforce it."],
   ["Calibrated uncertainty", "Monte Carlo", "Demand, margin, interest-rate and financing shocks are fitted to each company's own history: robust volatilities, Student-t tails, demand–margin correlation, a Vasicek short rate and a Markov recession regime with NBER base rates. 5,000 paths run in a Web Worker in a fraction of a second."],
 ];
@@ -12,8 +12,8 @@ export function MethodView() {
       <Section>
         <div className="eyebrow">Method</div>
         <h1 className="display h-l" style={{ margin: "8px 0 10px" }}>How the twin is built</h1>
-        <p className="lede">Three layers, each testable on its own. The full derivation, calibration estimators and evaluation are in the
-          {" "}<a href="https://github.com/SpiliosDimakopoulos/fintwin/blob/main/docs/paper/fintwin.pdf" target="_blank" rel="noreferrer">technical paper</a>.</p>
+        <p className="lede">Three layers, each testable on its own. The live dashboard runs the product specification; the
+          {" "}<a href="https://github.com/SpiliosDimakopoulos/fintwin/blob/main/docs/paper/fintwin.pdf" target="_blank" rel="noreferrer">technical paper</a> reports the pre-specified and the revised specifications, with the full derivation, calibration estimators and evaluation.</p>
       </Section>
 
       {STEPS.map(([title, tag, body], i) => (
@@ -55,7 +55,7 @@ Breach   = Cash_t < 0 after the revolver, available debt markets and (optional) 
       <Section eyebrow="Engineering" title="Two engines, one answer">
         <p className="prose">A NumPy reference engine handles calibration, backtests and exports. A line-for-line TypeScript port runs the same
           model in your browser. Golden runs exported from Python, with identical pre-drawn shocks, must match to one part in a million
-          on eleven output series, and continuous integration runs that check on every commit.</p>
+          on the output series that the parity test compares. The committed golden runs are re-checked when the data pipeline rebuilds them, not on every code change.</p>
       </Section>
     </div>
   );

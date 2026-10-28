@@ -19,7 +19,7 @@
   --s2: #d4532a;
   --s3: #1a9a6c;
   --good: #1f8a3c;
-  --warning: #c98a00;
+  --warning: #946500;
   --serious: #d4692f;
   --critical: #c23a2f;
   --good-text: #1d6b33;
@@ -253,7 +253,13 @@ th:first-child, td:first-child { padding-left: 0; }
 td.r, th.r { text-align: right; font-variant-numeric: tabular-nums; }
 .table-wrap { overflow-x: auto; }
 tr.clickable { cursor: pointer; }
-tr.clickable:hover td { background: var(--wash); }
+tr.clickable:hover td, tr.clickable:focus-visible td { background: var(--wash); }
+tr.clickable:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
+.dot-focus:focus { outline: none; }
+.dot-focus:focus-visible circle:nth-of-type(2) { stroke: var(--ink); stroke-width: 2.5; }
+svg[tabindex]:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+.th-sort { all: unset; cursor: pointer; font: inherit; color: inherit; }
+.th-sort:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
 .tk-cell { font-family: var(--font-mono); font-weight: 500; font-size: 12.5px; }
 
 /* ---------- misc ---------- */
