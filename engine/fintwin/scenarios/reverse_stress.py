@@ -58,3 +58,17 @@ def reverse_stress(p: dict, n_paths: int = 2000) -> dict:
             "p50": breaking_point(p, knob, 0.50, n_paths),
         }
     return out
+
+
+def _fmt(x: float, unit: str) -> str:
+    return f"{x * 100:.0f}%" if unit == "pct" else f"{x:.0f}{unit}"
+
+
+def headline(rs: dict, level: str = "p50") -> str:
+    """One sentence for the reverse-stress result (M4): the smallest single shock that breaks the company."""
+    hits = [(k, v) for k, v in rs.items() if v.get(level) is not None]
+    if not hits:
+        return "No single shock in the tested ranges breaks the company."
+    share = level[1:]
+    parts = [f"{v['label'].lower()} of {_fmt(v[level], v['unit'])}" for _, v in hits]
+    return f"A {share}% chance of running out of cash takes any one of: " + "; ".join(parts) + "."
