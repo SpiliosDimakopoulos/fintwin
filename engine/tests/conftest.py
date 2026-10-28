@@ -1,4 +1,10 @@
+import os
+
 import pytest
+
+# Small bootstraps in tests: the research defaults (B = 10,000 for the test family) take minutes.
+os.environ.setdefault("FINTWIN_B_FAMILY", "200")
+os.environ.setdefault("FINTWIN_B_LAD", "20")
 
 
 def make_params(**over) -> dict:
