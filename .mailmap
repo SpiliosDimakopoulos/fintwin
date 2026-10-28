@@ -1,5 +1,0 @@
-# Map the old author identities onto the public noreply identity (affects git log/shortlog/blame locally;
-# GitHub itself ignores .mailmap, history is not rewritten).
-SpiliosDimakopoulos <150211937+SpiliosDimakopoulos@users.noreply.github.com> SpiliosDmk <[redacted email]>
-SpiliosDimakopoulos <150211937+SpiliosDimakopoulos@users.noreply.github.com> SpiliosDimakopoulos <spiliosdimakk@gmail.com>
-SpiliosDimakopoulos <150211937+SpiliosDimakopoulos@users.noreply.github.com> SpiliosDmk <150211937+SpiliosDimakopoulos@users.noreply.github.com>
