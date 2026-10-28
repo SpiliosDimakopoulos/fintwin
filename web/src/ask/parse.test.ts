@@ -63,3 +63,37 @@ describe("model output mapping", () => {
     expect(sc.levers).toEqual({ cut_payouts: false });
   });
 });
+
+describe("interpretation guards (WEB M6)", () => {
+  it("reads a percentage cost increase as a change in the cost, converted to points of revenue", () => {
+    const r = parseScenario("wages up 5% for two years");
+    expect(r.knobs.cost_pp).toBe(3); // 5% x 60% of revenue
+    expect(r.knobs.cost_duration).toBe(8);
+    expect(r.understood.join(" ")).toMatch(/5% higher costs read as 3pp/);
+    expect(parseScenario("inflation up 10%", {}, 0.5).knobs.cost_pp).toBe(5);
+  });
+
+  it("keeps explicit percentage points of revenue as they are", () => {
+    expect(parseScenario("costs up 4 percentage points").knobs.cost_pp).toBe(4);
+    expect(parseScenario("wages up 5 points for 6 quarters").knobs.cost_pp).toBe(5);
+  });
+
+  it("does not treat a bare year 2020 as the pandemic scenario", () => {
+    expect(parseScenario("this is worse than 2020").matched).toBe(false);
+    expect(parseScenario("a 2020-style freeze").knobs.sales_depth).toBe(0.7);
+    expect(parseScenario("another 2020").knobs.sales_depth).toBe(0.7);
+    expect(parseScenario("covid again").knobs.sales_depth).toBe(0.7);
+  });
+
+  it("does not mistake common words or shouting for companies", () => {
+    const names = { MTCH: "Match Group, Inc.", TGT: "Target Corp", ALL: "Allstate Corp", IT: "Gartner Inc", CCL: "Carnival Corp" };
+    expect(findCompany("Revenue will match last year", names)).toBeUndefined();
+    expect(findCompany("What if the target is missed", names)).toBeUndefined();
+    expect(findCompany("what if ALL customers leave", names)).toBeUndefined();
+    expect(findCompany("IT spending falls 20%", names)).toBeUndefined();
+    expect(findCompany("WHAT IF CCL LOSES HALF ITS BOOKINGS", names)).toBeUndefined();
+    expect(findCompany("Stress $ALL with a recession", names)).toBe("ALL");
+    expect(findCompany("Carnival loses half its bookings", names)).toBe("CCL");
+    expect(findCompany("CCL loses half its bookings", names)).toBe("CCL");
+  });
+});

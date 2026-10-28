@@ -27,12 +27,23 @@ export function StripPlot({ rows, items, focus, peers, onPick, height: rowH = 46
     return ((h / 997) - 0.5) * (rowH * 0.5);
   };
   const active = hover ?? focus;
+  // keyboard: one tab stop; arrows walk companies in order of their first-row score, Enter opens
+  const order = [...items].sort((a, b) => (a.values[rows[0]?.key] ?? 0) - (b.values[rows[0]?.key] ?? 0)).map((i) => i.id);
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && active && onPick) { e.preventDefault(); onPick(active); return; }
+    const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!step || !order.length) return;
+    e.preventDefault();
+    const i = active ? order.indexOf(active) : -1;
+    setHover(order[(i + step + order.length) % order.length]);
+  };
   const activeItem = items.find((i) => i.id === active);
 
   return (
     <div className="chart" ref={ref} onPointerLeave={() => setHover(null)}>
       {width > 0 && (
-        <svg width={width} height={H} role="img" aria-label="Distribution of health scores across companies and scenarios">
+        <svg width={width} height={H} role="group" aria-label={`Health score by company across ${rows.map((r) => r.label).join(", ")}: ${items.length} companies. Focus the chart and use the arrow keys to walk through companies${onPick ? "; Enter opens one" : ""}.`}
+          tabIndex={0} onKeyDown={onKey} onBlur={() => setHover(null)}>
           {[0, 30, 50, 70, 100].map((t) => (
             <g key={t}>
               <line x1={x(t)} x2={x(t)} y1={M.t} y2={H - M.b} stroke="var(--rule)" strokeDasharray={t === 0 || t === 100 ? undefined : "2 3"} />
@@ -77,7 +88,7 @@ export function StripPlot({ rows, items, focus, peers, onPick, height: rowH = 46
       )}
       {!compact && (
         <div className="muted" style={{ minHeight: 18, marginTop: 4 }}>
-          {activeItem ? <><b className="mono" style={{ color: "var(--ink)" }}>{activeItem.id}</b> {prettyName(activeItem.name)} · {activeItem.group}{onPick ? " · click to open" : ""}</> : "Hover a dot to follow one company through every scenario."}
+          {activeItem ? <><b aria-live="polite" className="mono" style={{ color: "var(--ink)" }}>{activeItem.id}</b> {prettyName(activeItem.name)} · {activeItem.group}{onPick ? " · click to open" : ""}</> : "Hover a dot to follow one company through every scenario."}
         </div>
       )}
     </div>

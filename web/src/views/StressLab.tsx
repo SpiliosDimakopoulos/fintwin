@@ -12,7 +12,8 @@ import { KNOB_DEFAULTS } from "../engine/scenario";
 import type { Knobs, Levers } from "../engine/types";
 import { fixed, futureQuarters, money, moneyTick, pct } from "../format";
 import { useSimulation } from "../hooks";
-import { Delta, Metric, MetricText, Section, Skeleton, Status } from "../ui";
+import { decode, encode } from "../scenarioUrl";
+import { Delta, Metric, MetricText, ModelNote, Section, Skeleton, Status } from "../ui";
 
 type KnobKey = keyof Required<Knobs>;
 type Slider = { key: KnobKey; label: string; min: number; max: number; step: number; fmt: (v: number) => string };
@@ -43,19 +44,6 @@ const LEVERS: { key: keyof Levers; label: string; desc: string }[] = [
 ];
 const clampIcr = (bands: number[][]) => bands.map((r) => r.map((v) => Math.max(Math.min(v, 30), -10)));
 
-/** Scenario state <-> URL query: only what differs from the preset (knobs) or the defaults (levers). */
-function decode(query: string, meta: Meta, preset: string): { knobs: Knobs; levers: Levers } {
-  const q = new URLSearchParams(query);
-  const knobs: Knobs = { ...(meta.presets[preset]?.knobs ?? {}) };
-  for (const pair of (q.get("k") ?? "").split(";").filter(Boolean)) {
-    const [name, v] = pair.split(":");
-    if (name in KNOB_DEFAULTS && Number.isFinite(+v)) (knobs as Record<string, number>)[name] = +v;
-  }
-  const levers = { ...meta.levers };
-  for (const name of (q.get("off") ?? "").split(",").filter(Boolean)) if (name in levers) levers[name as keyof Levers] = false;
-  for (const name of (q.get("on") ?? "").split(",").filter(Boolean)) if (name in levers) levers[name as keyof Levers] = true;
-  return { knobs, levers };
-}
 /** A readable description of a custom scenario, e.g. "Revenue down 40% for 4 quarters; debt markets closed for 2 quarters." */
 function customDescription(k: Required<Knobs>, levers: Levers, meta: Meta): string {
   const kd: Partial<Required<Knobs>> = Object.fromEntries((Object.keys(KNOB_DEFAULTS) as KnobKey[]).filter((n) => k[n] !== KNOB_DEFAULTS[n]).map((n) => [n, k[n]]));
@@ -65,19 +53,6 @@ function customDescription(k: Required<Knobs>, levers: Levers, meta: Meta): stri
   const lv = Object.fromEntries((Object.keys(levers) as (keyof Levers)[]).filter((n) => levers[n] !== meta.levers[n]).map((n) => [n, levers[n]]));
   const lines = describe({ knobs: kd, levers: lv });
   return lines.length ? `${lines.join("; ").replace(/^./, (ch) => ch.toUpperCase())}.` : "Your own combination of shocks.";
-}
-
-function encode(knobs: Knobs, levers: Levers, meta: Meta, preset: string): string {
-  const ref = { ...KNOB_DEFAULTS, ...(meta.presets[preset]?.knobs ?? {}) };
-  const k = { ...KNOB_DEFAULTS, ...knobs };
-  const diff = (Object.keys(KNOB_DEFAULTS) as KnobKey[]).filter((n) => k[n] !== ref[n]).map((n) => `${n}:${k[n]}`);
-  const off = (Object.keys(levers) as (keyof Levers)[]).filter((n) => !levers[n] && meta.levers[n]);
-  const on = (Object.keys(levers) as (keyof Levers)[]).filter((n) => levers[n] && !meta.levers[n]);
-  const q = new URLSearchParams();
-  if (diff.length) q.set("k", diff.join(";"));
-  if (off.length) q.set("off", off.join(","));
-  if (on.length) q.set("on", on.join(","));
-  return q.toString().replace(/%3A/g, ":").replace(/%3B/g, ";").replace(/%2C/g, ",");
 }
 
 export function StressLab({ c, meta, preset: initialPreset, query = "", setPreset: syncUrl, names = {}, onCompany }: {
@@ -109,7 +84,10 @@ export function StressLab({ c, meta, preset: initialPreset, query = "", setPrese
   // "Ask the twin": a described crisis replaces the scenario (or opens the named company with it)
   const applyAsk = (sc: Scenario) => {
     const lv = { ...meta.levers, ...sc.levers };
-    if (sc.ticker && sc.ticker !== c.ticker && onCompany) { onCompany(sc.ticker, encode(sc.knobs as Knobs, lv, meta, "custom")); return; }
+    // never navigate away silently: a company name found in the text may be a false positive
+    if (sc.ticker && sc.ticker !== c.ticker && onCompany && window.confirm(`Open ${names[sc.ticker] ?? sc.ticker} (${sc.ticker}) with this scenario? Cancel keeps ${c.ticker} and applies the scenario here.`)) {
+      onCompany(sc.ticker, encode(sc.knobs as Knobs, lv, meta, "custom")); return;
+    }
     setPreset("custom");
     setKnobs({ ...sc.knobs });
     setLevers(lv);
@@ -142,7 +120,7 @@ export function StressLab({ c, meta, preset: initialPreset, query = "", setPrese
               return (
                 <label className="slider" key={sl.key}>
                   <span className="slider-top"><span>{sl.label}</span><b className={off ? "off" : undefined}>{sl.fmt(v)}</b></span>
-                  <input type="range" min={sl.min} max={sl.max} step={sl.step} value={v}
+                  <input type="range" min={sl.min} max={sl.max} step={sl.step} value={v} aria-valuetext={sl.fmt(v) === "—" ? "off" : sl.fmt(v)}
                     onChange={(e) => { setPreset("custom"); setKnobs({ ...k, [sl.key]: +e.target.value }); }} />
                 </label>
               );
@@ -187,11 +165,13 @@ export function StressLab({ c, meta, preset: initialPreset, query = "", setPrese
               <Metric label="Runs out of cash" value={s.pBreach * 100} format={(v) => v.toFixed(s.pBreach < 0.1 ? 1 : 0)} unit="%"
                 foot={isBase ? "within 3 years" : <Delta value={(s.pBreach - b.pBreach) * 100} fmt={(x) => `${x.toFixed(1)}pp`} goodIfPositive={false} />}
                 info="Cash goes negative after drawing the credit facility and raising whatever new debt the market will provide." />
-              <Metric label="Junk at horizon" value={s.pSubIG * 100} format={(v) => v.toFixed(0)} unit="%"
-                foot={s.medianQuartersToBreach != null ? `breach typically in quarter ${s.medianQuartersToBreach + 1}` : "rating below BBB after 3 years"} />
+              <Metric label="Sub-investment-grade rating at horizon" value={s.pSubIG * 100} format={(v) => v.toFixed(0)} unit="%"
+                foot={s.medianQuartersToBreach != null ? `breach typically in quarter ${s.medianQuartersToBreach + 1}` : "chance of a sub-investment-grade synthetic rating after 3 years"} />
               <MetricText label="New debt raised" value={money(s.debtIssuedMedian)}
                 foot={levers.issue_equity ? `plus ${money(s.equityNeededMedian)} of equity` : "median, to defend the cash buffer"} />
             </div>
+
+            <ModelNote />
 
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, margin: "22px 0 6px", flexWrap: "wrap" }}>
               <FanLegend layers={legendLayers} reported={false} />
@@ -240,7 +220,7 @@ export function StressLab({ c, meta, preset: initialPreset, query = "", setPrese
                 <div>
                   <div className="chart-title">Synthetic rating after three years</div>
                   <div className="chart-sub">share of paths in each rating bucket</div>
-                  <Columns labels={RATINGS} values={s.ratingDist} format={(x) => pct(x)}
+                  <Columns ariaLabel="Share of simulated paths in each synthetic rating after three years" labels={RATINGS} values={s.ratingDist} format={(x) => pct(x)}
                     highlight={(i) => (i >= INVESTMENT_GRADE_MIN_RANK ? "var(--s1)" : "var(--s2)")} />
                   <div className="legend" style={{ marginTop: 6 }}>
                     <span><span className="sw" style={{ background: "var(--s1)" }} />Investment grade</span>

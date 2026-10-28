@@ -41,7 +41,7 @@ export function Waterfall({ base, scen, baseMean, scenMean, baseLabel = "Baselin
   return (
     <div className="chart" ref={ref}>
       {width > 0 && (
-        <svg width={width} height={H} role="img" aria-label="Health score waterfall">
+        <svg width={width} height={H} role="img" aria-label={`Health score waterfall: average health ${baseMean.toFixed(0)} in the baseline and ${scenMean.toFixed(0)} under ${scenLabel}`}>
           {[0, 25, 50, 75, 100].map((t) => (
             <g key={t}>
               <line className="gridline" x1={M.l} x2={width - M.r} y1={y(t)} y2={y(t)} />

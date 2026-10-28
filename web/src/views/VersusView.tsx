@@ -5,7 +5,7 @@ import { RATINGS } from "../engine/ratings";
 import type { Knobs } from "../engine/types";
 import { fixed, futureQuarters, money, pct, prettyName } from "../format";
 import { useSimulation } from "../hooks";
-import { Section, Skeleton, Status } from "../ui";
+import { ModelNote, Section, Skeleton, Status } from "../ui";
 
 const SCEN = ["base", "rates_200", "recession", "pandemic", "stagflation", "credit_crunch"] as const;
 
@@ -107,6 +107,7 @@ export function VersusView({ index, pair, onPair, onOpen }: {
               {sb && <span className="sub">{b}: <Status health={sb.healthScore} /> · breach {pct(sb.pBreach, 1)}</span>}
               <span className="muted">Net debt/EBITDA tolerance: {fixed(ca.params.sector_tol ?? 1, 2)}× vs {fixed(cb.params.sector_tol ?? 1, 2)}× sector norm</span>
             </div>
+            <ModelNote />
           </Section>
         </>
       )}

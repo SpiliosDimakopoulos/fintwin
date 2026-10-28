@@ -29,6 +29,20 @@ type Props = {
 
 const M = { top: 12, right: 12, bottom: 24, left: 46 };
 
+/** Text alternative: the median path and the 5-95% range at the end, per layer, plus the realised end value. */
+function fanAlt(p: Props): string {
+  const parts = [p.ariaLabel ?? "Fan chart of simulated outcomes"];
+  const last = p.futureLabels.length - 1;
+  for (const l of p.layers) {
+    if (last < 0 || !l.bands[2]?.length) continue;
+    const m = l.bands[2], k = Math.min(last, m.length - 1);
+    parts.push(`${l.label}: median ${p.format(m[0])} in ${p.futureLabels[0]} to ${p.format(m[k])} in ${p.futureLabels[k]}, 5-95% range at the end ${p.format(l.bands[0][k])} to ${p.format(l.bands[4][k])}`);
+  }
+  const r = p.realized?.filter((v): v is number => v != null);
+  if (r?.length) parts.push(`${p.realizedLabel ?? "Realised"}: ${p.format(r[r.length - 1])} at the end`);
+  return parts.join(". ");
+}
+
 export function FanChart(p: Props) {
   const [ref, width] = useSize<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
@@ -110,7 +124,7 @@ export function FanChart(p: Props) {
   return (
     <div className="chart" ref={ref}>
       {width > 0 && (
-        <svg width={w} height={H} role="img" aria-label={p.ariaLabel ?? "Fan chart of simulated outcomes"}>
+        <svg width={w} height={H} role="img" aria-label={fanAlt(p)}>
           {yt.map((t) => (
             <g key={t}>
               <line className="gridline" x1={M.left} x2={w - M.right} y1={y(t)} y2={y(t)} />

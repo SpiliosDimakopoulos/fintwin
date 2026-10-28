@@ -12,7 +12,7 @@ export function Tornado({ rows, format }: { rows: { label: string; value: number
   return (
     <div className="chart" ref={ref}>
       {width > 0 && (
-        <svg width={width} height={H} role="img" aria-label="Sensitivity of the health score to each stress">
+        <svg width={width} height={H} role="img" aria-label={`Change in health score versus baseline for each single stress. ${rows.map((r) => `${r.label}: ${format(r.value)}`).join("; ")}`}>
           <line className="baseline" x1={x(0)} x2={x(0)} y1={0} y2={H} />
           {rows.map((r, i) => {
             const y0 = i * rowH + 8, bh = 14, x0 = x(Math.min(r.value, 0)), x1 = x(Math.max(r.value, 0));
@@ -41,7 +41,7 @@ export function Tornado({ rows, format }: { rows: { label: string; value: number
 }
 
 /** Vertical column chart for a categorical distribution (e.g. rating at horizon). */
-export function Columns({ labels, values, highlight, format }: { labels: string[]; values: number[]; highlight?: (i: number) => string; format: (x: number) => string }) {
+export function Columns({ labels, values, highlight, format, ariaLabel = "Column chart" }: { labels: string[]; values: number[]; highlight?: (i: number) => string; format: (x: number) => string; ariaLabel?: string }) {
   const [ref, width] = useSize<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const H = 170, M = { t: 18, b: 22 };
@@ -51,7 +51,7 @@ export function Columns({ labels, values, highlight, format }: { labels: string[
   return (
     <div className="chart" ref={ref}>
       {width > 0 && (
-        <svg width={width} height={H} role="img" aria-label="Distribution">
+        <svg width={width} height={H} role="img" aria-label={`${ariaLabel}. ${labels.map((l, i) => `${l}: ${format(values[i])}`).join("; ")}`}>
           <line className="baseline" x1={0} x2={width} y1={H - M.b} y2={H - M.b} />
           {values.map((v, i) => {
             const cx = slot * i + slot / 2, top = y(v), h = H - M.b - top, r = Math.min(4, h);
@@ -85,7 +85,7 @@ export function ProbLine({ labels, values, secondary, color = "var(--critical)" 
   return (
     <div className="chart" ref={ref}>
       {width > 0 && (
-        <svg width={width} height={H} role="img" aria-label="Cumulative probability of a liquidity breach">
+        <svg width={width} height={H} role="img" aria-label={`Cumulative probability of running out of cash by quarter. ${labels.map((l, i) => `${l}: ${(values[i] * 100).toFixed(0)}%`).join("; ")}`}>
           {y.ticks(4).map((t) => (
             <g key={t}>
               <line className="gridline" x1={M.l} x2={width - M.r} y1={y(t)} y2={y(t)} />

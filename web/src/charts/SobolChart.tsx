@@ -13,7 +13,7 @@ export function SobolChart({ rows }: { rows: SobolRow[] }) {
   return (
     <div className="chart" ref={ref}>
       {width > 0 && (
-        <svg width={width} height={H} role="img" aria-label="Sobol sensitivity indices">
+        <svg width={width} height={H} role="img" aria-label={`Share of health-score variance explained by each shock, first-order and total. ${rows.map((r) => `${r.label}: ${Math.round(r.S1 * 100)}% and ${Math.round(r.ST * 100)}%`).join("; ")}`}>
           {[0, 0.25, 0.5, 0.75, 1].map((t) => (
             <g key={t}>
               <line className="gridline" x1={x(t)} x2={x(t)} y1={0} y2={H - 18} />

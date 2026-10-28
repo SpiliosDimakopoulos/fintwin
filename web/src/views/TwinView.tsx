@@ -5,7 +5,7 @@ import { Waterfall } from "../charts/Waterfall";
 import { loadMemo, type Company, type Index, type Memo, type Meta } from "../data";
 import { RATINGS } from "../engine/ratings";
 import { fixed, futureQuarters, money, moneyTick, pct, prettyName, quarterLabel } from "../format";
-import { HealthScale, IconArrow, IconExternal, Meter, Metric, MetricText, Section, Status } from "../ui";
+import { HealthScale, IconArrow, IconExternal, Meter, Metric, MetricText, ModelNote, rowActions, Section, Status } from "../ui";
 
 const PARAMS: [string, string, (p: Company["params"]) => string][] = [
   ["mu", "Trend revenue growth", (p) => `${pct(Math.exp(p.mu * 4) - 1, 1)} a year`],
@@ -75,6 +75,8 @@ export function TwinView({ c, meta, index, onStress, onMachine, onOpen, onRewind
           foot="probability within 3 years" info="Below 1.5× interest coverage the synthetic rating is single-B or worse and the twin narrows access to new debt." />
       </div>
 
+      <ModelNote />
+
       {/* ---------- peers ---------- */}
       {index.companies[c.ticker] && (
         <Section eyebrow="Context" title={`Among ${Object.keys(index.companies).length} companies`}
@@ -89,7 +91,7 @@ export function TwinView({ c, meta, index, onStress, onMachine, onOpen, onRewind
 
       {/* ---------- analyst notes ---------- */}
       {memo && (
-        <Section eyebrow="Analyst notes" title="Reading the twin" note="Written by a rule-based analyst from this company's simulation results. No language model, so every figure comes straight from the model output.">
+        <Section eyebrow="Analyst notes" title="Reading the twin" note={`Written ${memo.generated_by === "deterministic" ? "by a rule-based analyst" : `by ${memo.generated_by ?? "an automated analyst"}`} from this company's simulation results; every figure is checked against the model output. A description of model results, not a credit opinion or investment advice.`}>
           <p className="prose" style={{ marginBottom: 28 }}>{memo.summary}</p>
           <div className="cols-2">
             <div>
@@ -109,7 +111,7 @@ export function TwinView({ c, meta, index, onStress, onMachine, onOpen, onRewind
                 <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }} className="sub">{memo.resilience.map((r, i) => <li key={i}>{r}</li>)}</ul>
               </div>
               <div>
-                <h3 className="eyebrow" style={{ marginBottom: 10 }}>Watch in the next filings</h3>
+                <h3 className="eyebrow" style={{ marginBottom: 10 }}>To check in the next filings</h3>
                 <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }} className="sub">{memo.watch_list.map((r, i) => <li key={i}>{r}</li>)}</ul>
               </div>
             </div>
@@ -127,7 +129,7 @@ export function TwinView({ c, meta, index, onStress, onMachine, onOpen, onRewind
                 const s = c.presets[k];
                 const d = s.health_score - base.health_score;
                 return (
-                  <tr key={k} className="clickable" onClick={() => onStress(k)}>
+                  <tr key={k} className="clickable" aria-label={`Explore ${v.label} in the stress lab`} {...rowActions(() => onStress(k))}>
                     <td><div style={{ fontWeight: k === "base" ? 500 : 400 }}>{v.label}</div><div className="muted">{v.desc}</div></td>
                     <td style={{ verticalAlign: "middle" }}>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 30px 46px", gap: 10, alignItems: "center" }}>

@@ -18,6 +18,20 @@ export function moneyTick(x: number): string {
 export const pct = (x: number | null | undefined, digits = 0) =>
   x == null || !Number.isFinite(x) ? "–" : `${(x * 100).toFixed(digits)}%`;
 
+/** Sign-aware number: "+5", "−5", "0". Avoids "+-5" when a value turns negative. */
+export function signed(x: number | null | undefined, digits = 0): string {
+  if (x == null || !Number.isFinite(x)) return "–";
+  const r = +x.toFixed(digits);
+  return r === 0 ? (0).toFixed(digits) : `${r > 0 ? "+" : "−"}${Math.abs(r).toFixed(digits)}`;
+}
+
+/** Shown next to every distress-type label and probability: these are model outputs, not opinions. */
+export const MODEL_LIMIT_NOTE =
+  "Model-implied figures under stated assumptions. Not a forecast, a credit opinion or investment advice; the research finds the simulation ranks firms no better than its own scoring formula, and the probabilities have not been calibrated against realised events.";
+
+/** Universe wording used everywhere the sample is described. */
+export const UNIVERSE_TEXT = "US-GAAP filers reporting in USD with at least $50M of revenue";
+
 export const fixed = (x: number | null | undefined, digits = 1) =>
   x == null || !Number.isFinite(x) ? "–" : x.toFixed(digits);
 
@@ -40,10 +54,10 @@ export function futureQuarters(lastIso: string, T: number): string[] {
 
 export type Status = { key: "good" | "warning" | "serious" | "critical"; label: string; icon: string };
 export function healthStatus(h: number): Status {
-  if (h >= 70) return { key: "good", label: "Healthy", icon: "●" };
-  if (h >= 50) return { key: "warning", label: "Watch", icon: "▲" };
-  if (h >= 30) return { key: "serious", label: "Strained", icon: "◆" };
-  return { key: "critical", label: "Distressed", icon: "■" };
+  if (h >= 70) return { key: "good", label: "Low stress", icon: "●" };
+  if (h >= 50) return { key: "warning", label: "Moderate stress", icon: "▲" };
+  if (h >= 30) return { key: "serious", label: "Elevated stress", icon: "◆" };
+  return { key: "critical", label: "High stress", icon: "■" };
 }
 
 const SUFFIX: Record<string, string> = { INC: "Inc.", "INC.": "Inc.", CORP: "Corp.", "CORP.": "Corp.", CO: "Co.", "CO.": "Co.", LTD: "Ltd.", "LTD.": "Ltd.", PLC: "plc", LLC: "LLC" };

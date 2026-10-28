@@ -18,9 +18,19 @@ export const RANGES: Record<KnobKey, [number, number]> = {
 };
 const LEVER_KEYS: (keyof Levers)[] = ["cut_capex", "cut_payouts", "issue_debt", "draw_revolver", "issue_equity", "cut_costs", "recessions"];
 
+/** "2020" alone is a year, not a scenario ("worse than 2020"); it triggers the preset only next to a crisis word. */
+const CRISIS_WORD = "(?:crisis|shock|style|repeat|again|collapse|freeze|crash|lockdowns?|scenario)";
+const PANDEMIC = new RegExp(`\\b(?:pandemic|covid|lockdowns?|shut ?downs?)\\b|\\b2020\\b[ -]*${CRISIS_WORD}\\b|\\b${CRISIS_WORD}\\s+(?:like|as in|of|from)\\s+2020\\b|\\b(?:another|repeat of|rerun of|again)\\s+2020\\b`);
+
+/**
+ * Cost shocks written as a percentage ("wages up 5%") are a change in the cost itself, while the stress-lab knob is
+ * percentage points of revenue. Costs are assumed to be this share of revenue, so 5% more wages is 5% x 0.6 = 3pp.
+ */
+export const COST_SHARE_OF_REVENUE = 0.6;
+
 /** Named scenarios recognised by keyword; explicit numbers in the text override them. */
 const NAMED: [RegExp, Partial<Record<KnobKey, number>>, string][] = [
-  [/\b(pandemic|covid|lockdowns?|shut ?downs?|2020)\b/, { sales_depth: 0.7, sales_duration: 3, sales_recovery: 8, spread_bp: 400, spread_duration: 6, refi_freeze: 2, rate_bp: -150 }, "a 2020-style demand freeze"],
+  [PANDEMIC, { sales_depth: 0.7, sales_duration: 3, sales_recovery: 8, spread_bp: 400, spread_duration: 6, refi_freeze: 2, rate_bp: -150 }, "a 2020-style demand freeze"],
   [/\b(2008|financial crisis|great recession|lehman)\b/, { sales_depth: 0.15, sales_duration: 3, sales_recovery: 8, spread_bp: 500, spread_duration: 6, refi_freeze: 4, rate_bp: -200, cost_pp: 1, cost_duration: 4 }, "a 2008-style recession with a credit crunch"],
   [/\bstagflation|1970s\b/, { rate_bp: 300, cost_pp: 3, cost_duration: 6, sales_depth: 0.05, sales_duration: 2, sales_recovery: 4 }, "stagflation"],
   [/\bcredit crunch\b/, { refi_freeze: 4, spread_bp: 500, spread_duration: 4 }, "a credit crunch"],
@@ -61,7 +71,7 @@ function bps(s: string): number | undefined {
   return pts ? Math.round(+pts[1] * 100) : undefined;
 }
 
-export function parseScenario(text: string, names: Record<string, string> = {}): Interpretation {
+export function parseScenario(text: string, names: Record<string, string> = {}, costShare = COST_SHARE_OF_REVENUE): Interpretation {
   const raw = text.trim();
   const s = raw.toLowerCase();
   const knobs: Partial<Record<KnobKey, number>> = {};
@@ -102,8 +112,12 @@ export function parseScenario(text: string, names: Record<string, string> = {}):
       knobs.refi_freeze = d ?? 2;
     }
     if (/\b(costs?|wages?|input prices?|raw materials?|energy prices?|inflation|commodit\w*)\b/.test(c) && UP.test(c) && !/\bborrowing|cost of debt/.test(c)) {
-      const m = c.match(/(\d+(?:\.\d+)?)\s*(%|percent|per cent|pp|percentage points?|points?)/);
-      knobs.cost_pp = m ? +m[1] : knobs.cost_pp ?? 3;
+      const m = c.match(/(\d+(?:\.\d+)?)\s*(%|percentage points?|pp|points?|percent|per cent)/);
+      if (m) {
+        const relative = m[2] === "%" || m[2] === "percent" || m[2] === "per cent"; // a % change of the cost, not pp of revenue
+        knobs.cost_pp = relative ? +(+m[1] * costShare).toFixed(1) : +m[1];
+        if (relative) understood.push(`${m[1]}% higher costs read as ${knobs.cost_pp}pp of revenue (costs assumed ${Math.round(costShare * 100)}% of revenue)`);
+      } else knobs.cost_pp = knobs.cost_pp ?? 3;
       if (d !== undefined) knobs.cost_duration = d;
     }
     const inv = c.match(/inventor\w*.*?(\d+)\s*days|(\d+)\s*(more|extra)?\s*days of inventor/);
@@ -123,14 +137,32 @@ export function parseScenario(text: string, names: Record<string, string> = {}):
   return { ...clamped, understood: matched ? understood : [], matched };
 }
 
+/** Tickers that are also everyday words: accepted only as "$ALL" or "(ALL)", never as a bare capitalised word. */
+const WORD_TICKERS = new Set(["A", "ALL", "IT", "ON", "NOW", "KEY", "CAT", "LOW", "FAST", "ARE", "ANY", "ONE", "BIG", "FOR", "HAS", "CAN", "NEW", "TOP", "WELL", "LIVE", "BEST", "EVER", "GAS", "HOME", "LIFE", "MAIN", "REAL", "SEE", "TECH", "TRUE", "WAY", "WELL", "OUT", "SO", "BY", "AN", "AS", "AT", "BE", "DO", "GO", "HE", "IF", "IN", "IS", "NO", "OF", "OR", "TO", "UP", "US", "WE", "AND", "BUT", "THE", "WAS", "NOT", "YOU", "ALLY", "MET", "ICE", "HAL", "PEG", "RE", "EL", "LH", "BR", "L", "ES"]);
+/** First words of company names that are plain English; a name must match on more than this one word. */
+const COMMON_FIRST_WORDS = new Set(["match", "target", "block", "ross", "general", "american", "united", "first", "global", "world", "health", "energy", "south", "north", "national", "western", "digital", "public", "service", "services", "international", "capital", "group", "partners", "regions", "best", "live", "fast", "home", "life", "mark", "dollar", "universal", "southern", "eastern", "central", "pacific", "atlantic", "great", "real", "direct", "key", "marathon", "community", "federal", "royal", "steel", "ball", "dominion"]);
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /** Uppercase tickers written as such ("AAPL", "CCL") or a company's name ("Carnival", "Boeing"). */
 export function findCompany(text: string, names: Record<string, string>): string | undefined {
-  for (const t of text.match(/\b[A-Z]{2,5}\b/g) ?? []) if (t in names) return t;
+  // a fully upper-case sentence ("WHAT IF ALL REVENUE FALLS") says nothing about tickers
+  const shouting = /\s/.test(text.trim()) && text === text.toUpperCase();
+  if (!shouting) {
+    for (const t of text.match(/\b[A-Z]{1,5}\b/g) ?? []) {
+      if (!(Object.prototype.hasOwnProperty.call(names, t))) continue;
+      if (t.length < 2) continue;
+      if (WORD_TICKERS.has(t) && !new RegExp(`(?:\\$|\\()${t}\\b`).test(text)) continue;
+      return t;
+    }
+  }
   const lower = ` ${text.toLowerCase().replace(/[^a-z0-9& ]/g, " ")} `;
   const hits = Object.entries(names).filter(([, n]) => {
     const words = n.toLowerCase().replace(/[^a-z0-9& ]/g, " ").split(/\s+/).filter(Boolean);
     const first = words[0] ?? "";
-    return (first.length >= 4 && lower.includes(` ${first} `)) || lower.includes(` ${words.slice(0, 2).join(" ")} `);
+    // a one-word match needs a distinctive word that the user wrote with a capital letter ("Carnival", not "carnival rides")
+    const capitalised = first.length >= 4 && new RegExp(`\\b${escapeRe(first.charAt(0).toUpperCase() + first.slice(1))}\\b`).test(text);
+    const single = capitalised && !COMMON_FIRST_WORDS.has(first) && lower.includes(` ${first} `);
+    return single || (words.length > 1 && lower.includes(` ${words.slice(0, 2).join(" ")} `));
   });
   return hits.length === 1 ? hits[0][0] : undefined;
 }
