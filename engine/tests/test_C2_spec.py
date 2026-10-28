@@ -73,10 +73,13 @@ GOLD_DISTRESS = {
 }
 
 
-def test_v2_pre_outputs_identical_to_pre_revision_code(monkeypatch):
+@pytest.mark.parametrize("legacy", [False, True])
+def test_v2_pre_outputs_identical_to_pre_revision_code(monkeypatch, legacy):
     from fintwin.scenarios.presets import PRESETS
 
     monkeypatch.setenv("FINTWIN_SPEC", "v2-pre")
+    if legacy:  # the comparison run: v2-pre on the revision-2 data layer
+        monkeypatch.setenv("FINTWIN_DATA_LEGACY", "1")
     hist, full = split(quarters(), "2018-02-15")
     p = {**make_params(), "sector_tol": 1.0}
     st = X.structural(hist, p, full, None)

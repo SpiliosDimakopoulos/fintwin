@@ -77,32 +77,68 @@ def test_d4_missing_outcome_quarter_is_not_zero_burn(monkeypatch):
     assert legacy["burn8"] is not None and np.isfinite(legacy["cum8"])  # the old code counted it as zero
 
 
+def _gap_row(q: pd.DataFrame, i: int) -> pd.DataFrame:
+    """Workstream A's D1 calendar: a quarter without a filing stays as a row, flows NaN, gap=True."""
+    q = q.copy()
+    q["gap"] = False
+    q.loc[q.index[i], ["revenue", "cfo", "capex", "operating_income", "net_income", "da"]] = np.nan
+    q.loc[q.index[i], "gap"] = True
+    return q
+
+
 def test_sw4_dropped_quarter_breaks_positional_alignment(monkeypatch):
-    q = quarters(drop=(35,))  # a quarter missing from the spine inside the outcome window
+    q = quarters(drop=(35,))  # a legacy spine that drops the quarter inside the outcome window
     hist, full = split(q, "2018-02-15")
     p = {**make_params(), "sector_tol": 1.0}
     fails = X.Failures()
     assert X.structural(hist, p, full, None, fails=fails) == {}
-    assert fails.d["structural"]["skipped"] == {"gap_or_short": 1}
-    assert X._distress(hist, full) == {}
+    assert fails.d["structural"]["skipped"] == {"gap": 1}
+    assert X._distress(hist, full, fails=fails) == {}
+    assert fails.d["outcome"]["skipped"] == {"gap": 1}
     assert len(B._realized(full, pd.Timestamp("2018-09-30"))) == 0  # gap right after the cutoff's last quarter
     monkeypatch.setenv("FINTWIN_DATA_LEGACY", "1")
     assert X.structural(hist, p, full, None) != {}  # the old code silently compared the wrong quarters
 
 
-def test_contiguous_prefix():
-    idx = pd.DatetimeIndex(["2018-03-31", "2018-06-30", "2018-12-31", "2019-03-31"])
-    assert B.contiguous_prefix(pd.Timestamp("2017-12-31"), idx) == 2
-    assert B.contiguous_prefix(pd.Timestamp("2017-09-30"), idx) == 0
-    # 52/53-week calendars drift a few days but stay one quarter apart
-    wk = pd.DatetimeIndex(["2018-03-31", "2018-06-30", "2018-09-29", "2018-12-29"])
-    assert B.contiguous_prefix(pd.Timestamp("2017-12-30"), wk) == 4
+def test_gap_rows_in_outcome_window_are_rejected_and_counted():
+    q = _gap_row(quarters(), 35)  # D1 gap row among the eight outcome quarters of the 2018 cutoff
+    hist, full = split(q, "2018-02-15")
+    p = {**make_params(), "sector_tol": 1.0}
+    fails = X.Failures()
+    assert X.structural(hist, p, full, None, fails=fails) == {}
+    assert X._distress(hist, full, fails=fails) == {}
+    assert fails.d["structural"]["skipped"] == {"gap": 1} and fails.d["outcome"]["skipped"] == {"gap": 1}
+    why: dict = {}
+    assert len(B._realized(full, pd.Timestamp("2018-06-30"), why)) == 0 and why == {"realized": "gap"}
+    nxt, reason = B.following(full, pd.Timestamp("2019-03-31"), 8)  # window after the gap: fine
+    assert reason is None and len(nxt) == 8
+    assert B.following(full, full.index[-3], 8)[1] == "short"
 
 
-def test_ttm_and_usable_require_consecutive_quarters():
+def test_fye_break_rejects_window():
+    q = quarters()
+    q["fye_break"] = False
+    q.loc[q.index[34], "fye_break"] = True
+    hist, full = split(q, "2018-02-15")
+    assert B.following(full, hist.quarters.index[-1], 8)[1] == "gap"
+
+
+def test_usable_ttm_and_lagged_sums_require_consecutive_quarters(monkeypatch):
     q = quarters(drop=(44,))
     assert np.isnan(X._ttm(q.iloc[:46], "revenue"))  # 4 rows spanning 5 calendar quarters
     assert np.isfinite(X._ttm(q.iloc[:40], "revenue"))
+    g = _gap_row(quarters(), 30)  # 2017Q3 is a gap row
+    hist, _ = split(g, "2019-02-15")
+    assert len(hist.quarters) >= 16 and not X.usable(hist, "2019-02-15")  # 16 rows, not 16 reported quarters
+    hist2, _ = split(g, "2022-02-15")
+    assert X.usable(hist2, "2022-02-15")
+    hist3, _ = split(g, "2018-02-15")  # the gap row is the 2nd of the last four rows
+    assert np.isnan(X._ttm(hist3.quarters, "revenue")) and np.isnan(X._ttm(hist3.quarters, "capex"))
+    hist4, _ = split(g, "2019-02-15")  # gap row in the quarters before the TTM window: no lagged net income
+    f = X.features(hist4, make_params())
+    assert f["o_score"] is None
+    monkeypatch.setenv("FINTWIN_DATA_LEGACY", "1")
+    assert X.usable(hist, "2019-02-15")  # v2: the row count was enough
 
 
 def test_sw15_features_survive_zero_balance_items():
