@@ -121,7 +121,7 @@ Sharadar, tradevodata) είναι επί πληρωμή. Τα bankruptcy dataset
 Pre-spec πριν τρέξει, compute στον burst server, γίνεται notebook #1, blog post και το κεντρικό post στο HN.
 
 ### W. Dashboard για όλους
-- **W1** Μέτρηση: χρόνος ανά εταιρεία στο σημερινό `data.yml` (16 shards, timeouts 120'). Από εκεί αν 5.200 χωρούν
+- **W1** Μέτρηση (28-10, 3 τελευταία runs): norms ~14', shards 5,5–6' median για ~392 εταιρείες/16 ≈ 13,5 s ανά εταιρεία, σύνολο ~23'. Για 5.200: ~19,5 ώρες runner, με 20 ταυτόχρονα jobs ≈ 60' + norms ≈ 75–80' την εβδομάδα. Χωράει δωρεάν (32 shards × ~37', κάτω από το timeout 120'). Αρχικά έλεγχος αν
   στα δωρεάν runners (public repo) με περισσότερα shards, ή αν το πλήρες universe χτίζεται ανά μήνα και οι 390 ανά εβδομάδα.
 - **W2** Universe: από S&P 500 (`universe_sp500.csv`, 394) στο universe του dataset με φίλτρο κάλυψης· gate
   `MIN_COMPANIES` προσαρμόζεται.
