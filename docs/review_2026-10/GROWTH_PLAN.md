@@ -232,3 +232,25 @@ Launch ρεαλιστικά **αρχές-μέσα Δεκεμβρίου ή μέσ
 | Το bench δεν είναι καινούριο | B0 πριν από κάθε δήλωση· το prospective track και τα PIT labels είναι η διαφορά |
 | Μέγεθος Pages | W5 (company JSON στο HF) |
 | Rate limits SEC από χρήστες | hub mode προεπιλογή· live mode με το throttle που ήδη υπάρχει |
+
+## 8. Ευρήματα G0 (28-10)
+
+**Πόσο καινούριο είναι το benchmark.** Κοντινότερα: V4FinBench (2026, 1M+ firm-years Visegrad, label κανόνας από λογιστικά, χωρίς PIT, χωρίς live track),
+EDGAR-CORPUS/ECL (labels LoPucki, αριθμοί Compustat, ετήσιο), arXiv 2606.05623 (10-K κείμενο, ετήσιο).
+Live/prospective: ForecastBench, Foresight Arena, TS-Arena (commit-reveal), κανένα σε credit/θεμελιώδη.
+Ένα ανοιχτό PIT dataset βρέθηκε μόνο ως CC BY-NC με το ιστορικό αναθεωρήσεων επί πληρωμή (StockAlloy FiledFact-100K).
+**Μπορούμε να πούμε** (ως «δεν βρήκαμε προηγούμενο»): ανοιχτό CC-BY PIT/as-first-reported panel XBRL· labels από
+ημερομηνίες 8-K 1.03 σε 4 και 8 τρίμηνα· task έλλειψης ρευστότητας· CRPS για ταμειακές ροές με/χωρίς revenue·
+prospective track σε credit. **Δεν λέμε**: «πρώτο bankruptcy benchmark», «πρώτο σε SEC», «πρώτο live», «πρώτο PIT».
+
+**Άδειες ανά σειρά (αντικαθιστά το A6).**
+
+| Σειρά | Στο CC-BY dataset; |
+|---|---|
+| BAA10Y (Moody's) | Όχι. Script που την κατεβάζει τοπικά. |
+| Philly Fed RTDSM (GDP vintages) | Όχι χωρίς γραπτή άδεια. Script + παραπομπή Croushore & Stark (2001). Προαιρετικά email στη Philly Fed. |
+| DGS3MO, DGS10 | Ναι, από την πηγή (Fed H.15 ή Treasury yield curve), όχι από FRED. |
+| GDP | Ναι, από BEA, με αναφορά. |
+| USREC | Ναι, χτισμένο από τις ημερομηνίες NBER («Permission to copy is granted, provided attribution»). |
+
+Νέο αρχείο `THIRD_PARTY.md` με πηγή και όρους κάθε σειράς· οι σειρές NBER/BEA/Fed εξαιρούνται ρητά από τη CC-BY.
