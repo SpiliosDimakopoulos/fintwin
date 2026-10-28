@@ -101,26 +101,31 @@ def sample(seed: int = 7) -> list[tuple[str, int]]:
     return [(keys[i], int(rng.integers(2016, 2023))) for i in rng.choice(len(keys), 4 * N_SAMPLE, replace=False)]
 
 
-def _one(key: str, year: int, X: np.ndarray) -> dict | None:
+def _one(key: str, year: int, X: np.ndarray) -> dict | str:
+    """The firm-year's outputs at every design point, or the reason it is excluded (a data rule, not an error)."""
     from ..data.facts import load_company
     from ..model.sd_model import simulate
     from ..scenarios.presets import DEFAULT_LEVERS, build_scenario
     from ..stochastic.shocks import draw_shocks
-    from .experiments import _following, _margin, _ttm, calibrate, fix_active, macro_quarterly, usable
+    from .experiments import _margin, _ttm, calibrate, fix_active, following, macro_quarterly, usable
 
     origin = f"{year}-02-15"
     hist = load_company(key, asof=origin)
     if not usable(hist, origin):
-        return None
+        return "not_usable"
     full = load_company(key).quarters
     pre = hist.quarters
-    nxt = _following(full, pre.index[-1], 8)  # empty if unreported or a gap row (D1); the shard counts the None
+    nxt, why = following(full, pre.index[-1], 8)  # empty if unreported ("short") or holding a gap row (D1)
+    if why:
+        return f"outcome_{why}"
+    if nxt["revenue"].isna().any() or nxt["cfo"].isna().any():
+        return "outcome_missing"
     rev_ttm = _ttm(pre, "revenue")
-    if len(nxt) < 8 or nxt["revenue"].isna().any() or nxt["cfo"].isna().any() or not rev_ttm > 50e6:
-        return None
+    if not rev_ttm > 50e6:
+        return "small"
     m4 = _margin(pre, pre["cfo"], 4)
     if not np.isfinite(m4):
-        return None
+        return "no_margin"
     rev = nxt["revenue"].to_numpy(float)
     macro = macro_quarterly(origin)
     fs = factors()
@@ -160,7 +165,7 @@ def shard(i: int, n: int) -> None:
     d.mkdir(parents=True, exist_ok=True)
     X = points()
     st = stamp()
-    done, failed = 0, {}
+    done, failed, excluded = 0, {}, {}
     for k, (key, year) in enumerate(sample()):
         if k % n != i or done >= N_SAMPLE // n:
             continue
@@ -174,14 +179,15 @@ def shard(i: int, n: int) -> None:
             failed[type(e).__name__] = failed.get(type(e).__name__, 0) + 1
             print(f"  {key} {year}: {type(e).__name__}: {e}", flush=True)
             continue
-        if r is None:  # not usable at the cutoff, or the eight outcome quarters are unreported or hold a gap
-            failed["excluded_window"] = failed.get("excluded_window", 0) + 1
+        if isinstance(r, str):  # a data exclusion (not usable, outcome window short or with a gap, ...), not an error
+            excluded[r] = excluded.get(r, 0) + 1
             continue
         r["_stamp"] = st
         out.write_text(json.dumps(_clean(r)), encoding="utf-8")
         done += 1
         print(f"  {key} {year} done ({done})", flush=True)
-    (d / f"_failures_{i}_of_{n}.txt").write_text(json.dumps(failed), encoding="utf-8")
+    report = {"failed": failed, "excluded": excluded}  # exceptions by type vs data exclusions by reason
+    (d / f"_failures_{i}_of_{n}.txt").write_text(json.dumps(report), encoding="utf-8")
 
 
 def _est(fA: np.ndarray, fB: np.ndarray, fAB: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
