@@ -36,3 +36,4 @@ docs/OUTREACH.md
 docs/paper/**/*.aux
 docs/paper/*.toc
 docs/paper/*.synctex.gz
+docs/RESEARCHER_REPLIES_*.md
