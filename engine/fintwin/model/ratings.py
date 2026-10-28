@@ -39,7 +39,9 @@ ORDER_DAMODARAN = ["AAA", "AA", "A+", "A", "A-", "BBB", "BB+", "BB", "B+", "B", 
 
 
 def rating_rank(icr: np.ndarray) -> np.ndarray:
-    return np.searchsorted(ICR_LOWER, icr, side="right") - 1
+    # SW-9: searchsorted puts NaN after every bound (AAA); an undefined coverage ranks worst, as in ratings.ts.
+    rank = np.searchsorted(ICR_LOWER, icr, side="right") - 1
+    return np.where(np.isnan(icr), 0, rank)
 
 
 def rating_spread(icr: np.ndarray) -> np.ndarray:

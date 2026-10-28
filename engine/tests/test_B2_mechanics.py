@@ -193,3 +193,9 @@ def test_m7_with_covenants_and_revolver_maturity():
     d = sd_model.decision_outputs(out, p)
     assert d["p_cov_breach"] == pytest.approx((sd_model.first_covenant_breach(out) >= 0).mean())
     assert d["first_cov_breach_q_median"] is not None and d["revolver_due"]["q"] == 6
+
+
+def test_sw9_nan_coverage_ranks_worst():
+    from fintwin.model.ratings import rating_rank
+
+    assert rating_rank(np.array([np.nan, 100.0, -1.0])).tolist()[0] == 0
