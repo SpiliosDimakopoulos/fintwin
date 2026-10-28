@@ -35,16 +35,18 @@ def fact_sheet(c: dict, meta: dict) -> dict:
     p = c["params"]
     hist = c["history"]["series"]
     last_rating = next((r for r in reversed(hist["rating"]) if r is not None), None)
-    rev_ttm = sum(x for x in hist["revenue"][-4:] if x is not None)
+    last4 = hist["revenue"][-4:]
+    # a missing quarter would silently understate TTM revenue, so say so instead of summing the rest
+    rev_ttm = sum(last4) if len(last4) == 4 and all(x is not None for x in last4) else None
     sheet = {
         "company": c["name"],
         "ticker": c["ticker"],
         "sector": c["sector"],
         "last_reported_quarter": p["last_quarter"],
         "horizon_quarters": p["horizon"],
-        "simulated_paths": 5000,
+        "simulated_paths": c.get("n_paths", 5000),
         "reported": {
-            "revenue_last_4_quarters": _money(rev_ttm),
+            "revenue_last_4_quarters": _money(rev_ttm) if rev_ttm is not None else "n/a (a quarter is missing)",
             "cash_and_short_term_investments": _money(p["cash0"]),
             "total_debt": _money(p["debt0"]),
             "synthetic_rating_today": RATINGS[int(last_rating)] if last_rating is not None else "n/a",
@@ -256,7 +258,7 @@ def write_note(c: dict, meta: dict) -> dict:
 
     return {
         "ticker": c["ticker"],
-        "generated_by": "FinTwin rule-based analyst (deterministic, no language model)",
+        "generated_by": f"{RULE_BASED} (deterministic, no language model)",
         "as_of": p["last_quarter"],
         "attempts": 1,
         "unverified_numbers": [],
@@ -271,15 +273,30 @@ def write_note(c: dict, meta: dict) -> dict:
     }
 
 
+RULE_BASED = "FinTwin rule-based analyst"
+
+
+def _is_rule_based(path: Path) -> bool:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("generated_by", "").startswith(RULE_BASED)
+    except (OSError, ValueError):
+        return True  # unreadable file: safe to regenerate
+
+
 def build(tickers: list[str] | None = None) -> None:
     index = json.loads((DATA / "index.json").read_text(encoding="utf-8"))
     out = DATA / "memos"
     out.mkdir(exist_ok=True)
+    written = 0
     for t in tickers or sorted(index["companies"]):
         c = json.loads((DATA / "companies" / f"{t}.json").read_text(encoding="utf-8"))
+        path = out / f"{t}.json"
+        if path.exists() and not _is_rule_based(path):
+            continue  # never overwrite a committed Claude memo (fintwin.memo writes the same path)
         note = write_note(c, index["meta"])
-        (out / f"{t}.json").write_text(json.dumps(note, indent=1, ensure_ascii=False), encoding="utf-8")
-    print(f"wrote {len(tickers or index['companies'])} analyst notes")
+        path.write_text(json.dumps(note, indent=1, ensure_ascii=False), encoding="utf-8")
+        written += 1
+    print(f"wrote {written} analyst notes")
 
 
 if __name__ == "__main__":

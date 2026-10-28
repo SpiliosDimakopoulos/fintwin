@@ -157,10 +157,29 @@ def _clean(o, sig: int = 10):
     return o
 
 
+def dumps(obj, sig: int = 10, **kw) -> str:
+    """Strict JSON text: `_clean` first, then ``allow_nan=False`` so a stray NaN can never reach JSON.parse."""
+    return json.dumps(_clean(obj, sig), allow_nan=False, **kw)
+
+
 def _write(path: Path, obj, sig: int = 10) -> None:
     """Write a JSON-safe object to ``path``, creating parent directories as needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_clean(obj, sig), separators=(",", ":")), encoding="utf-8")
+    path.write_text(dumps(obj, sig, separators=(",", ":")), encoding="utf-8")
+
+
+def index_entry(block: dict) -> dict:
+    """One company's entry in index.json; the single builder shared by export.build and pipeline.build_index."""
+    return {
+        "name": block["name"],
+        "sector": block["sector"],
+        "gics": block.get("gics", ""),
+        "showcase": block["ticker"] in SHOWCASE,
+        "last_quarter": block["params"]["last_quarter"],
+        "matrix": {k: {"health": v["health_score"], "p_breach": v["p_breach"]} for k, v in block["presets"].items()},
+        # baseline score components, so the weekly changes feed can say which one moved
+        "components": block["presets"]["base"].get("components"),
+    }
 
 
 def history_block(c, n: int = 28) -> dict:
@@ -238,6 +257,7 @@ def company_block(ticker: str, macro: pd.DataFrame, n_paths: int = 5000, with_so
         "gics": classify(c.ticker)[0],
         "edgar_url": f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={c.cik}&type=10-",
         "quality": quality_report(c),
+        "n_paths": n_paths,
         "params": p,
         "history": history_block(c),
         "presets": presets,
@@ -324,15 +344,7 @@ def build(tickers: list[str], with_backtests: bool = True) -> None:
             failed.append(t)
             continue
         _write(OUT / "companies" / f"{t}.json", block)
-        index["companies"][t] = {
-            "name": block["name"],
-            "sector": block["sector"],
-            "showcase": t in SHOWCASE,
-            "last_quarter": block["params"]["last_quarter"],
-            "matrix": {
-                k: {"health": v["health_score"], "p_breach": v["p_breach"]} for k, v in block["presets"].items()
-            },
-        }
+        index["companies"][t] = index_entry(block)
         print(f"  {t}: health {block['presets']['base']['health_score']:.0f} ({time.time() - t0:.1f}s)")
     index["meta"] = meta_block()
     _write(index_path, index)
