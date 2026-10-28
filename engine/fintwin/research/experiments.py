@@ -70,7 +70,9 @@ LADDER: list[tuple[str, dict[str, str]]] = [
 
 
 def spec_name() -> str:
-    s = (os.environ.get("FINTWIN_SPEC") or "v3").strip()
+    # Unset means the same default as stochastic/spec.py, so labels and the fixes actually applied never disagree.
+    default = getattr(_spec_mod, "DEFAULT_SPEC", "v3") if _spec_mod is not None else "v3"
+    s = (os.environ.get("FINTWIN_SPEC") or default).strip()
     if s not in SPECS:
         raise ValueError(f"FINTWIN_SPEC={s!r}: expected one of {SPECS}")
     return s

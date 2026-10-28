@@ -42,6 +42,12 @@ def data_legacy() -> bool:
     return os.environ.get("FINTWIN_DATA_LEGACY", "0") == "1"
 
 
+def fill_only() -> bool:
+    """FINTWIN_FILL_ONLY=1: every cached file counts as fresh, only missing files are fetched (topping up a snapshot
+    without mixing in newer vintages of files it already holds)."""
+    return os.environ.get("FINTWIN_FILL_ONLY", "0") == "1"
+
+
 class FrozenMiss(FileNotFoundError):
     """A file the frozen snapshot does not contain."""
 
@@ -49,7 +55,7 @@ class FrozenMiss(FileNotFoundError):
 def _get_json(url: str, cache_name: str, max_age_hours: float) -> dict:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / (cache_name + ".gz")  # gzip: company facts compress ~8x
-    if path.exists() and (frozen() or (time.time() - path.stat().st_mtime) < max_age_hours * 3600):
+    if path.exists() and (frozen() or fill_only() or (time.time() - path.stat().st_mtime) < max_age_hours * 3600):
         with gzip.open(path, "rt", encoding="utf-8") as fh:
             return json.load(fh)
     if frozen():

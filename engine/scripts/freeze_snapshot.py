@@ -1,6 +1,7 @@
 """Freeze the research inputs into one archived snapshot, so every rerun reads the same data vintage.
 
 python scripts/freeze_snapshot.py build     # fetch every universe company's facts, filings and FRED series, then pack
+python scripts/freeze_snapshot.py pack      # re-pack engine/.cache after a FINTWIN_FILL_ONLY=1 top-up
 python scripts/freeze_snapshot.py verify    # check engine/.cache against snapshot/manifest.json
 python scripts/freeze_snapshot.py restore F # unpack snapshot tarball F into engine/.cache and verify it
 
@@ -49,8 +50,18 @@ def build() -> None:
     prefetch()
     for series_id in SERIES.values():
         fred_series(series_id, max_age_hours=0)
+    pack({"started": started, "finished": dt.datetime.now(dt.UTC).isoformat(timespec="seconds")})
+
+
+def pack(extracted: dict | None = None) -> None:
+    """Pack engine/.cache as it is (after a FINTWIN_FILL_ONLY top-up, the earlier extraction dates are kept)."""
+    old = OUT / "manifest.json"
+    if extracted is None:
+        prev = json.loads(old.read_text(encoding="utf-8")) if old.exists() else {}
+        extracted = {**prev.get("extracted", {}), "topped_up": dt.datetime.now(dt.UTC).isoformat(timespec="seconds")}
+    started = extracted.get("started", dt.datetime.now(dt.UTC).isoformat())
     m = manifest()
-    m["extracted"] = {"started": started, "finished": dt.datetime.now(dt.UTC).isoformat(timespec="seconds")}
+    m["extracted"] = extracted
     OUT.mkdir(exist_ok=True)
     tar = OUT / f"fintwin_snapshot_{started[:10]}.tar"
     with tarfile.open(tar, "w") as tf:  # members are already gzip-compressed
@@ -85,4 +96,4 @@ if __name__ == "__main__":
     if sys.argv[1] == "restore":
         restore(sys.argv[2])
     else:
-        {"build": build, "verify": verify}[sys.argv[1]]()
+        {"build": build, "verify": verify, "pack": pack}[sys.argv[1]]()
