@@ -26,7 +26,21 @@ def run(
     lev = {**DEFAULT_LEVERS, **(levers or {})}
     if eps is None:
         eps = draw_shocks(p, n_paths, T, seed)
-    return simulate(p, scn, eps, lev)
+    return simulate_paths(p, scn, eps, lev)
+
+
+def simulate_paths(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
+    """`simulate`, with parameter uncertainty when calibration attached `_param_draws` (MM-F9).
+
+    Paths are split into contiguous blocks, one parameter vector each; the shocks are unchanged, so with the same eps
+    the only difference from `simulate` is the parameters. Without draws this is exactly `simulate`.
+    """
+    draws = p.get("_param_draws")
+    if not draws:
+        return simulate(p, scn, eps, levers)
+    blocks = np.array_split(np.arange(eps.shape[0]), min(len(draws), eps.shape[0]))
+    outs = [simulate({**p, **draws[i]}, scn, eps[b], levers) for i, b in enumerate(blocks)]
+    return {k: np.concatenate([o[k] for o in outs], axis=0) for k in outs[0]}
 
 
 def summarize(out: dict) -> dict:
