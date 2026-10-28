@@ -79,4 +79,16 @@ describe("browser shock distribution", () => {
 
     expect(Math.abs(mean - df)).toBeLessThan(df === 1 ? 0.12 : 0.2);
   });
+
+  it("F8 gives demand and margin separate tail mixing; F7 t_scale rescales the draws", () => {
+    const sq = (a: number[]) => a.map((x) => x * x);
+    const shared = drawShocks({ ...baseParams, rho_gm: 0, t_df: 5 }, N, 1, 131);
+    const indep = drawShocks({ ...baseParams, rho_gm: 0, t_df: 5, t_mix_indep: 1 }, N, 1, 131);
+    const tail = (e: Float64Array) => sampleCorrelation(sq(channel(e, 0, N)), sq(channel(e, 1, N)));
+    expect(tail(shared)).toBeGreaterThan(0.15);
+    expect(Math.abs(tail(indep))).toBeLessThan(0.05);
+    const base = channel(drawShocks({ ...baseParams, t_df: 5 }, N, 1, 7), 0, N);
+    const scaled = channel(drawShocks({ ...baseParams, t_df: 5, t_scale: 2 * Math.sqrt(3 / 5) }, N, 1, 7), 0, N);
+    scaled.forEach((v, i) => expect(v).toBeCloseTo(2 * base[i], 9));
+  });
 });
