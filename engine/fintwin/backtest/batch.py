@@ -12,6 +12,7 @@ out-of-sample.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -134,8 +135,73 @@ UNIVERSE_XL = [
 ]
 
 
+STEP_DAYS = (60, 125)  # one fiscal quarter apart, allowing for 52/53-week calendars and stub periods
+
+
+def data_legacy() -> bool:
+    """FINTWIN_DATA_LEGACY=1 restores the v2 data handling (zero-filled outcome gaps, positional alignment, 90-day
+    reporting lag) for the one comparison run of REVISION_PLAN_3 §0.3."""
+    return os.environ.get("FINTWIN_DATA_LEGACY", "0") == "1"
+
+
+def contiguous_prefix(prev: pd.Timestamp, idx: pd.DatetimeIndex) -> int:
+    """How many of the quarter ends in `idx` follow `prev` (and each other) one quarter apart, up to the first gap.
+
+    Realized quarters are matched to forecast quarters by position, so a missing quarter would compare simulated
+    quarter h with a later quarter (SW-4). Workstream A's full calendar turns such quarters into NaN rows; this check
+    also holds for a spine that drops them."""
+    n = 0
+    for t in idx:
+        if not STEP_DAYS[0] <= (t - prev).days <= STEP_DAYS[1]:
+            break
+        n += 1
+        prev = t
+    return n
+
+
+def first_filed(cik: int) -> dict[str, pd.Series]:
+    """Period end -> date the value was first filed, for revenue and cash, from the cached companyfacts (D10)."""
+    from ..data.facts import DURATION, FORMS, INSTANT
+    from ..data.facts import company_facts as _facts
+
+    gaap = _facts(cik)["facts"].get("us-gaap", {})
+    out: dict[str, pd.Series] = {}
+    for field, tags in (("revenue", DURATION["revenue"]), ("cash", INSTANT["cash"])):
+        frames = []
+        for tag in tags:
+            rows = gaap.get(tag, {}).get("units", {}).get("USD", [])
+            if rows:
+                d = pd.DataFrame(rows)
+                frames.append(d.loc[d["form"].isin(FORMS), ["end", "filed"]])
+        if frames:
+            d = pd.concat(frames)
+            out[field] = pd.to_datetime(d["filed"]).groupby(pd.to_datetime(d["end"])).min().sort_index()
+    return out
+
+
+def filed_for(filed: pd.Series | None, end: pd.Timestamp, tol_days: int = 12) -> str | None:
+    """First filing date of the period ending nearest `end` (within the spine's alignment tolerance)."""
+    if filed is None or filed.empty:
+        return None
+    gap = np.abs((filed.index - pd.Timestamp(end)).days)
+    i = int(np.argmin(gap))
+    return str(filed.iloc[i].date()) if gap[i] <= tol_days else None
+
+
+def seen_by(target: pd.Series, filed: pd.Series | None, cutoff: pd.Timestamp, lag_days: int = 90) -> pd.Series:
+    """Was each target quarter reported by `cutoff`? The actual first filing date when known (D10), otherwise the
+    quarter end plus `lag_days` (the only rule before revision 3, and the rule under FINTWIN_DATA_LEGACY)."""
+    fallback = pd.to_datetime(target) + pd.Timedelta(days=lag_days)
+    if filed is None or data_legacy():
+        return fallback <= cutoff
+    when = pd.to_datetime(filed, errors="coerce").fillna(fallback)
+    return when <= cutoff
+
+
 def _realized(full: pd.DataFrame, after: pd.Timestamp) -> pd.DataFrame:
     r = full[full.index > after + pd.Timedelta(days=20)].head(H).copy()
+    if not data_legacy():
+        r = r.iloc[: contiguous_prefix(after, r.index)]
     r["cash_like"] = r["cash"] + r["short_investments"]
     return r
 
@@ -148,6 +214,22 @@ def _baseline(hist: pd.DataFrame, var: str, h: int) -> tuple[float, float]:
         return float(same), float(same * yoy.std() * np.sqrt(int(np.ceil(h / 4))))
     s = (hist["cash"] + hist["short_investments"]).dropna()
     return float(s.iloc[-1]), float(s.diff().tail(20).std() * np.sqrt(h))
+
+
+def rw_empirical(hist: pd.DataFrame, var: str, h: int) -> np.ndarray | None:
+    """Random-walk density from empirical quantiles (E10), an alternative to the Gaussian `_baseline`: the seasonal
+    random walk times the last 20 observed year-on-year growth factors for revenue; the last cash balance plus the
+    last 20 observed h-quarter changes for cash."""
+    if var == "revenue":
+        s = hist["revenue"].dropna()
+        if len(s) < 12:
+            return None
+        same = float(s.iloc[-4 + ((h - 1) % 4)])
+        yoy = np.log(s / s.shift(4)).replace([np.inf, -np.inf], np.nan).dropna().tail(20).to_numpy(float)
+        return same * np.exp(yoy * np.sqrt(int(np.ceil(h / 4)))) if len(yoy) >= 8 else None
+    s = (hist["cash"] + hist["short_investments"].fillna(0)).dropna()
+    d = s.diff(h).dropna().tail(20).to_numpy(float)
+    return float(s.iloc[-1]) + d if len(d) >= 8 else None
 
 
 def _vintage(hist, origin: str | None, macro) -> dict:
@@ -168,6 +250,11 @@ def company_cases(ticker: str, n_paths: int = 2000) -> dict:
     full_data = load_company(ticker)
     full = full_data.quarters
     cases, skipped, vintages = [], {}, []
+    try:
+        filed = first_filed(int(full_data.cik))
+    except Exception as e:  # conformal windows then use the fixed lag; the reason is kept
+        filed = {}
+        skipped["filed"] = f"{type(e).__name__}: {e}"
     for origin in ORIGINS:
         try:
             hist = load_company(ticker, asof=origin)
@@ -191,13 +278,16 @@ def company_cases(ticker: str, n_paths: int = 2000) -> dict:
                     if not np.isfinite(y):
                         continue
                     mu_b, sd_b = _baseline(hist.quarters, var, h + 1)
+                    emp = rw_empirical(hist.quarters, var, h + 1)
                     row = {
                         "origin": origin,
                         "var": var,
                         "h": h + 1,
                         "y": y,
                         "target": str(real.index[h].date()),
+                        "filed": filed_for(filed.get("revenue" if var == "revenue" else "cash"), real.index[h]),
                         "crps_baseline": crps_gaussian(mu_b, sd_b, y),
+                        "crps_baseline_emp": crps_samples(emp, y) if emp is not None else None,
                     }
                     for flag, out in sims.items():
                         x = out[key][:, h]
@@ -223,29 +313,40 @@ def company_cases(ticker: str, n_paths: int = 2000) -> dict:
         },
         "vintages": vintages,
     }
+    from ..research.__main__ import stamp
+
     return {
         "ticker": ticker,
         "cases": cases,
+        "covid": covid_row(ticker, full, skipped),
         "skipped": skipped,
-        "covid": covid_row(ticker, full),
         "timeline": timeline,
+        "_stamp": stamp(),  # SW-2: `aggregate` reports how many companies come from another code/data version
     }
 
 
-def covid_row(ticker: str, full: pd.DataFrame) -> dict | None:
-    """Pre-COVID twin under the demand-freeze scenario vs realized 2020-21 cash burn."""
+def covid_row(ticker: str, full: pd.DataFrame, why: dict | None = None) -> dict | None:
+    """Pre-COVID twin under the demand-freeze scenario vs realized 2020-21 cash burn. When there is no row, the
+    reason is written to `why["covid"]` (SW-3)."""
+    why = why if why is not None else {}
     try:
         cutoff = "2020-02-20"
         hist = load_company(ticker, asof=cutoff)
         if len(hist.quarters) < 16:
+            why["covid"] = "fewer than 16 quarters of history"
             return None
         p = calibrate(hist, macro_quarterly(cutoff), 8)
         eps = draw_shocks(p, 2000, 8, seed=7)
         st = summarize(simulate(p, build_scenario(PRESETS["pandemic"]["knobs"], 8), eps, DEFAULT_LEVERS))
         win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
-        fcf = (win["cfo"] - win["capex"]).fillna(0).cumsum()
+        fcf = win["cfo"] - win["capex"]
+        if not data_legacy() and not np.isfinite(fcf.to_numpy(float)).all():
+            why["covid"] = "missing cash-flow quarter in 2020-21"  # D4: not zero burn
+            return None
+        fcf = fcf.fillna(0).cumsum()
         rev_ttm = float(hist.quarters["revenue"].tail(4).sum())
         if not len(fcf):
+            why["covid"] = "no reported quarter in 2020-21"
             return None
         return {
             "ticker": ticker,
@@ -255,7 +356,8 @@ def covid_row(ticker: str, full: pd.DataFrame) -> dict | None:
             "realized_min_cum_fcf_pct_rev": float(fcf.min() / rev_ttm * 100),
             "realized_debt_raise_pct_rev": float((win["total_debt"].max() - p["debt0"]) / rev_ttm * 100),
         }
-    except Exception:
+    except Exception as e:
+        why["covid"] = f"{type(e).__name__}: {e}"
         return None
 
 
@@ -291,11 +393,13 @@ def aggregate() -> dict:
         sc = _scores(g, "reg")
         g = g.join(sc)
         # online conformal: the scale factor for origin 15 Feb Y uses only forecasts whose target quarter had been
-        # reported by then (quarter end + 75 days), so no error is used before it was observable
+        # reported by then (its actual first filing date, D10; quarter end + 90 days where unknown), so no error is
+        # used before it was observable
         conf90, conf50, factors = [], [], {}
         target = pd.to_datetime(g["target"]) if "target" in g else pd.to_datetime(g["year"].astype(str) + "-01-01")
+        filed = g["filed"] if "filed" in g else None
         for year, gy in g.groupby("year"):
-            seen = target + pd.Timedelta(days=90) <= pd.Timestamp(f"{year}-02-15")
+            seen = seen_by(target, filed, pd.Timestamp(f"{year}-02-15"))
             past = g[(g["year"] < year) & seen]
             if len(past) < 40:
                 continue
@@ -332,6 +436,8 @@ def aggregate() -> dict:
             "pit_hist": pit.round(4).tolist(),
             "by_year": by_year,
             "by_horizon": {int(h): float(gh["hit90"].mean()) for h, gh in g.groupby("h")},
+            # E10: skill and a firm-clustered DM statistic per horizon (not pooled), against both naive densities
+            "skill_by_horizon": skill_by_horizon(g),
         }
     rows = [r["covid"] for r in per if r.get("covid")]
     xs = pd.DataFrame(rows)
@@ -355,8 +461,53 @@ def aggregate() -> dict:
         "rows": rows,
     }
     res["skipped"] = {r["ticker"]: r["skipped"] for r in per if r["skipped"]}
-    OUT.write_text(json.dumps(res, separators=(",", ":")), encoding="utf-8")
+    stamps = pd.Series([r.get("_stamp") or "none" for r in per]).value_counts()
+    res["stamps"] = {"n_distinct": int(len(stamps)), "largest_share": float(stamps.iloc[0] / stamps.sum())}
+    from ..export import _clean
+
+    OUT.write_text(json.dumps(_clean(res), separators=(",", ":"), allow_nan=False), encoding="utf-8")
     return res
+
+
+def dm_stat(d: np.ndarray, groups: np.ndarray) -> dict:
+    """Diebold-Mariano statistic of mean loss differences `d`, with a cluster-robust variance over `groups` and
+    t(G-1) p-values (few clusters)."""
+    from scipy import stats as _st
+
+    d, groups = np.asarray(d, float), np.asarray(groups)
+    m = np.isfinite(d)
+    d, groups = d[m], groups[m]
+    n, G = len(d), len(set(groups.tolist()))
+    if n < 10 or G < 3:
+        return {"n": int(n), "mean": float(d.mean()) if n else None, "t": None, "p": None}
+    e = d - d.mean()
+    s = pd.Series(e).groupby(groups).sum().to_numpy()
+    var = (G / (G - 1)) * float(np.sum(s**2)) / n**2
+    t = float(d.mean() / np.sqrt(var)) if var > 0 else None
+    return {
+        "n": int(n),
+        "clusters": int(G),
+        "mean": float(d.mean()),
+        "t": t,
+        "p": float(2 * _st.t.sf(abs(t), G - 1)) if t is not None else None,
+    }
+
+
+def skill_by_horizon(g: pd.DataFrame) -> dict:
+    out: dict = {}
+    for h, gh in g.groupby("h"):
+        r: dict = {"n": int(len(gh))}
+        for base in ("crps_baseline", "crps_baseline_emp"):
+            if base not in gh or gh[base].isna().all():
+                continue
+            b = gh[base].astype(float)
+            ok = b.notna()
+            r[base] = {
+                "skill": float(1 - gh.loc[ok, "crps_reg"].mean() / b[ok].mean()),
+                "dm": dm_stat((gh.loc[ok, "crps_reg"] - b[ok]).to_numpy(float), gh.loc[ok, "ticker"].to_numpy()),
+            }
+        out[int(h)] = r
+    return out
 
 
 if __name__ == "__main__":

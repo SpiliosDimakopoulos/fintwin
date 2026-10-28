@@ -1,12 +1,18 @@
-"""Sharded research runs (free GitHub Actions runners, or locally).
+"""Sharded research runs (free GitHub Actions runners, a burst server, or locally).
 
-python -m fintwin.research prefetch          # download every company's XBRL facts once (SEC rate limit: serial)
-python -m fintwin.research shard 3 16      # shard 3 of 16 -> .cache/research/<key>.json
-python -m fintwin.research stats           # merge shards -> docs/paper/research.json
+python -m fintwin.research prefetch                 # download every company's XBRL facts once (SEC rate limit: serial)
+python -m fintwin.research shard 3 16               # shard 3 of 16 -> .cache/research/<spec>/<key>.json
+python -m fintwin.research shard 0 1 --limit 300 --cutoffs 2015,2020,2022   # dry run -> .cache/research/<spec>_dry/
+python -m fintwin.research select                   # tau / lambda walk-forward -> .cache/research/_selection/<spec>.json
+python -m fintwin.research ladder 3 16 [--limit ...] # every rung of REVISION_PLAN_3 §0.2, one cache dir per rung
+python -m fintwin.research stats                    # merge one spec's shards -> docs/paper/research.json (+ a copy)
 
-The sample is the survivorship-free EDGAR universe (data/universe_edgar.csv): every non-financial XBRL filer with
-$50M+ revenue in some year 2012-2024, keyed by CIK. Probabilistic forecasts, which need ETS fits and are not about
-survivorship, run for S&P 500 members (today's and those of 20 February 2020) only.
+The specification comes from FINTWIN_SPEC (v2-pre, v2-rev, v3) and FINTWIN_FIXES (a comma list that replaces the
+spec's fixes). Each one writes to its own directory, `spec_label()` (e.g. ``v2-pre+F5+F4``), so the ladder never mixes.
+
+The sample is the survivorship-free EDGAR universe (data/universe_edgar.csv): every non-financial US-GAAP XBRL filer
+reporting in USD with $50M+ revenue in some year 2012-2024, keyed by CIK. Probabilistic forecasts, which need ETS fits
+and are not about survivorship, run for S&P 500 members (today's and those of 20 February 2020) only.
 """
 
 from __future__ import annotations
@@ -14,20 +20,25 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import time
 import warnings
+from functools import lru_cache
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
-CACHE = Path(__file__).resolve().parents[2] / ".cache" / "research"
+ROOT = Path(__file__).resolve().parents[2] / ".cache" / "research"
+CACHE = ROOT  # kept for callers that import it; per-spec directories are `spec_dir()`
 DATA = Path(__file__).resolve().parents[1] / "data"
+DRY_SEED = 2026
+MAX_FAIL_SHARE = float(os.environ.get("FINTWIN_MAX_FAIL_SHARE", "0.10"))
 
 
-def stamp() -> str:
-    """Hash of the code, committed inputs, data snapshot and switches that produce a shard: a shard written under a
-    different stamp is stale and is recomputed, and `stats` refuses to merge shards of mixed stamps."""
+@lru_cache(maxsize=1)
+def _code_digest() -> str:
     root = Path(__file__).resolve().parents[1]
     h = hashlib.sha256()
     for p in sorted([*root.rglob("*.py"), *DATA.glob("*.csv")]):
@@ -35,9 +46,20 @@ def stamp() -> str:
         h.update(p.read_bytes().replace(b"\r\n", b"\n"))
     snap = root.parent / "snapshot" / "manifest.json"
     h.update(json.loads(snap.read_text(encoding="utf-8"))["digest"].encode() if snap.exists() else b"live")
+    return h.hexdigest()
+
+
+def stamp() -> str:
+    """Hash of the code, committed inputs, data snapshot and switches that produce a shard: a shard written under a
+    different stamp is stale and is recomputed, and `stats` refuses to merge shards of mixed stamps. A walk-forward
+    selection table enters by its content, not its path."""
+    h = hashlib.sha256(_code_digest().encode())
     for k in sorted(os.environ):
-        if k.startswith("FINTWIN_"):
+        if k.startswith("FINTWIN_") and k != "FINTWIN_MAX_FAIL_SHARE":
             h.update(f"{k}={os.environ[k]}".encode())
+    sel = os.environ.get("FINTWIN_SELECTION")
+    if sel and Path(sel).exists():
+        h.update(Path(sel).read_bytes())
     return h.hexdigest()[:16]
 
 
@@ -48,8 +70,29 @@ def _stamp_of(path: Path) -> str | None:
         return None
 
 
+def spec_dir(dry: bool = False) -> Path:
+    from .experiments import spec_label
+
+    return ROOT / (spec_label() + ("_dry" if dry else ""))
+
+
+def selection_path(label: str | None = None) -> Path:
+    from .experiments import spec_label
+
+    return ROOT / "_selection" / f"{label or spec_label()}.json"
+
+
 def research_tickers() -> list[str]:
     return pd.read_csv(DATA / "universe_edgar.csv")["key"].tolist()
+
+
+def dry_tickers(limit: int, seed: int = DRY_SEED) -> list[str]:
+    """A fixed random sample of the universe for dry runs (the same firms in every rung and every shard count)."""
+    keys = research_tickers()
+    if limit >= len(keys):
+        return keys
+    idx = np.random.default_rng(seed).choice(len(keys), limit, replace=False)
+    return [keys[i] for i in sorted(idx)]
 
 
 def forecast_ciks() -> set[int]:
@@ -71,58 +114,151 @@ def prefetch() -> None:
             print(f"  {k}/{len(keys)}", flush=True)
 
 
-def shard(i: int, n: int) -> None:
+def shard(i: int, n: int, limit: int | None = None, years: set[int] | None = None) -> Path:
+    """Run shard i of n under the current specification. `limit` / `years` make a dry run (own directory)."""
     from ..export import _clean
     from .experiments import company
 
-    CACHE.mkdir(parents=True, exist_ok=True)
+    dry = limit is not None or years is not None
+    out_dir = spec_dir(dry)
+    out_dir.mkdir(parents=True, exist_ok=True)
     fc = forecast_ciks()
     st = stamp()
-    for k, t in enumerate(research_tickers()):
+    keys = dry_tickers(limit) if limit is not None else research_tickers()
+    run = {"limit": limit, "cutoffs": sorted(years) if years else None}
+    for k, t in enumerate(keys):
         if k % n != i:
             continue
-        out = CACHE / f"{t}.json"
+        out = out_dir / f"{t}.json"
         if out.exists() and _stamp_of(out) == st:  # resumable, but only under the same code, data and switches
             continue
         t0 = time.time()
         try:
-            res = company(t, with_forecasts=int(t[3:]) in fc)
+            res = company(t, with_forecasts=int(t[3:]) in fc, years=years)
         except Exception as e:  # keep the shard going; the failure is recorded
-            res = {"ticker": t, "errors": {"company": f"{type(e).__name__}: {e}"}}
+            res = {"ticker": t, "errors": {"company": f"{type(e).__name__}: {e}"}, "failures": {}}
+            res["failures"]["company"] = {"n": 1, "failed": {type(e).__name__: 1}, "skipped": {}}
         res["_stamp"] = st
+        res["_run"] = run
         out.write_text(json.dumps(_clean(res)), encoding="utf-8")
         print(
             f"  {t}: {len(res.get('panel', []))} panel rows, {len(res.get('forecasts', []))} forecasts, "
             f"{len(res.get('errors', {}))} errors ({time.time() - t0:.0f}s)",
             flush=True,
         )
+    return out_dir
+
+
+def _shards(d: Path) -> list[dict]:
+    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(d.glob("*.json"))]
+
+
+def check_failures(shards: list[dict], max_share: float = MAX_FAIL_SHARE) -> dict:
+    """Failure counts by stage and type (SW-3); refuse to build the paper numbers if any stage failed too often."""
+    from .experiments import failure_summary
+
+    summary = failure_summary(shards)
+    for where, s in sorted(summary.items()):
+        print(f"  {where}: {s['n']} tried, {sum(s['failed'].values())} failed {s['failed']}, skipped {s['skipped']}")
+    bad = {w: s["failed_share"] for w, s in summary.items() if s["n"] >= 20 and s["failed_share"] > max_share}
+    if bad:
+        raise SystemExit(f"failure share above {max_share:.0%} in {bad}: inspect the shards before merging")
+    return summary
+
+
+def select() -> Path:
+    """Choose tau / lambda per cutoff year from earlier years of this spec's first-pass shards (REVISION_PLAN_3 §0.1)."""
+    from .experiments import select_from_shards
+
+    sel = select_from_shards(spec_dir())
+    path = selection_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(sel, indent=1), encoding="utf-8")
+    print(json.dumps({k: sel.get(k) for k in ("rule", "n_rows", "tau", "lambda")}))
+    return path
+
+
+def ladder(i: int, n: int, extra: list[str], rungs: list[str] | None = None) -> None:
+    """Every rung of the ladder (and v2-rev) for shard i of n, each in a subprocess with its own environment. Rungs
+    with F1 or F3 get a second pass at the walk-forward tau / lambda once `select` has written their table."""
+    from .experiments import LADDER
+
+    for name, env in LADDER:
+        if rungs and name not in rungs:
+            continue
+        e = {k: v for k, v in os.environ.items() if k not in ("FINTWIN_SPEC", "FINTWIN_FIXES", "FINTWIN_SELECTION")}
+        e |= env
+        print(f"== {name}", flush=True)
+        subprocess.run([sys.executable, "-m", "fintwin.research", "shard", str(i), str(n), *extra], env=e, check=True)
+        sel = selection_path(name)
+        if sel.exists():
+            print(f"== {name} at the walk-forward selection", flush=True)
+            subprocess.run(
+                [sys.executable, "-m", "fintwin.research", "shard", str(i), str(n), *extra],
+                env=e | {"FINTWIN_SELECTION": str(sel)},
+                check=True,
+            )
+
+
+def stats(dry: bool = False) -> None:
+    from .stats import OUT, main
+
+    d = spec_dir(dry)
+    st = stamp()
+    stale = [p.name for p in d.glob("*.json") if _stamp_of(p) != st]
+    if stale:
+        raise SystemExit(f"{len(stale)} shard files were written under another stamp (e.g. {stale[:3]}): rerun them")
+    summary = check_failures(_shards(d))
+    main(d)
+    copy = ROOT / "_results" / f"{d.name}.json"  # one result per spec, next to the shared docs/paper/research.json
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    res = json.loads(Path(OUT).read_text(encoding="utf-8"))
+    res["failures"] = summary
+    copy.write_text(json.dumps(res, indent=1), encoding="utf-8")
+
+
+def _opts(args: list[str]) -> tuple[list[str], dict]:
+    pos, opt = [], {}
+    it = iter(args)
+    for a in it:
+        if a.startswith("--"):
+            opt[a[2:]] = next(it) if a[2:] in ("limit", "cutoffs", "rungs") else True
+        else:
+            pos.append(a)
+    return pos, opt
+
+
+def main(argv: list[str]) -> None:
+    pos, opt = _opts(argv)
+    limit = int(opt["limit"]) if "limit" in opt else None
+    years = {int(y) for y in str(opt["cutoffs"]).split(",")} if "cutoffs" in opt else None
+    cmd = pos[0]
+    if cmd == "prefetch":
+        prefetch()
+    elif cmd == "shard":
+        shard(int(pos[1]), int(pos[2]), limit, years)
+    elif cmd == "select":
+        select()
+    elif cmd == "ladder":
+        extra = [
+            *(["--limit", str(limit)] if limit is not None else []),
+            *(["--cutoffs", opt["cutoffs"]] if years else []),
+        ]
+        ladder(int(pos[1]), int(pos[2]), extra, opt["rungs"].split(",") if "rungs" in opt else None)
+    elif cmd == "sobol-shard":
+        from .assumption_sobol import shard as sobol_shard
+
+        sobol_shard(int(pos[1]), int(pos[2]))
+    elif cmd == "sobol-stats":
+        from .assumption_sobol import stats as sobol_stats
+
+        print(json.dumps({k: v for k, v in sobol_stats().items() if k != "indices"}, default=str)[:2000])
+    elif cmd == "stats":
+        stats(dry="dry" in opt)
+    else:
+        raise SystemExit(f"unknown command {cmd}")
 
 
 if __name__ == "__main__":
     warnings.simplefilter("ignore")
-    if sys.argv[1] == "prefetch":
-        prefetch()
-    elif sys.argv[1] == "shard":
-        shard(int(sys.argv[2]), int(sys.argv[3]))
-    elif sys.argv[1] == "sobol-shard":
-        from .assumption_sobol import shard as sobol_shard
-
-        sobol_shard(int(sys.argv[2]), int(sys.argv[3]))
-    elif sys.argv[1] == "sobol-stats":
-        import json as _json
-
-        from .assumption_sobol import stats as sobol_stats
-
-        print(_json.dumps({k: v for k, v in sobol_stats().items() if k != "indices"}, default=str)[:2000])
-    elif sys.argv[1] == "stats":
-        from .stats import main
-
-        st = stamp()
-        stale = [p.name for p in CACHE.glob("*.json") if _stamp_of(p) != st]
-        if stale:
-            raise SystemExit(
-                f"{len(stale)} shard files were written under another stamp (e.g. {stale[:3]}): rerun them"
-            )
-        main(CACHE)
-    else:
-        raise SystemExit(f"unknown command {sys.argv[1]}")
+    main(sys.argv[1:])
