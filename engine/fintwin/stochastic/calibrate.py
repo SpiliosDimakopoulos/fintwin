@@ -29,6 +29,48 @@ def _clip(x, lo, hi, default):
     return float(min(max(x, lo), hi))
 
 
+# Revision-3 data layer: a balance can be NaN in the last row (not reported, after A's 2-quarter carry-forward).
+# The model needs a starting stock, so take the last reported value up to STALE_ROWS rows back; beyond that, 0 for
+# working-capital items and debt-like lines (what revision 2 assumed for every missing quarter), the last value ever
+# reported for equity and assets, and NaN where the code already has a documented fallback. Each use is noted.
+STALE_ROWS = 4
+STOCK_ZERO = (
+    "receivables",
+    "inventory",
+    "payables",
+    "deferred_revenue",
+    "total_debt",
+    "short_borrowings",
+    "commercial_paper",
+    "short_investments",
+)
+STOCK_ANY = ("equity", "assets", "cash")
+STOCK_FIELDS = (
+    STOCK_ZERO + STOCK_ANY + ("ppe", "liabilities", "current_assets", "current_liabilities", "retained_earnings")
+)
+
+
+def _last_known(q: pd.DataFrame, fields: tuple[str, ...], limit: int) -> tuple[pd.Series, list[str]]:
+    """Last row with each stock field replaced by its last finite value within `limit` rows (see STALE_ROWS)."""
+    last = q.iloc[-1].copy()
+    notes = []
+    for k in fields:
+        if k not in q or np.isfinite(float(last[k])):
+            continue
+        s = q[k].astype(float)
+        recent = s.tail(limit + 1).dropna()
+        if len(recent):
+            last[k] = float(recent.iloc[-1])
+            notes.append(f"{k} carried from {recent.index[-1].date()}")
+        elif k in STOCK_ZERO:
+            last[k] = 0.0
+            notes.append(f"{k} not reported for {limit}+ quarters, assumed 0")
+        elif k in STOCK_ANY and s.notna().any():
+            last[k] = float(s.dropna().iloc[-1])
+            notes.append(f"{k} stale, last reported {s.dropna().index[-1].date()}")
+    return last, notes
+
+
 def _seasonal(rev: pd.Series, seasons: pd.Series) -> np.ndarray:
     hist = rev.tail(32)
     ma = hist.rolling(4, center=True).mean()
@@ -415,6 +457,17 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     rev = q["revenue"]
     last = q.iloc[-1]
     n_hist = len(q)
+    # Revision-3 data layer (workstream A): calendar gap rows and NaN for "not reported" instead of 0. Legacy frames
+    # (FINTWIN_DATA_LEGACY=1, revision 2) have no `gap` column and take the revision-2 code paths below unchanged.
+    new_data = "gap" in q.columns
+    reported = q
+    if new_data:
+        gap = q["gap"].astype("boolean").fillna(False).astype(bool)
+        reported = q[~gap]
+        n_hist = int((~gap).sum())
+        last, stale = _last_known(q, STOCK_FIELDS, STALE_ROWS)
+        if stale:
+            src["stale"] = "; ".join(stale)
 
     # ---- revenue process ----
     seasonal = _seasonal(rev, q["season"])
@@ -495,13 +548,20 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
         obs_rate = (q["da"].where(~da_flag) / ppe_lag).tail(8)
         if not np.isfinite(obs_rate).any():
             obs_rate = (q["da"].where(~da_flag) / ppe_lag).tail(16)
+        annual = q["da_annual"].where(da_flag) if "da_annual" in q else pd.Series(np.nan, index=q.index)
+        if not np.isfinite(obs_rate).any():  # no quarterly D&A at all: the fiscal-year figure / 4 gives the rate
+            obs_rate = (annual / ppe_lag).tail(8)
         dep_rate_f4 = _clip(np.nanmedian(obs_rate), 0.005, 0.15, 0.03)
-        # impute at the rate the twin will use, so history and projection treat D&A the same way
-        imputed = dep_rate_f4 * ppe_lag.fillna(q["ppe"]).fillna(0.0)
+        # the reported fiscal-year D&A / 4 where the data layer has it; else impute at the rate the twin will use,
+        # so history and projection treat D&A the same way
+        imputed = annual.fillna(dep_rate_f4 * ppe_lag.fillna(q["ppe"]).fillna(0.0))
         da_used = q["da"].where(~da_flag, imputed)
-        share = float(da_flag.tail(16).mean())
+        da_flag = da_flag & q.index.isin(reported.index)  # gap rows carry no flows to impute
+        share = float(da_flag.loc[reported.index].tail(16).mean())
+        n_ann = int((da_flag & annual.notna()).loc[reported.index].tail(16).sum())
         src["da"] = (
-            f"D&A imputed as {dep_rate_f4:.2%}/q of PP&E in {share:.0%} of the last 16 quarters (tag missing)"
+            f"D&A missing in {share:.0%} of the last 16 quarters: {n_ann} from the fiscal-year total / 4, the rest "
+            f"imputed as {dep_rate_f4:.2%}/q of PP&E"
             if share > 0
             else "reported D&A"
         )
@@ -542,7 +602,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
         rho_gm = _clip(np.corrcoef(resid_g[-n:], resid_m[-n:])[0, 1], -0.8, 0.8, 0.0)
 
     # ---- balance-sheet ratios ----
-    t4 = q.tail(4)
+    t4 = reported.tail(4)
     cost_t4 = (F + v * t4["revenue"]).clip(lower=1e-9)
     dso = _clip((t4["receivables"] / t4["revenue"]).mean() * DAYS_Q, 0, 200, 30)
     dio = _clip((t4["inventory"] / cost_t4).mean() * DAYS_Q, 0, 600, 0)
@@ -550,8 +610,8 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     ddays = _clip((t4["deferred_revenue"] / t4["revenue"]).mean() * DAYS_Q, 0, 400, 0)
     src["ddays"] = "customer deposits / deferred revenue in days of revenue (cash collected in advance)"
 
-    t8 = q.tail(8)
-    ppe_prev = q["ppe"].shift(1).tail(8)
+    t8 = reported.tail(8)
+    ppe_prev = q["ppe"].shift(1).loc[t8.index]
     dep_rate = dep_rate_f4 if f4 else _clip(np.nanmedian(t8["da"] / ppe_prev), 0.005, 0.15, 0.03)
     capex_ratio = _clip(np.nanmedian(t8["capex"] / t8["revenue"]), 0.0, 0.6, 0.05)
     sbc_ratio = _clip(np.nanmedian(t8["sbc"] / t8["revenue"]), 0.0, 0.3, 0.0)
@@ -596,7 +656,11 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
         src["coupon"] = "assumption: 4% (no interest expense reported)"
 
     # Rollover policy: share of maturing debt replaced with new debt, inferred from the 2-year debt trend.
-    debt_change_8q = float(q["total_debt"].iloc[-1] - q["total_debt"].iloc[-9]) if n_hist > 8 else 0.0
+    if new_data:  # 8 calendar quarters back, last reported debt at or just before then
+        back = q["total_debt"].iloc[:-8].tail(STALE_ROWS + 1).dropna() if len(q) > 8 else pd.Series(dtype=float)
+        debt_change_8q = debt0 - float(back.iloc[-1]) if len(back) else 0.0
+    else:
+        debt_change_8q = float(q["total_debt"].iloc[-1] - q["total_debt"].iloc[-9]) if n_hist > 8 else 0.0
     yearly_maturity = max(float(sum(c.maturities[:1])) if c.maturities else debt0 / 6, debt0 / 20, 1.0)
     refi_ratio = _clip(1 + debt_change_8q / (2 * yearly_maturity), 0.0, 1.0, 1.0)
     src["refi_ratio"] = "share of maturities refinanced, inferred from the last 8 quarters' debt trend"
@@ -607,11 +671,17 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     )
     src["sigma_fin"] = "robust s.d. of quarterly % debt changes (discretionary financing), last 20 quarters"
 
-    div_q = float(q["dividends"].tail(2).mean())
+    if new_data:  # dividends missing now means unknown: mean of the reported ones among the last 4 quarters
+        div_recent = reported["dividends"].tail(4).dropna()
+        div_q = float(div_recent.tail(2).mean()) if len(div_recent) else 0.0
+        if not len(div_recent):
+            src["div_q"] = "no dividends reported in the last 4 quarters, assumed 0"
+    else:
+        div_q = float(q["dividends"].tail(2).mean())
     fcf8 = (t8["cfo"] - t8["capex"]).clip(lower=0).sum()
     bb_ratio = _clip(t8["buybacks"].sum() / fcf8 if fcf8 > 0 else 0.0, 0.0, 1.2, 0.0)
 
-    rev_ttm = float(rev.tail(4).sum())
+    rev_ttm = float(reported["revenue"].tail(4).sum())
     cap_recent = q["revolver_capacity"].dropna()
     if len(cap_recent) and (q.index[-1] - cap_recent.index[-1]).days < 730:
         revolver_cap = float(cap_recent.iloc[-1])
@@ -622,13 +692,14 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
 
     # the latest quarter occasionally lacks the cash tag: carry the last reported balance forward
     cash0 = float(q["cash"].ffill().iloc[-1] + q["short_investments"].fillna(0).iloc[-1])
-    quarterly_costs = F + v * rev.tail(4).mean()
+    quarterly_costs = F + v * reported["revenue"].tail(4).mean()
     # Minimum operating cash revealed by the company's own behaviour: half its 10th-percentile cash balance over
     # three years, bounded by 1% of quarterly revenue and 20% of quarterly costs. (A cost-based floor alone forces
     # high-turnover, low-cash retailers such as Walmart to "borrow up" to cash levels they never hold.)
-    hist_cash = (q["cash"] + q["short_investments"]).tail(12).dropna()
+    hist_cash = (q["cash"] + (q["short_investments"].fillna(0) if new_data else q["short_investments"])).tail(12)
+    hist_cash = hist_cash.dropna()
     revealed = 0.5 * float(hist_cash.quantile(0.1)) if len(hist_cash) >= 4 else 0.2 * quarterly_costs
-    cash_floor = float(np.clip(revealed, 0.01 * rev.tail(4).mean(), 0.2 * quarterly_costs))
+    cash_floor = float(np.clip(revealed, 0.01 * reported["revenue"].tail(4).mean(), 0.2 * quarterly_costs))
     src["cash_floor"] = "half the company's 10th-percentile cash balance over 12 quarters (revealed minimum)"
     cash_target = max(0.6 * cash0, 1.5 * cash_floor)
     cash_cap = 1.5 * max(cash0, cash_target)
@@ -713,10 +784,13 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     wc_other0 = float((ca - cl) - (cash0 + ar0 + inv0 - ap0 - def0)) if np.isfinite(ca) and np.isfinite(cl) else 0.0
     retained0 = float(last["retained_earnings"]) if np.isfinite(last["retained_earnings"]) else 0.0
 
-    hist4 = q.tail(4)
+    hist4 = reported.tail(4)  # the last 4 reported quarters (a gap row would count as zero EBIT)
     ebit4 = hist4["operating_income"].fillna(0).values
     ebitda4 = (hist4["operating_income"] + da_used.loc[hist4.index].fillna(0)).fillna(0).values
-    int4 = hist4["interest_expense"].fillna(q["total_debt"].tail(4) * coupon / 4).values
+    int4 = hist4["interest_expense"].fillna(reported["total_debt"].tail(4) * coupon / 4)
+    if new_data:
+        int4 = int4.fillna(debt0 * coupon / 4)
+    int4 = int4.values
 
     season_next = (int(q["season"].iloc[-1]) + 1) % 4
     base_rev0 = float(deseason.iloc[-1])
@@ -799,7 +873,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
         p["fixed_share_sd"] = _clip(fit["sd_share"], 0.0, 10.0, 1.0)
         p["fixed_share_data_weight"] = fit["data_weight"]
     if f4:
-        p["da_imputed_share"] = float(da_flag.tail(16).mean())
+        p["da_imputed_share"] = share
     if f6:
         p["m_dev0"] = m_dev0
         src["m_dev0"] = "mean of the last 2 cost-ratio residuals (deseasonalized), decaying at rho_m"
