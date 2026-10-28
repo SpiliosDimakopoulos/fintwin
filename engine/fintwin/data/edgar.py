@@ -37,6 +37,11 @@ def frozen() -> bool:
     return os.environ.get("FINTWIN_FROZEN", "0") == "1"
 
 
+def data_legacy() -> bool:
+    """FINTWIN_DATA_LEGACY=1: the revision-2 data layer (no revision-3 data fixes D1-D13), for one comparison run."""
+    return os.environ.get("FINTWIN_DATA_LEGACY", "0") == "1"
+
+
 class FrozenMiss(FileNotFoundError):
     """A file the frozen snapshot does not contain."""
 
