@@ -11,6 +11,9 @@ that reads `quarters` must survive NaN even under `FINTWIN_SPEC=v2-pre`. `FINTWI
      (`calibrate.py:281-282`): NaN when the field is tagged in the vintage but missing for 3+ quarters at the end.
    - `debt0 = float(last["total_debt"])` (`:208`), and `q["total_debt"].iloc[-1] - q["total_debt"].iloc[-9]` (`:219`).
    - `div_q = float(q["dividends"].tail(2).mean())` (`:230`): NaN if both quarters are missing.
+   **This is blocking, not cosmetic:** on cached firms with 16+ rows at the 2020-02-15 cutoff, 27 of 58 (47 %) have
+   at least one of these NaN in the last row (dividends both of the last 2 quarters: 14; deferred revenue: 7;
+   inventory: 6; total debt: 5; receivables: 3). Without a guard the dry run would be NaN for about half the panel.
    Suggested: take the last finite value within the last 4 rows, else 0, and record it in `_sources`; this changes
    nothing when the values are finite, so v2-pre stays identical on complete firms.
 2. **Windows `tail(n)` now count calendar quarters.** `rev.tail(4).sum()` (`rev_ttm`, `:234`, and `quarterly_costs`
