@@ -331,3 +331,48 @@ def test_v3_full_spec_runs(macro):  # noqa: F811
     for kw in ({}, {"da_missing": True}, {"stale_ladder": True, "season_amp": 0.3}):
         p = cal(synthetic_company(**kw), macro, "v3", "+F9,+M2", n_param_draws=5)
         assert np.isfinite(p["F"]) and p["F"] >= 0 and 0 <= p["v"]
+
+
+# ---------------------------------------------------------------- revision-3 data layer (workstream A) guards
+def _new_layer(c):
+    """Turn a synthetic firm into a revision-3 data-layer frame: flag columns, a gap row, NaN where not reported."""
+    q = c.quarters
+    q["gap"] = False
+    q["da_missing"] = False
+    q["da_annual"] = np.nan
+    g = q.index[-3]  # a calendar quarter with no revenue fact, inside the last 4 rows
+    flows = ["revenue", "operating_income", "da", "net_income", "tax", "cfo", "capex", "sbc", "dividends", "buybacks"]
+    q.loc[g, flows] = np.nan
+    q.loc[g, "gap"] = True
+    q.loc[q.index[-2:], "dividends"] = np.nan  # not reported in the last two quarters
+    q.loc[q.index[-1], ["inventory", "deferred_revenue", "receivables"]] = np.nan
+    q.loc[q.index[-6:], "total_debt"] = np.nan  # debt evidence stops 6 quarters back
+    q.loc[q.index[-1], "short_investments"] = np.nan
+    return c
+
+
+@pytest.mark.parametrize("spec_name", ["v2-pre", "v3"])
+def test_data_layer_gaps_and_missing_last_values_give_finite_params(macro, spec_name):  # noqa: F811
+    c = _new_layer(synthetic_company(seed=12))
+    p = cal(c, macro, spec_name)
+    q = c.quarters
+    assert p["history_quarters"] == len(q) - 1
+    assert p["inv0"] == pytest.approx(q["inventory"].iloc[-2]) and p["debt0"] == 0.0
+    assert p["div_q"] == pytest.approx(q["dividends"].dropna().tail(2).mean())
+    rep = q[~q["gap"]].tail(4)
+    assert p["ebit_ttm0"] == pytest.approx(rep["operating_income"].tolist())  # no zero quarter from the gap row
+    assert "total_debt not reported" in p["_sources"]["stale"]
+
+
+def test_F4_uses_the_fiscal_year_da_when_quarterly_da_is_missing(macro):  # noqa: F811
+    c = _new_layer(synthetic_company(seed=13))
+    q = c.quarters
+    miss = q.index[-8:]
+    miss = miss[~q.loc[miss, "gap"].to_numpy(bool)]
+    q.loc[miss, "da_annual"] = q.loc[miss, "da"] * 1.0
+    q.loc[miss, "da"] = np.nan
+    q.loc[miss, "da_missing"] = True
+    p = cal(c, macro, "v3", "F4")
+    rep = q[~q["gap"]].tail(4)
+    assert p["ebitda_ttm0"] == pytest.approx((rep["operating_income"] + rep["da_annual"]).tolist())
+    assert "fiscal-year total" in p["_sources"]["da"]
