@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from . import universe
-from .data.facts import load_company
+from .data.facts import contiguous, load_company
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "web" / "public" / "data"
@@ -40,6 +40,8 @@ def norms() -> None:
     for t in universe.tickers():
         try:
             q = load_company(t).quarters
+            if not contiguous(q, 4):  # a gap row would make the 4-row sum a 3-quarter sum
+                continue
             ebitda = float((q["operating_income"] + q["da"].fillna(0)).tail(4).sum())
             nd = float(q["total_debt"].iloc[-1] - q["cash"].iloc[-1] - q["short_investments"].iloc[-1])
             if ebitda > 0 and np.isfinite(nd):

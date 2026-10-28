@@ -20,7 +20,7 @@ import pandas as pd
 from .backtest.batch import UNIVERSE_XL
 from .backtest.walk_forward import CUTOFFS, UNIVERSE, cross_section, forecast_backtest
 from .data.edgar import filing_url
-from .data.facts import load_company
+from .data.facts import contiguous_mask, load_company
 from .data.fred import macro_quarterly
 from .data.quality import quality_report
 from .model.ratings import ICR_LOWER, RATINGS, SPREADS, rating_rank
@@ -187,10 +187,13 @@ def history_block(c, n: int = 28) -> dict:
     q = c.quarters.tail(n)
     ebitda = q["operating_income"] + q["da"]
 
-    def ttm(s: pd.Series) -> pd.Series:
-        return s.rolling(4).sum()
-
     full = c.quarters
+    ok4 = contiguous_mask(full, 4)
+
+    def ttm(s: pd.Series) -> pd.Series:
+        # NaN unless the 4 rows are 4 consecutive reported quarters (a gap row or a calendar hole spoils the sum)
+        return s.rolling(4).sum().where(ok4)
+
     ebit_ttm = ttm(full["operating_income"]).tail(n)
     int_ttm = ttm(full["interest_expense"]).tail(n)
     icr = ebit_ttm / int_ttm.where(int_ttm > 0)
