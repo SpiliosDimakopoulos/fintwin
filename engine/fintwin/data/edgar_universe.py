@@ -26,7 +26,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from .edgar import _get_json
+from .edgar import _get_json, data_legacy
 from .facts import DURATION
 
 HERE = Path(__file__).resolve().parent
@@ -83,12 +83,30 @@ FF12 = [
 
 
 def ff12(sic: int | None) -> str:
-    if sic is None:
+    if sic is None or (sic == SHELL_SIC and not data_legacy()):  # a recoded shell's industry is unknown
         return "Other"
     for name, ranges in FF12:
         if any(lo <= sic <= hi for lo, hi in ranges):
             return name
     return "Other"
+
+
+# SIC 6770 is "blank checks". EDGAR keeps only a company's current SIC, and the shell left after a Chapter 11 sale or
+# liquidation is often recoded to 6770; a company in this universe reported >= $50M of revenue, so a 6770 code here
+# is such a shell, not a financial firm (D12).
+SHELL_SIC = 6770
+
+
+def is_financial(sic: int | None) -> bool:
+    """Financials and REITs, excluded from the universe: the FF12 "Money" range 6000-6999 (D12), except shells.
+
+    Revision 2 excluded 6000-6799 only, so 6800-6999 firms entered the universe while `ff12` labelled them Money.
+    """
+    if sic is None:
+        return False
+    if data_legacy():
+        return 6000 <= sic <= 6799
+    return 6000 <= sic <= 6999 and sic != SHELL_SIC
 
 
 def frame(tag: str, year: int) -> list[dict]:
@@ -150,7 +168,7 @@ def build() -> pd.DataFrame:
             continue
         meta, f = s["meta"], s["filings"]
         sic = int(meta["sic"]) if str(meta.get("sic") or "").isdigit() else None
-        if sic is not None and 6000 <= sic <= 6799 and r.cik not in forced:
+        if is_financial(sic) and r.cik not in forced:
             continue
         items = f["items"].fillna("") if "items" in f else pd.Series("", index=f.index)
         is_8k = f["form"].isin(["8-K", "8-K/A"])

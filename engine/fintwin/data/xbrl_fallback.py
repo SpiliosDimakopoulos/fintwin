@@ -8,14 +8,19 @@ instance of older filings), and appends its US-GAAP facts in the same row format
 number, form and filing date. Point-in-time loading therefore treats them exactly like facts from the API.
 
 Only entity-wide facts (contexts without dimensions) in USD are kept, which is what `companyfacts` reports as well.
+A candidate file is used only if its root element is an XBRL instance, and a fact repeated in one instance keeps its
+most precise `decimals` (D11). Filings that `companyfacts` holds only in part are not completed.
 """
 
 from __future__ import annotations
 
 import gzip
+import io
 import os
+import re
 import xml.etree.ElementTree as ET
 
+import numpy as np
 import requests
 
 from . import edgar as E
@@ -51,13 +56,14 @@ def periodic_filings(cik: int) -> list[dict]:
     return out
 
 
+LINKBASE_SUFFIXES = ("_cal.xml", "_def.xml", "_lab.xml", "_pre.xml", "_ref.xml")
+NOT_INSTANCE = re.compile(r"^(FilingSummary|MetaLinks|defnref|R\d+)\.xml$", re.I)
+MAX_CANDIDATES = 3
+
+
 def _instance_name(cik: int, accn: str, primary: str) -> str | None:
-    idx = E._get_json(
-        f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn.replace('-', '')}/index.json",
-        f"index_{accn}.json",
-        24 * 365,
-    )
-    names = [x["name"] for x in idx["directory"]["item"]]
+    """Revision-2 choice: first inline instance, else the first .xml that is not a linkbase (may be a non-instance)."""
+    names = _index_names(cik, accn)
     inline = [n for n in names if n.endswith("_htm.xml")]
     if inline:
         return inline[0]
@@ -71,6 +77,37 @@ def _instance_name(cik: int, accn: str, primary: str) -> str | None:
     ]
     exact = [n for n in xml if n.startswith(stem)] if stem else []
     return (exact or xml or [None])[0]
+
+
+def _index_names(cik: int, accn: str) -> list[str]:
+    idx = E._get_json(
+        f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn.replace('-', '')}/index.json",
+        f"index_{accn}.json",
+        24 * 365,
+    )
+    return [x["name"] for x in idx["directory"]["item"]]
+
+
+def instance_candidates(names: list[str], primary: str) -> list[str]:
+    """Possible XBRL instances of a filing, most likely first (D11): the inline-extracted `*_htm.xml`, then .xml files
+    that are neither linkbases nor viewer/reference files (FilingSummary, MetaLinks, defnref, R*.xml), those named
+    after the primary document first. The caller confirms each by its root element."""
+    inline = [n for n in names if n.endswith("_htm.xml")]
+    stem = primary.rsplit(".", 1)[0] if primary else ""
+    xml = [n for n in names if n.endswith(".xml") and n not in inline]
+    xml = [n for n in xml if not n.endswith(LINKBASE_SUFFIXES) and not NOT_INSTANCE.match(n)]
+    xml.sort(key=lambda n: (not (stem and n.startswith(stem)), not re.search(r"\d{8}\.xml$", n)))
+    return (inline + xml)[:MAX_CANDIDATES]
+
+
+def is_instance(content: bytes) -> bool:
+    """An XBRL instance has an `xbrli:xbrl` root element."""
+    try:
+        for _, el in ET.iterparse(io.BytesIO(content), events=("start",)):
+            return el.tag == f"{XBRLI}xbrl"
+    except ET.ParseError:
+        return False
+    return False
 
 
 def _download(cik: int, accn: str, name: str) -> bytes:
@@ -122,7 +159,8 @@ def parse_instance(content: bytes, tags: set[str], accn: str, form: str, filed: 
         if m is not None and m.text and m.text.strip().split(":")[-1] == "USD":
             usd.add(u.get("id"))
     out: dict[str, list[dict]] = {}
-    seen: set[tuple] = set()
+    seen: dict[tuple, tuple[float, dict]] = {}  # (tag, start, end) -> (precision, row)
+    legacy = E.data_legacy()
     for el in root:
         if not el.tag.startswith("{" + GAAP_PREFIX):
             continue
@@ -137,13 +175,46 @@ def parse_instance(content: bytes, tags: set[str], accn: str, form: str, filed: 
             continue
         ctx = contexts[el.get("contextRef") or ""]
         key = (tag, ctx.get("start"), ctx["end"])
+        prec = _precision(el.get("decimals"))
         if key in seen:  # the same fact repeated in several statements
+            # D11: keep the most precise version (a summary table may repeat a value rounded to millions)
+            if legacy or prec <= seen[key][0]:
+                continue
+            seen[key][1]["val"] = val
+            seen[key] = (prec, seen[key][1])
             continue
-        seen.add(key)
-        out.setdefault(tag, []).append(
-            {**ctx, "val": val, "accn": accn, "form": form, "filed": filed, "fy": None, "fp": None}
-        )
+        row = {**ctx, "val": val, "accn": accn, "form": form, "filed": filed, "fy": None, "fp": None}
+        seen[key] = (prec, row)
+        out.setdefault(tag, []).append(row)
     return out
+
+
+def _precision(decimals: str | None) -> float:
+    """XBRL `decimals` as a sortable precision: INF is exact, a missing attribute is the least precise."""
+    if decimals is None:
+        return -np.inf
+    if decimals.strip().upper() == "INF":
+        return np.inf
+    try:
+        return float(decimals)
+    except ValueError:
+        return -np.inf
+
+
+def _filing_facts(cik: int, f: dict, tags: set[str]) -> dict | None:
+    """Facts of one filing from its XBRL instance, trying candidate files until one is an instance (D11)."""
+    name = _instance_name(cik, f["accn"], f["primary"])
+    # EDGAR's own extraction of an inline-XBRL filing is always an instance; anything else is checked (D11)
+    if E.data_legacy() or (name and name.endswith("_htm.xml")):
+        return parse_instance(_download(cik, f["accn"], name), tags, f["accn"], f["form"], f["filed"]) if name else None
+    for name in instance_candidates(_index_names(cik, f["accn"]), f["primary"]):
+        try:
+            content = _download(cik, f["accn"], name)
+        except Exception:
+            continue
+        if is_instance(content):
+            return parse_instance(content, tags, f["accn"], f["form"], f["filed"])
+    return None
 
 
 def augment(cik: int, raw: dict, tags: set[str]) -> dict:
@@ -157,11 +228,10 @@ def augment(cik: int, raw: dict, tags: set[str]) -> dict:
         added = []
         for f in missing:
             try:
-                name = _instance_name(cik, f["accn"], f["primary"])
-                if not name:
-                    continue
-                facts = parse_instance(_download(cik, f["accn"], name), tags, f["accn"], f["form"], f["filed"])
+                facts = _filing_facts(cik, f, tags)
             except Exception:  # one unreadable filing must not drop the others
+                continue
+            if facts is None:
                 continue
             for tag, rows in facts.items():
                 gaap.setdefault(tag, {"units": {}})["units"].setdefault("USD", []).extend(rows)
