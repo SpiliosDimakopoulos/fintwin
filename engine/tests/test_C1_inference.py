@@ -15,8 +15,8 @@ from fintwin.research import transmission as T
 def _mean_boot(x: np.ndarray, b: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
     """Column means of x (n x K) and their row-bootstrap distribution (b x K)."""
     g = np.random.default_rng(seed)
-    idx = g.integers(0, len(x), (b, len(x)))
-    return x.mean(0), x[idx].mean(1)
+    counts = g.multinomial(len(x), np.full(len(x), 1 / len(x)), size=b)
+    return x.mean(0), counts @ x / len(x)
 
 
 # ---------------------------------------------------------------- E5: Romano-Wolf stepM
@@ -479,3 +479,57 @@ def test_density_combination_learns_weight_on_crps():
     for k in ("linear_pool", "quantile_avg"):
         assert out[k]["skill_vs_rw"] > 0.2 and min(out[k]["lambda"].values()) >= 0.7
     assert out["quantile_avg"]["skill_vs_rw"] >= out["linear_pool"]["skill_vs_rw"] - 0.02
+
+
+# ---------------------------------------------------------------- E1 (C2 request): the specification's point forecast
+def _st(e1: bool) -> dict:
+    q = [1.0, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0, 4.0]
+    return {
+        "rev": [25.0] * 8,
+        "real_cfo": q,
+        "real_fcf": q,
+        "m": {},
+        "twin_cfo": q,
+        "twin_fcf": q,
+        "noloops_cfo": q,
+        "noloops_fcf": q,
+        "twin_cfo_tot": 17.0,
+        "twin_fcf_tot": 16.0,
+        "noloops_cfo_tot": 15.0,
+        "noloops_fcf_tot": 14.0,
+        "twin_cfo_sm": 20.0,
+        "twin_fcf_sm": 20.0,
+        "twin_cfo_point": 17.0 if e1 else 20.0,
+        "twin_fcf_point": 16.0 if e1 else 20.0,
+        "e1": e1,
+        "sens": {"x": {"cfo": q, "cfo_tot": 13.0, "health": 50.0}},
+    }
+
+
+def test_transmission_frame_uses_the_spec_point_forecast():
+    rows = pd.DataFrame(
+        [{"ticker": "A", "year": 2020, "st": _st(True)}, {"ticker": "B", "year": 2020, "st": _st(False)}]
+    )
+    df = T.frame(rows)
+    assert df["T1_cfo"].tolist() == [17.0, 20.0] and df["T1sm_cfo"].tolist() == [20.0, 20.0]
+    assert df["T0_fcf"].tolist() == [14.0, 20.0]
+    assert df["S_x_cfo"].tolist() == [13.0, 20.0]
+    assert df["T1_cfo_w"].tolist() == [1.0, 1.0]  # worst cumulative stays path-based
+
+
+def test_plan2_frame_uses_the_spec_point_forecast():
+    df = plan2.frame(pd.DataFrame([{"ticker": "A", "year": 2020, "st": _st(True)}]))
+    assert df["twin_cfo"].iloc[0] == 17.0 and df["twin_cfo_sm"].iloc[0] == 20.0
+    assert df["S_baseline_cfo"].iloc[0] == 17.0 and df["S_x_cfo"].iloc[0] == 13.0
+
+
+def test_old_shards_without_point_keys_keep_the_sum_of_medians():
+    st = {k: v for k, v in _st(True).items() if not k.endswith(("_point", "_tot", "_sm")) and k != "e1"}
+    df = T.frame(pd.DataFrame([{"ticker": "A", "year": 2020, "st": st}]))
+    assert df["T1_cfo"].iloc[0] == 20.0
+
+
+def test_provenance_block():
+    pv = S.provenance()
+    assert {"python", "platform", "versions", "git_sha", "uv_lock_sha256", "snapshot_digest", "spec", "env"} <= set(pv)
+    assert pv["versions"]["numpy"] == np.__version__

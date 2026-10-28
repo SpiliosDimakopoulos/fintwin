@@ -929,8 +929,15 @@ def forecast_section(fc: pd.DataFrame) -> dict:
 
     out = {}
     for var, g in fc.groupby("var"):
+        n_all = int(len(g))
         g = g[g["crps_ets"].notna() & g["scale"].gt(0)].copy()
-        res: dict = {"n": int(len(g)), "n_firms": int(g["ticker"].nunique())}
+        # n is the ETS-matched sample (forecasts whose ETS fit succeeded); n_all every twin forecast of the variable
+        res: dict = {
+            "n": int(len(g)),
+            "n_ets_matched": int(len(g)),
+            "n_all": n_all,
+            "n_firms": int(g["ticker"].nunique()),
+        }
         for base in ("rw", "ets"):
             c_t, c_b = g["crps_twin"] / g["scale"], g[f"crps_{base}"] / g["scale"]
             d = (c_t - c_b).to_numpy(float)
@@ -963,9 +970,70 @@ def forecast_section(fc: pd.DataFrame) -> dict:
     return out
 
 
-def main(cache: Path, b_family: int | None = None) -> dict:
+def provenance() -> dict:
+    """Versions, code and data identity of the run (R3 / OPS-F5): enough for the paper to state them."""
+    import hashlib
+    import platform
+    import subprocess
+    import sys
+
+    import scipy
+    import statsmodels
+
+    root = Path(__file__).resolve().parents[2]  # engine/
+
+    def sha256(f: Path) -> str | None:
+        return hashlib.sha256(f.read_bytes()).hexdigest() if f.exists() else None
+
+    sha = os.environ.get("GITHUB_SHA")
+    if not sha:
+        try:
+            sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, timeout=10, check=True
+            ).stdout.strip()
+        except Exception:  # noqa: BLE001 - not a git checkout
+            sha = None
+    snap = root / "snapshot" / "manifest.json"
+    try:
+        digest = json.loads(snap.read_text(encoding="utf-8")).get("digest") if snap.exists() else None
+    except ValueError:
+        digest = None
+    try:
+        from .experiments import spec_label
+
+        label = spec_label()
+    except Exception:  # noqa: BLE001
+        label = os.environ.get("FINTWIN_SPEC")
+    return {
+        "python": sys.version,
+        "platform": platform.platform(),
+        "versions": {
+            "numpy": np.__version__,
+            "pandas": pd.__version__,
+            "scipy": scipy.__version__,
+            "statsmodels": statsmodels.__version__,
+        },
+        "git_sha": sha,
+        "uv_lock_sha256": sha256(root / "uv.lock"),
+        "snapshot_digest": digest,
+        "spec": label,
+        "env": {k: v for k, v in sorted(os.environ.items()) if k.startswith("FINTWIN_")},
+        "run_id": os.environ.get("GITHUB_RUN_ID"),
+    }
+
+
+def _safe(fn, *args) -> dict:
+    """One evaluation section; a failure is recorded in its place rather than stopping the merge."""
+    try:
+        return fn(*args)
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+def main(cache: Path, b_family: int | None = None, out: Path | None = None) -> dict:
     """`b_family` (default B_FAMILY, env FINTWIN_B_FAMILY) is the bootstrap size of the pre-specified comparison
-    family; a dry run passes a small number."""
+    family; a dry run passes a small number. `out`: where to write research.json (default OUT), one file per
+    specification."""
     from . import calibration, distress, transmission
 
     b_family = B_FAMILY if b_family is None else int(b_family)
@@ -1015,6 +1083,17 @@ def main(cache: Path, b_family: int | None = None) -> dict:
         "calibration": calibration.section(fc, panel),
         "errors": errors,
     }
+    # revision 3 evaluation sections of workstream C2 (interfaces/C2.md section 4)
+    res["density"] = _safe(calibration.density_section, panel)  # E2 / plan 2.2 B1
+    liq = _safe(distress.liquidity_frame, cache)
+    if isinstance(liq, pd.DataFrame):
+        res["liquidity"] = _safe(distress.liquidity_section, liq, B)  # E12 / plan 2.2 B2
+        res["credit_events"] = _safe(distress.credit_section, liq, B)  # M9 / B3
+    else:
+        res["liquidity"] = res["credit_events"] = liq
+    res["decision_scores"] = _safe(distress.event_scores, panel)  # E8
+    res["forecast_dm_by_horizon"] = _safe(calibration.dm_by_horizon, fc)  # E10
+    res["provenance"] = provenance()
     from . import plan2
 
     res["plan2"] = plan2.section(panel_all, panel, fc, B_PANEL)
@@ -1022,7 +1101,9 @@ def main(cache: Path, b_family: int | None = None) -> dict:
     res["plan2"]["holm"] = plan2.holm(_secondary_pvalues(res))
     from ..export import _clean
 
-    OUT.write_text(json.dumps(_clean(res), indent=1), encoding="utf-8")
+    dest = Path(out) if out is not None else OUT
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(_clean(res), indent=1), encoding="utf-8")
     v = res["transmission"]["panel"].get("verdict", {})
     print(json.dumps(res["samples"]), "\nverdict:", json.dumps(v, default=str))
     return res

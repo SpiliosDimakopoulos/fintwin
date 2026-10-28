@@ -85,6 +85,26 @@ GAINS = (
 
 
 # ---------------------------------------------------------------- frame
+def point(st: dict, key: str) -> float:
+    """E1: the specification's 8-quarter point forecast of a structural output (`twin_cfo`, `noloops_fcf`, ...).
+
+    `<key>_point` when the shard stores it (the median of path totals in v3, the sum of per-quarter medians in
+    v2-pre); else `<key>_tot` when the shard says E1 is on; else the revision-2 sum of the per-quarter medians."""
+    if st.get(f"{key}_point") is not None:
+        return float(st[f"{key}_point"])
+    if st.get("e1") and st.get(f"{key}_tot") is not None:
+        return float(st[f"{key}_tot"])
+    v = st.get(key)
+    return float(np.sum(np.asarray(v, float))) if v is not None else np.nan
+
+
+def sens_point(path: dict, var: str, e1: bool) -> float:
+    """The same for a sensitivity variant (`cfo_tot` under E1, else the summed per-quarter medians)."""
+    if e1 and path.get(f"{var}_tot") is not None:
+        return float(path[f"{var}_tot"])
+    return float(np.sum(np.asarray(path[var], float)))
+
+
 def frame(rows: pd.DataFrame) -> pd.DataFrame:
     """One row per firm-cutoff with 8-quarter totals (and worst cumulative values) of every model, % of revenue."""
     recs = []
@@ -115,10 +135,16 @@ def frame(rows: pd.DataFrame) -> pd.DataFrame:
                 x = np.asarray(path if path is not None else [np.nan] * len(rev), float)
                 rec[f"{k}_{var}"] = float(x.sum())
                 rec[f"{k}_{var}_w"] = float(np.min(np.cumsum(x)))
+            # E1: the twin's totals are the specification's point forecast; the v2 sum of medians is kept beside it
+            rec[f"T1sm_{var}"] = rec[f"T1_{var}"]
+            if st.get(f"twin_{var}") is not None:
+                rec[f"T1_{var}"] = point(st, f"twin_{var}")
+            if st.get(f"noloops_{var}") is not None:
+                rec[f"T0_{var}"] = point(st, f"noloops_{var}")
             rec[f"m4_{var}"] = m.get(f"{var}4")
             rec["revsum"] = float(rev.sum())
         for k, path in (st.get("sens") or {}).items():
-            rec[f"S_{k}_cfo"] = float(np.sum(np.asarray(path["cfo"], float)))
+            rec[f"S_{k}_cfo"] = sens_point(path, "cfo", bool(st.get("e1")))
             rec[f"S_{k}_health"] = path.get("health")
             for e in EVENTS:
                 rec[f"S_{k}_pb_{e}"] = (path.get("probs") or {}).get(e)
@@ -221,6 +247,16 @@ def levels(df: pd.DataFrame, var: str) -> dict:
             "rho": S.rho(x, real),
             "share_closer_than_N1": float(np.nanmean((e < np.abs(base - real))[ok & np.isfinite(base)])),
         }
+    if f"T1sm_{var}" in df:  # E1: the twin as the sum of per-quarter medians (the v2-pre estimator), for comparison
+        x = df[f"T1sm_{var}"].to_numpy(float)
+        ok = np.isfinite(x) & np.isfinite(real)
+        if ok.any():
+            out["T1_sum_of_medians"] = {
+                "n": int(ok.sum()),
+                "median_ae": float(np.median(np.abs(x - real)[ok])),
+                "mae": float(np.mean(np.abs(x - real)[ok])),
+                "rho": S.rho(x, real),
+            }
     return out
 
 
