@@ -231,11 +231,11 @@ def data_vintage(cik: int) -> dict:
 
 
 # ---------------------------------------------------------------- walk-forward tau (MM-F1) and lambda (MM-F3)
-# Grids over B1's prior s.d. multiplier `prior_tau` and partial-adjustment speed `fixed_adjust_lambda` (per quarter).
+# Grids over B1's prior s.d. multiplier `prior_tau` and partial-adjustment speed `fixed_adj_lambda` (per quarter).
 # B1's own grids take precedence when it defines them.
 TAU_GRID: tuple[float, ...] = tuple(getattr(_cal_mod, "TAU_GRID", (0.05, 0.10, 0.15, 0.25, 0.50)))
 LAMBDA_GRID: tuple[float, ...] = tuple(getattr(_cal_mod, "LAMBDA_GRID", (0.0, 0.10, 0.20, 0.35, 0.50)))
-WF_KEYS = {"tau": "prior_tau", "lam": "fixed_adjust_lambda"}
+WF_KEYS = {"tau": "prior_tau", "lam": "fixed_adj_lambda"}
 WF_LAG = 3  # revision 2's rule: test year Y uses cutoffs up to Y-3, whose eight outcome quarters were all reported
 WF_MIN_PAST = 500
 
