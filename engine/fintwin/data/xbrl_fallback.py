@@ -120,13 +120,8 @@ def _download(cik: int, accn: str, name: str) -> bytes:
     last = None
     for _ in range(3):
         try:
-            import time
-
-            wait = E._MIN_INTERVAL - (time.time() - E._last_request)
-            if wait > 0:
-                time.sleep(wait)
+            E.throttle()  # the same monotonic clock as edgar._get_json: mixing time.time() in stalls every request
             r = requests.get(url, headers={"User-Agent": E._user_agent()}, timeout=60)
-            E._last_request = time.time()
             r.raise_for_status()
             E.CACHE_DIR.mkdir(parents=True, exist_ok=True)
             path.write_bytes(gzip.compress(r.content))
