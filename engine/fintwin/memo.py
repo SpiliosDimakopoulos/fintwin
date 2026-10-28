@@ -83,24 +83,39 @@ NUM = re.compile(r"-?\$?\d+(?:,\d{3})*(?:\.\d+)?")
 
 
 def _numbers(text: str) -> list[float]:
+    # notes._money writes a typographic minus (U+2212); without this the sign of every negative figure is lost
+    text = text.replace("−", "-")
     out = []
     for m in NUM.findall(text):
+        neg = m.startswith("-")
         try:
-            out.append(float(m.replace("$", "").replace(",", "")))
+            v = float(m.replace("$", "").replace(",", "").lstrip("-"))
         except ValueError:
-            pass
+            continue
+        out.append(-v if neg else v)
     return out
 
 
-def unverified_numbers(memo: dict, sheet: dict) -> list[float]:
-    """Figures in the memo that cannot be matched to the fact sheet (after rounding)."""
-    allowed = set(_numbers(json.dumps(sheet)))
-    allowed |= {abs(a) for a in allowed}
+def unverified_numbers(memo: dict, sheet: dict, strict: bool = False) -> list[float]:
+    """Figures in the memo that cannot be matched to the fact sheet (after rounding).
+
+    With ``strict`` a memo figure written with a minus sign must match a negative sheet figure (a flipped sign is
+    an error). The default skips |x| <= 12 as quarter counts and ordinals; ``strict`` (used when generating memos) checks them too and enforces signs:
+    an integer must equal a sheet figure rounded, a decimal must match within one rounding step.
+    """
+    allowed = _numbers(json.dumps(sheet, ensure_ascii=False))
     bad = []
-    for x in _numbers(json.dumps(memo)):
-        if abs(x) <= 12 or 1990 <= x <= 2035:  # quarter counts, ordinal words, years
+    for x in _numbers(json.dumps(memo, ensure_ascii=False)):
+        small = abs(x) <= 12
+        if (small and not strict) or 1990 <= x <= 2035:  # quarter counts, ordinal words, years
             continue
-        if not any(abs(abs(x) - a) <= max(0.051 * abs(a), 0.6) for a in allowed):
+        pool = [a for a in allowed if a < 0] if (x < 0 and strict) else [abs(a) for a in allowed]
+        if small:
+            tol = 0.5 if float(x).is_integer() else 0.051
+            ok = any(abs(abs(x) - abs(a)) < tol or (tol == 0.5 and round(abs(a)) == abs(x)) for a in pool)
+        else:
+            ok = any(abs(abs(x) - abs(a)) <= max(0.051 * abs(a), 0.6) for a in pool)
+        if not ok:
             bad.append(x)
     return bad
 
@@ -146,7 +161,7 @@ def main(tickers: list[str]) -> None:
         c = json.loads((DATA / "companies" / f"{t}.json").read_text(encoding="utf-8"))
         sheet = fact_sheet(c, index["meta"])
         r = write_memo(client, sheet)
-        bad = unverified_numbers(r["memo"], sheet)
+        bad = unverified_numbers(r["memo"], sheet, strict=True)
         attempts = 1
         if bad:
             r = write_memo(
@@ -155,7 +170,7 @@ def main(tickers: list[str]) -> None:
                 feedback=f"Your previous draft used figures not in the fact sheet: {bad}. "
                 "Remove or correct every one of them.",
             )
-            bad = unverified_numbers(r["memo"], sheet)
+            bad = unverified_numbers(r["memo"], sheet, strict=True)
             attempts = 2
         (out_dir / f"{t}.json").write_text(
             json.dumps(

@@ -20,6 +20,10 @@ WEIGHTS = {"liq": 0.3, "cov": 0.3, "lev": 0.2, "solv": 0.2}
 LABELS = {"liq": "liquidity runway", "cov": "interest coverage", "lev": "leverage", "solv": "solvency (Altman Z'')"}
 
 
+def _round(x, nd: int):
+    return None if x is None else round(x, nd)
+
+
 def _drivers(before: dict | None, after: dict | None) -> list[dict]:
     """Contribution of each component to the change in the score, largest first."""
     if not before or not after:
@@ -27,7 +31,7 @@ def _drivers(before: dict | None, after: dict | None) -> list[dict]:
     out = [
         {"component": k, "label": LABELS[k], "points": round(WEIGHTS[k] * (after[k] - before[k]), 1)}
         for k in WEIGHTS
-        if k in before and k in after
+        if before.get(k) is not None and after.get(k) is not None
     ]
     return sorted((d for d in out if abs(d["points"]) >= 0.5), key=lambda d: -abs(d["points"]))
 
@@ -41,7 +45,10 @@ def diff(prev: dict, new: dict, today: str | None = None) -> dict:
         filed = a.get("last_quarter") != b.get("last_quarter")
         if filed:
             filings.append({"ticker": t, "name": b["name"], "quarter": b.get("last_quarter")})
-        h0, h1 = a["matrix"]["base"]["health"], b["matrix"]["base"]["health"]
+        ba, bb = a["matrix"]["base"], b["matrix"]["base"]
+        h0, h1 = ba.get("health"), bb.get("health")
+        if h0 is None or h1 is None:  # a null score (NaN in the build) must not crash the weekly aggregate
+            continue
         if abs(h1 - h0) < THRESHOLD:
             continue
         s0, s1 = a["matrix"].get("pandemic", {}).get("health"), b["matrix"].get("pandemic", {}).get("health")
@@ -55,8 +62,8 @@ def diff(prev: dict, new: dict, today: str | None = None) -> dict:
                 "delta": round(h1 - h0, 1),
                 "stress_before": None if s0 is None else round(s0, 1),
                 "stress_after": None if s1 is None else round(s1, 1),
-                "p_breach_before": round(a["matrix"]["base"]["p_breach"], 3),
-                "p_breach_after": round(b["matrix"]["base"]["p_breach"], 3),
+                "p_breach_before": _round(ba.get("p_breach"), 3),
+                "p_breach_after": _round(bb.get("p_breach"), 3),
                 "new_filing": filed,
                 "quarter": b.get("last_quarter"),
                 "drivers": _drivers(a.get("components"), b.get("components")),
