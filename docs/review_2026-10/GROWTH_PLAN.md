@@ -1,256 +1,333 @@
-# FinTwin: πλάνο για να γίνει χρήσιμο open-source project
+# FinTwin: πλάνο για να γίνει χρήσιμο open-source project (v2)
 
-28-10-2026. Βάση: έρευνα αγοράς (GitHub API, SEC/FRED/HF/Pages docs, μελέτες για HN) και χάρτης του κώδικα στο `rev3`.
+v1 28-10-2026 · **v2 28-10-2026, μετά από 6 reviews** (`growth_review/`: finance_researcher FR, benchmark BM, oss_growth OG,
+architecture AR, data_engineering DE, product_ux PX — 123 ευρήματα). Κάθε αλλαγή σημειώνει το ID που την προκάλεσε.
 Συμπληρώνει το `IMPROVEMENT_PLAN.md` (rev3/paper), δεν το αντικαθιστά.
 
-## 0. Θέση: τι είναι το FinTwin για τον κόσμο
+## 0. Θέση
 
-Σήμερα: 4 αστέρια, 79 μοναδικοί επισκέπτες σε 2 εβδομάδες, κανένα `pip install`, dashboard 390 εταιρειών.
-Ο επισκέπτης μπορεί να *κοιτάξει*, όχι να *χρησιμοποιήσει*.
+Σήμερα: 4★, 79 μοναδικοί επισκέπτες σε 2 εβδομάδες, χωρίς `pip install`, dashboard 390 εταιρειών. Ο επισκέπτης
+μπορεί να *κοιτάξει*, όχι να *χρησιμοποιήσει*.
 
-**Το κενό που επιβεβαίωσε η έρευνα:** δεν υπάρχει ανοιχτό, αναπαραγώγιμο, point-in-time panel θεμελιωδών για όλο
-το universe των SEC filers. edgartools (2.8k★) διαβάζει μία κατάθεση· FinanceToolkit (5.5k★) / OpenBB (75k★) δίνουν
-δεδομένα providers χωρίς vintages· secfsdstools (86★) έχει filed date αλλά όχι panel· οι PIT βάσεις (Compustat PIT,
-Sharadar, tradevodata) είναι επί πληρωμή. Τα bankruptcy datasets (Polish UCI, Taiwan, Kaggle "American") είναι μικρά,
-ετήσια, ανωνυμοποιημένα, χωρίς ημερομηνίες κατάθεσης.
+**Τι δίνει ήδη η SEC, και τι λείπει (OG-8).** Το `companyfacts` έχει filed date ανά fact και τα Financial Statement
+Data Sets έχουν ημερομηνίες κατάθεσης. Δεν δίνουν: τριμηνιαίο panel (YTD de-cumulation, Q4 = FY − 9M), 52/53
+εβδομάδες, τα facts που λείπουν από το API (XBRL fallback), universe με όσες εταιρείες εξαφανίστηκαν, ερώτημα «όπως
+ήταν γνωστό στις D» για όλο το universe, γεγονότα (8-K) ευθυγραμμισμένα με τα δεδομένα, αναφορά ποιότητας. Αυτό το
+κενό δεν το καλύπτει κανένα ανοιχτό εργαλείο (edgartools 2.8k★ = μία κατάθεση· FinanceToolkit/OpenBB χωρίς vintages·
+Compustat PIT/Sharadar επί πληρωμή· το μόνο ανοιχτό PIT στο HF είναι CC BY-NC με το ιστορικό επί πληρωμή).
 
-**Άρα η αξία, με σειρά:**
-1. **Δεδομένα**: δωρεάν PIT panel ~5.200 εταιρειών 2009–σήμερα, vintages κατά filed date, YTD de-cumulation, 52/53
-   εβδομάδες, XBRL fallback, χωρίς survivorship, με γεγονότα (8-K 1.03/2.04/3.01, συγχωνεύσεις). Χρήστες: ερευνητές
-   finance, quants/φοιτητές (backtests χωρίς look-ahead), ML.
-2. **Benchmark**: χρεοκοπία, έλλειψη ρευστότητας, πρόβλεψη ταμειακών ροών, με σταθερά χρονικά splits, baselines και
-   leaderboard, συν **prospective track** (προβλέψεις που δεσμεύονται με hash πριν συμβούν τα γεγονότα). Το τελευταίο
-   δεν το βρήκαμε πουθενά και ταιριάζει με την προκαθορισμένη φιλοσοφία του paper.
-3. **Μηχανή stress test** ως βιβλιοθήκη (`twin("CCL").stress("covid")`) και dashboard για όλες τις εταιρείες.
-4. **MCP server** ώστε LLM agents να ζητούν PIT δεδομένα και stress tests (edgartools το πρόσθεσε πρόσφατα).
+**Χρήστες και η δουλειά που τους κάνουμε (PX-1):**
+1. Ερευνητής finance/λογιστικής: αναπαραγώγιμο PIT panel χωρίς WRDS, που ενώνεται με το Compustat/CRSP που ήδη έχει.
+2. Quant/φοιτητής: backtests χωρίς look-ahead και survivorship, σε 3 γραμμές.
+3. ML ερευνητής: benchmark με πραγματικά γεγονότα και τίμια splits.
+4. (Δευτερεύον) αναλυτής/φοιτητής: stress lab για μία εταιρεία. Το dashboard είναι **επιφάνεια απόκτησης**, το MCP
+   **κανάλι διανομής**.
 
-Το μήνυμα προς τα έξω αλλάζει από «το μοντέλο χάνει από έναν κανόνα» σε **«δωρεάν point-in-time δεδομένα SEC και
-ένα αυστηρό benchmark· εδώ φαίνεται πόσο look-ahead έχουν οι αφελείς backtests»**. Τα ειλικρινή αποτελέσματα μένουν,
-ως απόδειξη αυστηρότητας.
+**Ο twin είναι δευτερεύων στην παρουσίαση (OG-9).** Πρώτα τα δεδομένα, που η ποιότητά τους δεν εξαρτάται από τα
+αποτελέσματα του twin· ο twin «περιλαμβάνεται, με τίμια αποτελέσματα».
 
-**Δεν υποσχόμαστε αστέρια.** Μετρήσιμοι στόχοι 3 μηνών μετά το launch: pip downloads/μήνα (pepy), HF downloads,
-εξωτερικά issues/PRs, υποβολές στο leaderboard, citations. Τα αστέρια ακολουθούν αν αυτά κινηθούν.
+**Ακρίβεια στις δηλώσεις (FR-2, FR-11):** πλήρες universe από 2011Q2 (XBRL phase-in: μεγάλοι filers από 2009)· μόνο
+μη χρηματοοικονομικές εταιρείες· «χωρίς survivorship» για την εποχή XBRL, με τεκμηριωμένη κατασκευή και μέτρηση recall
+των labels. Πίνακας κάλυψης ανά έτος στο dataset card.
 
-## 1. Αποφάσεις (προτείνω· αλλάζουν μόνο με λόγο)
+## 1. Αποφάσεις
 
-| # | Απόφαση | Γιατί |
+| # | Απόφαση | Λόγος / ID |
 |---|---|---|
-| A1 | Όνομα `fintwin` σε PyPI (ελεύθερο, ελέγχθηκε 28-10) και conda-forge αργότερα | Ίδιο με το repo/DOI. Δεν χρησιμοποιούμε «SEC»/«EDGAR» σε όνομα/domain (trademarks). |
-| A2 | Monorepo όπως είναι (`engine/` = πακέτο Python, `web/` = dashboard) | Μία πηγή αλήθειας, ήδη parity tests. |
-| A3 | Εκδόσεις: `v3.0.0` = tag του paper (rev3). Βιβλιοθήκη από `3.1.0a1`. | Το paper παραπέμπει σε σταθερό tag· η βιβλιοθήκη κινείται. |
-| A4 | Δύο τρόποι δεδομένων: **hub** (προεπιλογή: Parquet από Hugging Face, χωρίς κλήσεις SEC) και **live** (από SEC με το User-Agent του χρήστη) | Ο νέος χρήστης παίρνει αποτέλεσμα σε δευτερόλεπτα· δεν φορτώνουμε την SEC με χιλιάδες χρήστες. |
-| A5 | Dataset: κώδικας MIT, δεδομένα **CC-BY-4.0** | Τα γεγονότα είναι public domain· CC-BY ζητά αναφορά (citations), είναι αποδεκτό για ML. Η SEC ζητά να αναφέρεται ως πηγή. |
-| A6 | **Κανένα FRED series της Moody's/ICE στο dataset** (`BAA10Y` είναι της Moody's). Μόνο κυβερνητικές σειρές (DGS3MO, DGS10, USREC, GDP· Philly Fed RTDSM) μετά από έλεγχο ανά σειρά. Το credit spread το κατεβάζει ο χρήστης τοπικά. | Όροι FRED: σειρές με copyright θέλουν άδεια του ιδιοκτήτη. |
-| A7 | Φιλοξενία: HF Datasets (κύρια, viewer, `load_dataset`), Zenodo DOI ανά τρίμηνο snapshot, Kaggle mirror μηνιαία | HF για ML, Zenodo για citation, Kaggle για practitioners. |
-| A8 | Docs: mkdocs + mkdocstrings στο `/docs/` του ίδιου Pages site· notebooks εκτελούνται σε CI με μικρό δείγμα, με κουμπί Colab | Το Material for MkDocs ίσως είναι σε maintenance (να επιβεβαιωθεί, εναλλακτικά Zensical). |
-| A9 | Dashboard: από hash routes σε path routes (`/c/CCL/`) με prerender στατικού HTML ανά ticker και sitemap | SEO· 5.200 × ~45 KB ≈ 250 MB < 1 GB όριο Pages. |
-| A10 | Benchmark labels δημόσια (ιστορικά γεγονότα)· το leaderboard δέχεται μόνο υποβολές με κώδικα που αναπαράγεται σε CI. Το prospective track βαθμολογείται κάθε τρίμηνο. | Τίμιο: δεν κρύβουμε test set που ήδη υπάρχει στο EDGAR. |
+| A1 | `fintwin` στο PyPI (ελεύθερο). Το dataset με περιγραφικό τίτλο **«FinTwin PIT: point-in-time US SEC fundamentals»**. «SEC» μόνο περιγραφικά, ποτέ σε όνομα/domain/λογότυπο. | trademarks, OG-20 |
+| A2 | Monorepo (`engine/`, `web/`). | |
+| A3 | `v3.0.0` = tag του paper. **Πρώτο PyPI release `3.1.0` τελικό** (pre-releases μόνο στο TestPyPI, αλλιώς το `pip install` τα αγνοεί). | OG-4 |
+| A4 | Hub mode προεπιλογή: Parquet από HF, **pinned στο tag του dataset που συνοδεύει κάθε έκδοση**, χωρίς env vars ή identity· `latest` προαιρετικό. Live mode μόνο με `set_identity`, κοινό rate limiter και διακόπτη για 403. Hub mode απενεργοποιεί το XBRL fallback· live χωρίς User-Agent → σφάλμα, όχι σιωπηλά άλλα δεδομένα. | DE-4, AR-4 |
+| A5 | Κώδικας MIT. Πίνακες του FinTwin: CC-BY-4.0 (στον βαθμό που υπάρχουν δικαιώματα). Τα SEC facts μένουν δημόσια πληροφορία. Τρίτες σειρές **εκτός** του CC-BY repo (`THIRD_PARTY.md`). Νέο `LICENSE-DATA`. | DE-2, FR-10 |
+| A6 | **Εκτός dataset και wheel:** BAA10Y (Moody's· το μοντέλο δεν το χρησιμοποιεί, αφαιρείται), Philly Fed RTDSM, Damodaran rating spreads, Wikipedia S&P/GICS (CC BY-SA). Universe και τομείς **μόνο από SEC** (SIC → FF12). Μακρο από πρωτογενή κυβερνητική πηγή (Treasury/H.15, BEA, NBER) σε ξεχωριστό config ή με script. Ό,τι χρειάζεται ο twin και δεν αναδιανέμεται (spreads, GDP vintages) κατεβαίνει στο μηχάνημα του χρήστη με cache. | AR-10, AR-11, DE-2 |
+| A7 | HF = πηγή αλήθειας (εβδομαδιαία), Zenodo = μόνιμο DOI ανά τρίμηνο. Kaggle μετά το launch, ως επιμελημένο υποσύνολο. **Κανένα `super_squash_history`.** | DE-1, AR-17, OG-5 |
+| A8 | Launch 1 χωρίς docs site: README + dataset card + notebooks + docstrings. mkdocs στο launch 2. | OG |
+| A9 | Σελίδες ανά εταιρεία μόνο στο launch 3, σταδιακά και με κανόνα ποιότητας (`noindex` όπου λίγα δεδομένα). Πρώτα σελίδες τομέα, εβδομαδιαίων αλλαγών και εννοιών. Απόφαση για custom domain. | PX-3, PX-4 |
+| A10 | Benchmark: dev labels δημόσια· ο ιστορικός πίνακας λέγεται ρητά «όχι leakage-proof», δείχνει αριθμό προσπαθειών και διαστήματα· **κύρια κατάταξη = prospective track**. | BM-1 |
+| A11 | **Πολιτική διατύπωσης και νομικού κινδύνου** για scores επώνυμων εταιρειών: «δείκτης», όχι πρόβλεψη ή συμβουλή· ζώνες αντί για πιθανότητες στο dashboard· banner, μεθοδολογία και link πηγών σε κάθε σελίδα· πολιτική διορθώσεων· κατάσταση «ανεπαρκές ιστορικό»· λίστα απαγορευμένων φράσεων· νομικός έλεγχος πριν από >390 δημόσιες σελίδες. | PX-2, PX-9 |
+| A12 | Κλειδί παντού το **CIK**· `resolve(ticker, asof)` από πίνακα tickers με ημερομηνίες ισχύος. | FR-1, AR-6 |
+| A13 | Κανόνας PIT: γνωστό από το **SEC acceptance timestamp** (μετά τις 17:30 ET = επόμενη εργάσιμη). Παράγωγες γραμμές γνωστές όταν και το τελευταίο συστατικό τους. Base πίνακες append-only· «as of D» είναι η βασική λειτουργία, τα first/latest είναι όψεις. | DE-3 |
+| A14 | Τρεις αριθμοί έκδοσης: βιβλιοθήκη (semver), `schema_version` (semver), `data_release` (π.χ. `2026.47`). Το benchmark έχει δικά του παγωμένα snapshots. | DE-14, BM-10 |
 
-## 2. Ροές εργασίας (workstreams)
+## 2. Τρία launches αντί για ένα (OG-1, OG-6)
 
-### L. Βιβλιοθήκη και packaging
-Ευρήματα κώδικα: `fintwin/__init__.py` εκθέτει μόνο `__version__`· cache hard-coded σε 3 διαφορετικά σημεία
-(`data/edgar.py:20`, `data/fred.py:16`, `pipeline.py:28`, `backtest/batch.py:35`)· User-Agent υποχρεωτικό από env·
-κανένα entry point.
+Ένας maintainer δεν στηρίζει έξι προϊόντα σε ένα launch. Κάθε launch είναι μόνο του χρήσιμο:
 
-- **L1** `fintwin/config.py`: ένα cache dir (`FINTWIN_CACHE` ή `platformdirs.user_cache_dir("fintwin")`, το repo
-  `.cache` μένει για development), `set_identity("Name email")` όπως στο edgartools, mode `hub|live|frozen`.
-  Όλα τα modules περνούν από εδώ. Τεστ ότι εγκατάσταση σε site-packages δεν γράφει μέσα στο πακέτο.
-- **L2** Δημόσιο API (σχέδιο στο ADR-001, πριν από κώδικα):
+| Launch | Περιέχει | Κοινό |
+|---|---|---|
+| **1. Δεδομένα** | dataset στο HF (+Zenodo DOI), λεπτός loader `pip install fintwin` (μόνο δεδομένα), 3 notebooks, μελέτη R, νέο README | ερευνητές, quants |
+| **2. Benchmark + μοντέλο** | `fintwin.bench` με στατικό πίνακα baselines, prospective track, `ft.twin` (extra `[model]`), docs site, paper datasets & benchmarks | ML, ακαδημαϊκοί |
+| **3. Επιφάνεια** | dashboard σε όλο το universe (σταδιακά), σελίδες τομέα/εβδομάδας, MCP server, badges/widgets, newsletter | ευρύ κοινό, LLM agents |
+
+## 3. Ροές εργασίας
+
+### L. Βιβλιοθήκη
+- **L1** `fintwin/config.py`: ένα cache dir (`FINTWIN_CACHE` ή `platformdirs`), mode `hub|live|frozen`, `set_identity`.
+  Αλλάζουν **≥ 15 σημεία** με hard-coded paths και παρενέργειες: εγγραφές μέσα στο πακέτο (`universe.py:98`),
+  `load_dotenv(override=True)` στο import (`memo.py:31`), `lru_cache` που καθαρίζουν σε αλλαγή mode (`facts.py:29`,
+  `universe.py:35,65,70`). Τεστ: εγκατάσταση σε read-only site-packages. (AR-5)
+- **L2** API. Δεδομένα (launch 1): επίπεδα DataFrames, lazy imports, τεκμηριωμένο `asof`:
   ```python
   import fintwin as ft
-  ft.set_identity("Jane Doe jane@uni.edu")          # μόνο για live mode
-  ft.universe(asof="2020-02-15")                    # DataFrame: cik, ticker, sic, status, entry, exit
-  ft.facts("CCL", asof="2020-02-15")                # PIT τριμηνιαίο panel μίας εταιρείας
-  ft.panel(fields=["revenue","fcf","cash"], asof="2020-02-15")   # cross-section, όλο το universe
-  ft.events(kind="bankruptcy")                      # 8-K 1.03 κ.λπ.
-  tw = ft.twin("CCL", asof="2020-02-15")            # calibrated twin
-  tw.stress("covid").summary(); tw.reverse_stress(); tw.health()
-  ft.bench.load("bankruptcy-8q"); ft.bench.evaluate(task, preds)
+  ft.sample()                                          # 50 εταιρείες, < 5 MB
+  ft.universe(asof="2020-02-15")                       # cik, name, sic, ff12, status, eligible_asof
+  ft.facts(ticker="CCL", asof="2020-02-15")            # ή cik=…; PIT τριμηνιαίο panel
+  ft.panel(fields=["revenue", "fcf", "cash"], asof="2020-02-15")   # cross-section
+  ft.events(kinds=["1.03", "2.04", "3.01", "4.02"])
+  ft.resolve("CCL", asof="2020-02-15")                 # ticker -> cik
   ```
-  Wrappers πάνω στα υπάρχοντα (`data/facts.load_company`, `stochastic/calibrate.calibrate`, `stochastic/mc.run`,
-  `scenarios/presets.build_scenario`). Εσωτερικά modules μένουν όπως είναι· τα δημόσια ονόματα σταθερά από 3.1.
-- **L3** CLI `fintwin` (`[project.scripts]`, argparse ώστε να μη μπει εξάρτηση): `fintwin facts CCL --asof …`,
-  `fintwin stress CCL covid`, `fintwin bench eval …`, `fintwin data pull`.
-- **L4** Εξαρτήσεις: core = numpy, pandas, scipy, requests, statsmodels, pyarrow, platformdirs·
-  `python-dotenv` σε extra· extras `[api]`, `[ai]`, `[mcp]`, `[ml]` (lightgbm για baselines), `[docs]`.
-  Wheel χωρίς δεδομένα (μόνο τα μικρά CSV αναφοράς).
-- **L5** Release: PyPI Trusted Publishing από Actions (environment `pypi` με required reviewer = εσύ), TestPyPI πρώτα,
-  `CHANGELOG.md`, type hints (`py.typed`), mypy ήδη υπάρχει.
-- **L6** First-run test: σε καθαρό container στον burst server, `pip install fintwin` → README quickstart → πρέπει να
-  τρέξει σε < 60 s. Γίνεται και CI job (πάνω σε TestPyPI).
+  Μοντέλο (launch 2, `[model]`): `ft.twin(…, asof, spec=…)` → `.stress()`, `.reverse_stress()`, `.health()`.
+  **Ο PIT twin είναι η research εκδοχή του calibrate** (`research/experiments.py:350-363`), που εξάγεται στο
+  `fintwin/twin.py` και τη χρησιμοποιούν και η έρευνα και το API: macro, spreads, GDP vintage όπως ήταν στο `asof`,
+  `sector_tol=1` ή PIT norms, ρητό `spec`. Απλό wrapper πάνω στο `stochastic/calibrate` θα είχε look-ahead. Τεστ
+  ισοδυναμίας με το research calibrate. (AR-1, AR-12)
+  Μετρημένοι χρόνοι (CCL): φόρτωση ~3 s, calibrate 1,1 s, stress 0,12 s, reverse stress ~2 s· cold import 11 s →
+  χρειάζεται lazy import για τα 60 s. (AR-18) Πολιτική deprecation στο ADR-001.
+- **L3** CLI: αναβάλλεται στο launch 2. (OG)
+- **L4** Εξαρτήσεις: core = pandas, pyarrow, huggingface_hub, platformdirs· `[model]` = numpy, scipy, statsmodels·
+  `[live]` = requests· `[mcp]`, `[ml]`, `[docs]`. Το wheel χωρίς δεδομένα τρίτων (A6), με έλεγχο στο CI. (OG, AR-10)
+- **L5** PyPI Trusted Publishing (environment `pypi`, required reviewer = εσύ), TestPyPI πρώτα, `CHANGELOG.md`, `py.typed`.
+- **L6** First-run test σε CI: Linux/Windows/macOS × Python 3.11–3.13, χρόνοι install/import/πρώτης κλήσης ως
+  νούμερα CI· και σε καθαρό burst server. (OG)
 
-### H. Dataset (FinTwin-PIT)
-- **H1** Σχήμα (ADR-002): πίνακες Parquet
-  - `facts_vintages`: cik, concept, period_start/end, fiscal_year/quarter, value, unit, **filed**, accession, form,
-    source (`companyfacts|xbrl_fallback`), derived (αν προέκυψε από de-cumulation). Ο πίνακας-καρδιά.
-  - `quarterly_first`: panel εταιρείας-τριμήνου όπως **πρωτοδημοσιεύτηκε** · `quarterly_latest`: με τελευταίες αναθεωρήσεις.
-  - `universe`: είσοδος/έξοδος, SIC, κατάσταση (active/acquired/delisted/bankrupt), λόγος εξόδου.
-  - `events`: 8-K 1.03/2.04/3.01, 2.01/5.01, με ημερομηνία κατάθεσης.
-  - `macro`: μόνο οι επιτρεπτές σειρές (A6).
-  Κάθε γραμμή με provenance (accession → link στο EDGAR). Partition ανά έτος.
-- **H2** Exporter `fintwin/data/export_parquet.py` από τη frozen cache. **Το dataset v1 βγαίνει από το ίδιο snapshot με
-  το paper** (`manifest.json` SHA256), ώστε paper και dataset να είναι ταυτόσημα.
-- **H3** Validation suite: ταυτότητες λογιστικής (A = L + E εντός ανοχής), μοναδικότητα κλειδιών, μονοτονία vintages,
-  σύγκριση δείγματος με τα 10-Q· αναφορά ποιότητας στο dataset card. Issue template «data error».
-- **H4** Dataset card (YAML: license, task_categories, configs), citation, όροι πηγών.
-- **H5** Εβδομαδιαίο push από το `data.yml` με `HF_TOKEN` secret· `super_squash_history` κάθε τρίμηνο· Zenodo DOI
-  στα τριμηνιαία tags· Kaggle mirror μηνιαία.
-- **H6** Hub mode στη βιβλιοθήκη: `hf_hub_download` με pinned revision, ώστε τα αποτελέσματα να αναπαράγονται.
+### H. Dataset «FinTwin PIT»
+- **H1** Σχήμα (ADR-002, Opus review):
+  - `facts_raw`: cik, tag, unit, start, end, val, accn, form, filed, **accepted_at**, filing_fy/fp, frame, decimals,
+    source (companyfacts|xbrl_fallback), ingested_build, pipeline_version, row_hash. Τα 97 tags του loader +
+    `DA_PARTS`/`MATURITY_TAGS`. **Ο loader τρέχει αμετάβλητος πάνω του** (το τριμηνιαίο panel δεν αρκεί για τον twin). (AR-2)
+  - `panel_vintages`: cik, period_end, known_from, όλες οι στήλες του `quarters`, flags (q4_derived, imputed,
+    restated, first_reported), tag_used και accession ανά πεδίο, derived_from. `quarterly_first`/`quarterly_latest` =
+    όψεις. (AR-7, FR-4/5/9, DE-3)
+  - `companies` (status, exit_reason από Forms 25/15 και 8-K 2.01/3.01/5.01, sic, ff12, filer_category,
+    exclusion_reason, eligible_asof), `tickers` (με ημερομηνίες ισχύος), `events` (μόνο κωδικοί items και acceptance
+    time, **χωρίς ελεύθερο κείμενο**: τα 8-K ονομάζουν πρόσωπα), `manifest` (SHA256 snapshot, git SHA loader, spec).
+    (AR-8, FR-1, FR-6, DE-17)
+  - Partition **`cik % 64`**, ταξινόμηση (cik, tag, end, accepted_at): μία εταιρεία = ένα μικρό αρχείο. Εβδομαδιαία
+    deltas σε δικά τους αρχεία, συμπίεση ανά τρίμηνο. Cross-section «as of D» με DuckDB/polars, χρόνοι μετρημένοι στο
+    card. (AR-3, DE-6/7/19)
+  - `sample` config 50 εταιρειών. (DE-22)
+- **H2** Exporter από τη frozen cache· **v1 από το ίδιο snapshot με το paper**. Το `panel_vintages` κοστίζει ~130
+  CPU-ώρες μία φορά (2×cax31, ~8 h, < 1 EUR), μετά **μόνο incremental**. Τεκμηρίωση κανόνων first/latest, 10-K/A,
+  10-Q/A, αναθεωρημένων comparatives. (AR-7, FR-5)
+- **H3** Ποιότητα:
+  - H3a αυτόματες πύλες (hard: κλειδιά, λογιστικές ταυτότητες, μονάδες/κλίμακα, dei, immutability μέσω row_hash·
+    soft: αποκλίσεις, κάλυψη), αναφορά ποιότητας στο card. (DE-12, FR-7)
+  - H3b ανεξάρτητος έλεγχος 200 τυχαίων εταιρειών-τριμήνων απέναντι στις ίδιες τις καταθέσεις, ποσοστό ταύτισης στο card. (OG)
+  - H3c σύγκριση με Compustat σε ~500 εταιρείες-τρίμηνα **από beta χρήστη με WRDS**: μόνο συγκεντρωτικά ποσοστά, script
+    για όποιον έχει άδεια· αλλιώς ρητή δήλωση ότι δεν έγινε. (FR-3)
+  - Recall των labels χρεοκοπίας απέναντι σε δημόσιες λίστες (π.χ. LoPucki BRD). (FR-11)
+- **H4** Dataset card: configs ανά πίνακα, περιορισμοί, κάλυψη ανά έτος, ιδιωτικότητα, πίνακας άδειας ανά πηγή,
+  κείμενο αναφοράς, citation, πολιτική εκδόσεων, Croissant metadata. (DE, BM-15, FR-14)
+- **H5** Εβδομαδιαία ροή: SEC **bulk archives** (`companyfacts.zip`, `submissions.zip`) + μόνο οι νέες καταθέσεις, σε
+  ένα job· **τα shards δεν αγγίζουν ποτέ την SEC** (`FINTWIN_FILL_ONLY=1`), αλλιώς ~130 req/s με ένα User-Agent στα
+  5.300· διακόπτης στο 403 → delta (χωρίς token) → πύλες → HF PR → επαλήθευση → merge → tag. Token μόνο σε environment
+  ξεχωριστού publish job. Rollback με νέο commit σε < 24 h + ανακοίνωση. (DE-4/5/13/15, AR-14)
+- **H6** Hub mode: pinned tag, `allow_patterns` ανά config, έλεγχος checksums, offline mode, κάθε αποτέλεσμα γράφει
+  `data_release`. CI τεστ: hub == frozen. (DE, AR-22)
+- **H7** `VARIABLES.md` + `variable_map.csv`: πεδίο → tags → Compustat item, ποσοστό συμπλήρωσης· προσαρμοσμένο και μη
+  προσαρμοσμένο EBIT χωριστά. Changelog δεδομένων. (FR-4, DE-14)
+- **H8** `link_to_crsp_compustat.py`: σύνδεση μέσω CIK με τα δεδομένα του ίδιου του χρήστη, ποσοστό ταύτισης σε δείγμα,
+  καμία αναδιανομή. (FR-1)
 
-### B. Benchmark (FinTwin-Bench)
-- **B0** Πρώτα βιβλιογραφικός έλεγχος (V4FinBench 2026 και survey arXiv 2411.01928, Papers with Code, HF): τι
-  υπάρχει, τι ακριβώς είναι καινούριο. Καμία δήλωση «πρώτο» χωρίς αυτό.
-- **B1** Pre-spec (ADR-003, γραμμένο *πριν* τρέξει οτιδήποτε, όπως το REVISION_PLAN_3):
-  - T1 χρεοκοπία σε 4 και 8 τρίμηνα (AUC, PR-AUC, Brier, log loss)·
-  - T2 έλλειψη ρευστότητας (το label του άξονα B του paper)·
-  - T3 ταμειακές ροές/FCF ένα έτος μπροστά (CRPS, MAE), με και χωρίς realized revenue (transmission)·
-  - splits: train ≤ 2016, val 2017–2018, test 2019–2024 (ή ακριβώς τα cutoffs του paper), μόνο PIT features·
-  - baselines: Altman Z″, Ohlson O, logit, 16q margin, LightGBM, FinTwin.
-- **B2** `fintwin.bench`: `load`, `evaluate`, `baselines`, μορφή υποβολής (Parquet προβλέψεων + script + `env.lock`).
-- **B3** Leaderboard: φάκελος `bench/submissions/`, CI ξανατρέχει τον κώδικα και βαθμολογεί, πίνακας στο site.
-- **B4** Prospective track: κάθε τρίμηνο οι προβλέψεις (baselines + υποβολές) κλειδώνουν με SHA256 σε GitHub
-  release/Zenodo· βαθμολογούνται όταν βγουν τα 8-K. Σελίδα «προβλέψεις που κάναμε πριν συμβούν».
-- **B5** Baselines τρέχουν στον burst server (cax21, λίγα λεπτά).
+### R. Μελέτη look-ahead (το «άγκιστρο»)
+- **R0 go/no-go, φθηνά, στο G0:** από το snapshot (το `companyfacts` κρατά όλες τις τιμές ανά περίοδο): ποσοστό
+  εταιρειών-τριμήνων και πεδίων που αναθεωρήθηκαν και κατά πόσο· AUC του Altman Z″ με πρώτες vs τελευταίες τιμές· πόσες
+  εταιρείες λείπουν αν το universe βγει από τους σημερινούς tickers. Pre-spec πριν τρέξει, δεκτό και μικρό αποτέλεσμα,
+  παραπομπή στη βιβλιογραφία Compustat Snapshot. cax21, ~1 ώρα. (OG-3, FR-13)
+- **R1** αν περάσει: πλήρης έκδοση πάνω στο `panel_vintages`, notebook #1, blog post. Αν όχι: το άγκιστρο γίνεται «το
+  ανοιχτό panel με τις χρεοκοπημένες μέσα» + η σύγκριση με companyfacts (OG-8).
 
-### R. Το «άγκιστρο»: πόσο look-ahead έχουν οι αφελείς backtests
-Μελέτη που κάνει τον κόσμο να καταλάβει γιατί χρειάζεται το dataset:
-- ποσοστό εταιρειών-τριμήνων που αναθεωρήθηκαν μετά την πρώτη δημοσίευση, και κατά πόσο·
-- πόσο φουσκώνει το AUC χρεοκοπίας και ένα απλό factor backtest με `quarterly_latest` αντί για `quarterly_first`·
-- πόσες εταιρείες λείπουν αν το universe ληφθεί από τους σημερινούς tickers (survivorship).
-Pre-spec πριν τρέξει, compute στον burst server, γίνεται notebook #1, blog post και το κεντρικό post στο HN.
+### B. Benchmark «FinTwin-Bench» (launch 2)
+- **B0** Έγινε (ενότητα 9). Μένει: recall labels vs LoPucki. (FR-11)
+- **B1** Pre-spec (ADR-003, πριν τρέξει οτιδήποτε):
+  - **T1** χρεοκοπία σε 4 (προεπιλογή) και 8 τρίμηνα. Κατάσταση γραμμής event / survived / exited-non-distress /
+    exited-unknown, `time_to_event`, `exit_reason`, κανόνας right-censoring. Κύρια μέτρα **PR-AUC και Brier skill**,
+    AUC δευτερεύον, cluster-bootstrap διαστήματα, ζώνες κατάταξης (~28 γεγονότα/έτος → ±0,03–0,05 στο AUC). (BM-3/4/5)
+  - **T2a** μόνο πιστωτικό γεγονός (8-K 1.03/2.04/3.01)· **T2b** ο κανόνας ισολογισμού του `REVISION_PLAN_3` §4,
+    δηλωμένος ως proxy. (BM-2)
+  - **T3** ταμειακές ροές/FCF ένα έτος μπροστά, CRPS, με και χωρίς realized revenue.
+  - Splits = **τα cutoffs του paper (2015/2020/2022)** walk-forward, purge κατά τον ορίζοντα, cutoff στο acceptance
+    time, το 2020 χωριστά· έτσι το baseline FinTwin είναι η έξοδος του paper. (BM-6, AR-19)
+  - Baselines: base rate, Altman Z″, Ohlson O, Shumway, CHS-lite, logit, 16q margin, LightGBM/CatBoost/XGBoost, RF,
+    TabPFN, AutoGluon, FinTwin· για T3 χρονοσειρές. Δηλωμένο budget tuning. (BM-12, FR-12)
+- **B2** `fintwin.bench`: `load`, `evaluate` σε μία γραμμή, έλεγχος `filed <= cutoff`, εντολή leakage audit, clipping
+  πιθανοτήτων, hashed IDs, hash του snapshot στην υποβολή. (BM-7/14)
+- **B3** Στο launch 2 **στατικός πίνακας baselines**. Αυτόματη επανεκτέλεση υποβολών αργότερα, μόνο με γραμμένους κανόνες
+  sandbox: `pull_request` με `permissions: {}`, έγκριση για fork PRs, εξαρτήσεις πρώτα και μετά εκτέλεση με
+  `--network none` μόνο πάνω στα features, βαθμολόγηση σε χωριστό job, εγγραφή μέσω `workflow_run`. Βαριές υποβολές
+  χειροκίνητα, label «maintainer-rerun». (BM-8, AR-15, OG)
+- **B4** Prospective track: **το αρχείο ξεκινά τώρα** (G0), ανεξάρτητα από το benchmark: κάθε εβδομάδα τα scores του
+  twin και 2–3 baselines σε Parquet + SHA256 σε GitHub release. Σταθερό ημερολόγιο, παγωμένο universe ανά γύρο, tracks
+  που κρίνονται γρήγορα (1 τρίμηνο, T3)· **καμία δήλωση κατάταξης τον πρώτο χρόνο** (~25–30 γεγονότα). Βαθμολόγηση σε
+  σχέση με ένα δεσμευμένο baseline. (BM-9/17, OG-15)
+- **B5** Baselines στον burst server· το baseline FinTwin από το run του paper (αλλιώς ~6–7 h cax31). (AR)
+- **B6** Paper datasets & benchmarks (π.χ. NeurIPS D&B ή Scientific Data), datasheet, ablation first-reported vs
+  restated. (BM-15/16)
 
-### W. Dashboard για όλους
-- **W1** Μέτρηση (28-10, 3 τελευταία runs): norms ~14', shards 5,5–6' median για ~392 εταιρείες/16 ≈ 13,5 s ανά εταιρεία, σύνολο ~23'. Για 5.200: ~19,5 ώρες runner, με 20 ταυτόχρονα jobs ≈ 60' + norms ≈ 75–80' την εβδομάδα. Χωράει δωρεάν (32 shards × ~37', κάτω από το timeout 120'). Αρχικά έλεγχος αν
-  στα δωρεάν runners (public repo) με περισσότερα shards, ή αν το πλήρες universe χτίζεται ανά μήνα και οι 390 ανά εβδομάδα.
-- **W2** Universe: από S&P 500 (`universe_sp500.csv`, 394) στο universe του dataset με φίλτρο κάλυψης· gate
-  `MIN_COMPANIES` προσαρμόζεται.
-- **W3** Path routing + prerender (React `renderToString` σε build script) για `/c/<TICKER>/`: τίτλος, meta,
-  σύντομη περίληψη κειμένου (όχι μόνο αριθμοί, αλλιώς η Google δεν τα κάνει index), sitemap, canonical. SPA fallback
-  με `404.html`· τα παλιά `#…` links ανακατευθύνονται.
-- **W4** Σελίδες τομέα, screener όλου του universe, εβδομαδιαία λίστα «μεγαλύτερες αλλαγές υγείας» (υπάρχει ήδη RSS),
-  export CSV, κουμπί «άνοιξε σε notebook».
-- **W5** Μέγεθος: αν το JSON περάσει ~600 MB, τα company JSON πάνε στο HF και το site τα φορτώνει από εκεί.
+### W. Dashboard (launch 3)
+- **W1** Μετρήθηκε: ~13,5 s/εταιρεία, 5.300 ≈ 75–80′/εβδομάδα σε δωρεάν runners, **μόνο αν τα shards δεν καλούν την SEC** (H5).
+- **W2** Universe από SEC (όχι Wikipedia), φίλτρο: τελευταία περιοδική κατάθεση < 6 μήνες + κανόνας για το ποιες
+  εταιρείες παίρνουν σελίδα που γίνεται index. Τομείς SIC → FF12 (αλλάζει ο υπολογισμός sector norms). Το `index.json`
+  σταματά να γίνεται commit στο main (`data.yml:113-118`). (AR-14, PX)
+- **W3** Path routes + SSR-ready views με δεδομένα ως props + hydration (1–1,5 εβδ.)· μοναδικοί τίτλοι και περιεχόμενο,
+  JSON-LD Dataset, `lastmod` από ημερομηνία κατάθεσης, μόνιμο JS redirect από τα `#…`, προσοχή στο status του `404.html`. (AR, PX-8)
+- **W4** Σελίδες τομέα, εβδομαδιαίων αλλαγών και εννοιών πρώτα· feeds ανά ticker, watchlist, SVG badges/widgets ανά
+  ticker (backlinks), πάνελ «Χρησιμοποίησε αυτά τα δεδομένα» → notebook/loader. (PX-4/6/12/13)
+- **W5** Κλίμακα: `index.json` στρογγυλεμένο και σπασμένο (`index_min` + lazy), virtualised palette και πίνακες
+  (`CommandPalette.tsx:15-31,61-64`, `CompareView.tsx:41`, `TwinView.tsx:86`, `VersusView.tsx:26`), LRU στο
+  `data.ts:91-100`· μέγεθος site **370–530 MB**· κοντά στο 1 GB → company JSON στο HF. Lighthouse + axe-core στο CI. (AR-14, PX-7)
+- **W6** Κριτήρια προσβασιμότητας και mobile. (PX-7)
 
-### M. MCP server και integrations
-- **M1** `fintwin-mcp` (extra `[mcp]`, επίσημο Python SDK): tools `facts`, `panel`, `events`, `stress`, `health`,
-  `reverse_stress`, μόνο hub mode, όλα read-only. Οδηγίες για Claude Desktop / Cursor.
-- **M2** Παράδειγμα «LLM credit analyst» που χρησιμοποιεί μόνο αριθμούς από τα tools (συνδέεται με το υπάρχον module σημειωμάτων).
+### M. MCP (launch 3)
+- **M1** Tools γύρω από δουλειές agent, περιορισμένο μέγεθος απάντησης, υποχρεωτικά πεδία provenance/caveat και μια
+  έτοιμη πρόταση για παράθεση. Τοπικό stdio πρώτα. (PX-5)
+- **M2** Επαλήθευση αριθμών + σουίτα τεστ παραποίησης· notebook που επαναλαμβάνει καταγεγραμμένες συνομιλίες. (PX, AR-16)
+- **M3** MCP registries, έτοιμα config snippets, `llms.txt`, JSON ανά σελίδα. (PX-16)
 
-### D. Τεκμηρίωση και παραδείγματα
-- Site docs: Getting started (60 s), Concepts (PIT, vintages, survivorship), Data dictionary (από το schema, αυτόματα),
-  API reference (mkdocstrings), Benchmark, Model (από METHODOLOGY), Paper, FAQ, Data terms.
-- Notebooks (Colab badge, εκτελούνται σε CI): (1) πόσο look-ahead έχει ο αφελής backtest, (2) μοντέλο χρεοκοπίας σε 20
-  γραμμές και υποβολή στο bench, (3) Carnival 2020 stress test, (4) δικό σου σενάριο και reverse stress, (5) screen
-  τομέα, (6) MCP με LLM.
+### D. Notebooks και docs
+- Launch 1: **#0** μία εταιρεία σε 60 s, χωρίς κλειδιά, με γράφημα· **#1** look-ahead (R)· **#2** μοντέλο χρεοκοπίας σε
+  20 γραμμές. Τρέχουν σε CI πάνω στο `sample` με pinned revision, σε αλλαγές docs και κάθε νύχτα. (AR-16, PX)
+- Launch 2: αναπαραγωγές δημοσιευμένων αποτελεσμάτων (accruals, distress, restatements, PEAD/SUE), Carnival stress test,
+  δικό σου σενάριο· mkdocs site με Data dictionary από το H7. (FR-15)
 
-### G. Παρουσίαση, launch, κοινότητα
-- **G1** README από την αρχή: μία φράση αξίας, GIF, `pip install` + 3 γραμμές, «γιατί PIT», σύνδεσμοι dataset/bench/
-  dashboard/paper, citation. Τα αποτελέσματα του paper σε δική τους ενότητα.
-- **G2** Καθαρισμός root (`grep.exe.stackdump`, `klein_list.txt` τοπικά), issue templates (bug, data error, bench
-  submission, feature), labels, Discussions κατηγορίες, `GOVERNANCE.md` (σύντομο).
-- **G3** Pipeline good-first-issues που φέρνουν πραγματική αξία: XBRL tag mappings, νέα σενάρια, νέα baselines στο
-  bench, έλεγχοι ποιότητας δεδομένων, μεταφράσεις dashboard.
-- **G4** Launch (τα posts τα κάνεις εσύ από τους λογαριασμούς σου· εγώ ετοιμάζω κείμενα):
-  - Ημέρα 0: blog post (R) + Show HN με τίτλο που λέει το εύρημα, όχι το όνομα του project. Οι μελέτες δείχνουν
-    +100–300 αστέρια την πρώτη εβδομάδα από HN έκθεση σε AI projects· σε niche finance λογικά λιγότερα.
-  - Ημέρα 1–3: r/algotrading, r/quant, r/datascience, r/Python· HF dataset/Kaggle με notebook.
-  - Εβδομάδα 1–2: PRs σε awesome-quant (30k★), awesome-public-datasets (80k★), financial-machine-learning (8.8k★),
-    awesome-ai-in-finance· PyCoder's Weekly / Python Weekly.
-  - Μην γίνει launch μεταξύ 20/12 και 6/1 (χαμηλή κίνηση).
-- **G5** Ακαδημαϊκά: pyOpenSci review (πιστοποίηση ποιότητας), JOSS paper (έλεγχος προϋποθέσεων ιστορικού),
-  Zenodo, email στους researchers που απάντησαν, με link στο dataset.
-- **G6** Συνέχεια: εβδομαδιαία δεδομένα (ήδη), μηνιαίο minor release με changelog, τριμηνιαία βαθμολόγηση του
-  prospective track (ξανά αφορμή για post), απάντηση σε issues < 48 ώρες μέσω `fintwin-maintainer`.
+### G. Παρουσίαση, κοινότητα, launches
+- **G1 πρώτο και φθηνότερο:** νέο README: μία φράση αξίας, το μονοπάτι των 60 s, πίνακας «τι δίνει η SEC / τι
+  προσθέτουμε» με ένα επαληθευμένο παράδειγμα όπου ο αφελής δρόμος δίνει λάθος νούμερο. (OG-8/12)
+- **G2** Φόρμα «data error» τώρα, αφαίρεση του topic `hacktoberfest`, topics για PIT, πολιτική για χαμηλής αξίας PRs,
+  `GOVERNANCE.md` με δήλωση single maintainer, καθαρισμός root. (OG)
+- **G3** 8–10 πραγματικά good-first-issues με pointers σε αρχεία και failing tests· all-contributors. (OG)
+- **G4 Launches:**
+  - **Human beta πριν από κάθε launch**: οι ερευνητές που απάντησαν + 3–5 χρήστες· 5–8 συνεδρίες usability για το
+    launch 3. Οι agent reviewers δεν αρκούν. (OG-2, PX)
+  - Launch 1: **Show HN για το dataset/loader** (όχι για το εύρημα), Τρ–Πε 8–10 π.μ. ώρα Ν. Υόρκης, έτοιμο πρώτο σχόλιο
+    (τι είναι, τι δεν είναι, γνωστά κενά, πώς αναφέρεις λάθος), ποτέ αίτημα για upvotes· αν βυθιστεί, email στους
+    moderators για second chance. Τίτλοι: «Show HN: Free point-in-time SEC fundamentals for ~5,000 companies, including
+    bankrupt ones» ή «Show HN: As-first-reported SEC financials (filed-date vintages), CC-BY». Χωρίς «digital twin», «AI»,
+    «stress testing» στον τίτλο. Η μελέτη R ως link στο πρώτο σχόλιο, το blog post άλλη μέρα. (OG-7)
+  - Μετά: r/algotrading, r/quant, r/datascience, r/Python, HF· PRs σε awesome-quant, awesome-public-datasets,
+    financial-machine-learning· PyCoder's Weekly. Launch 3: MCP registries, Search Console.
+  - Όχι launch 20/12–6/1. Καθαρό ημερολόγιο τη μέρα του launch.
+- **G5** pyOpenSci, JOSS, data-descriptor paper μετά το launch 2. CITATION.cff, concept + version DOIs, log διορθώσεων. (FR-14)
+- **G6** Εβδομαδιαίο triage (όχι υπόσχεση 48 h), release μόνο όταν υπάρχει κάτι, newsletter/auto-post από το feed
+  αλλαγών (launch 3), σελίδα «φρεσκάδα δεδομένων». (OG, PX)
 
-## 3. Σειρά και gates
+## 4. Σειρά και gates
 
-Ο κανόνας: **ο κώδικας του rev3 παγώνει όταν ξεκινήσει το full run.** Η βιβλιοθήκη γίνεται σε branch `lib` από εκείνο
-το commit, ώστε τα νούμερα του paper να μην εξαρτώνται από τον refactor.
+**Κανόνας κλάδων (AR-13):** μέχρι το `v3.0.0` το `lib` δέχεται **μόνο νέα αρχεία**. Μετά το tag: merge του rev3 στο main,
+νέο `lib` από το main, μία μηχανική αλλαγή paths, και τεστ ισοδυναμίας με το paper (30 εταιρείες × 1 cutoff, bit-for-bit
+με τα shards του `v3.0.0`).
 
-| Φάση | Τι | Εξάρτηση | Gate για να προχωρήσουμε |
-|---|---|---|---|
-| **G0** τώρα, παράλληλα με rev3 | ADR-001 API, ADR-002 schema, ADR-003 bench pre-spec, pre-spec της μελέτης R· B0 βιβλιογραφία· έλεγχος όρων ανά FRED/Philly Fed σειρά· W1 μέτρηση χρόνων· τα 3 κείμενα που δεν αγγίζουν κώδικα | καμία | ADRs εγκεκριμένα από σένα |
-| **rev3** | dry run → full run → paper (ήδη στο IMPROVEMENT_PLAN) | snapshot | tag `v3.0.0` |
-| **G1** βιβλιοθήκη alpha | L1–L5, H2 exporter, H6 hub mode | κώδικας rev3 παγωμένος | tests πράσινα, first-run test < 60 s, `3.1.0a1` στο TestPyPI |
-| **G2** δεδομένα + bench | H1–H5, B1–B3, B5, μελέτη R στον server | G1, snapshot rev3 | validation suite πράσινη, dataset ιδιωτικό στο HF για έλεγχο |
-| **G3** επιφάνεια | W2–W5, D (docs + notebooks), M1–M2, G1–G3 | G2 | site docs live, notebooks περνούν σε CI |
-| **G4** πριν το launch | 3 φρέσκοι reviewers (κώδικας, δεδομένα, «νέος χρήστης»), security review, διορθώσεις, `3.1.0` στο PyPI, dataset δημόσιο | G3 | καμία ανοιχτή κρίσιμη παρατήρηση |
-| **G5** launch | G4 της ενότητας 2 | G4 + δική σου έγκριση | — |
-| **G6** συνέχεια | G5, G6 της ενότητας 2, B4 πρώτο τρίμηνο | — | — |
-
-Εκτίμηση: G0 1–2 μέρες· rev3 ~1–2 εβδομάδες· G1 ~1 εβδομάδα· G2 1–2 εβδομάδες· G3 ~2 εβδομάδες· G4 λίγες μέρες.
-Launch ρεαλιστικά **αρχές-μέσα Δεκεμβρίου ή μέσα Ιανουαρίου** (όχι στις γιορτές).
-
-## 4. Ποιος κάνει τι (agents και μοντέλα)
-
-Ίδιο σύστημα με το rev3: κάθε workstream σε δικό του git worktree και branch, με τους κανόνες του `AGENT_BRIEF.md`
-(identity, χωρίς push, interface notes στο `interfaces/`, αιτήματα στο `requests/`), merge από την κύρια συνεδρία.
-
-| Εργασία | Ποιος | Γιατί |
+| Φάση | Τι | Gate |
 |---|---|---|
-| ADR-001/002/003, pre-spec R, όλες οι αποφάσεις, merges, τελικά κείμενα README/HN | **κύρια συνεδρία (Opus)** | σχεδιασμός και κρίση |
-| L1–L3 (config, δημόσιο API, CLI) | **Opus subagent** σε worktree | αγγίζει όλα τα modules, λεπτός refactor |
-| L4–L5 packaging, Trusted Publishing, CHANGELOG | Sonnet | τυποποιημένο |
-| H2 exporter, H3 validation, H6 hub mode | Sonnet· σχήμα και review από Opus | μεσαία δυσκολία |
-| H4 dataset card, H5 workflows | Sonnet | |
-| B0 βιβλιογραφία, έλεγχοι όρων FRED | `researcher` (Sonnet) | κρίση πάνω σε πηγές |
-| B2–B3 bench κώδικας και leaderboard CI | Sonnet | |
-| W1 μέτρηση από logs Actions | Haiku (`bulk-reader`) | μηχανικό |
-| W2–W5 dashboard, prerender, routing | Sonnet (frontend) | |
-| M1–M2 MCP | Sonnet | |
-| D docs και notebooks | Sonnet συγγραφή· Haiku για link check και τυπογραφικά | |
-| G2 templates/labels, awesome-list PR κείμενα | Haiku | μηχανικό |
-| Reviewers G4 | 3 φρέσκοι agents: code review (Opus), data audit (Sonnet), «νέος χρήστης» σε καθαρό server (Sonnet) | ανεξάρτητη ματιά |
+| **G0** τώρα, παράλληλα με rev3 | ADR-001/002/003· pre-spec και **R0 go/no-go**· νέο README (G1) και G2· **αρχείο prospective (B4)** και **Action για την κίνηση του GitHub** (ενότητα 8)· νέο `LICENSE-DATA`/`THIRD_PARTY.md` | ADRs εγκεκριμένα, απόφαση R0 |
+| **rev3** | dry → full run → paper | tag `v3.0.0` |
+| **G1** loader + dataset | L1, L2-δεδομένα, L4–L6, H1–H8, R1 | hub == frozen· read-only site-packages· πύλες πράσινες· πίνακας κάλυψης· H3b· dataset ιδιωτικό στο HF |
+| **Beta 1** | 3–5 άνθρωποι, H3c αν βρεθεί WRDS | ευρήματα ενσωματωμένα |
+| **Launch 1** | `3.1.0` στο PyPI, dataset δημόσιο, Show HN | δική σου έγκριση |
+| **G2** | L2-twin (PIT calibrate), B1–B6, docs site, notebooks launch 2 | twin == research calibrate· leakage audit πράσινο |
+| **Beta 2 → Launch 2** | | |
+| **G3** | W, M, A11 | νομικός έλεγχος διατύπωσης· Lighthouse/axe· κανόνας index σελίδων· usability |
+| **Launch 3** | | |
 
-Παράλληλα στο G1: L (Opus) και H2 (Sonnet), με το interface «ο exporter διαβάζει μέσω `fintwin.config`» να ορίζεται
-στο ADR-001 πριν ξεκινήσουν. Στο G3: W, D, M τρέχουν ταυτόχρονα (διαφορετικά αρχεία).
+**Χρονοδιάγραμμα (AR-21)**, μετά το `v3.0.0` (~μέσα Νοεμβρίου):
 
-## 5. Compute και κόστος
+| Ροή | Εκτίμηση |
+|---|---|
+| L (χωρίς twin) | 1,5–2 εβδ. |
+| H1–H8 | 3–4 εβδ. + ~8 h server |
+| R1 | 1 εβδ. |
+| L2-twin | ~1 εβδ. |
+| B | 2–2,5 εβδ. |
+| W | 3–4 εβδ. |
+| M | 1 εβδ. |
+| D | 1,5–2 εβδ. |
 
-- Όλα τα βαριά στο burst server (cax21/cax31): export dataset από το snapshot, μελέτη R, baselines του bench,
-  first-run tests. Εκτίμηση < 1 EUR συνολικά για G1–G4.
-- Εβδομαδιαίο build/push στα δωρεάν GitHub Actions (public repo). HF/Zenodo δωρεάν.
-- Κανένα νέο πάγιο κόστος.
+→ **Launch 1 μέσα–τέλη Ιανουαρίου 2027**, launch 2 ~Μάρτιο, launch 3 ~Απρίλιο–Μάιο.
+Κρίσιμη διαδρομή: L1 → `facts_raw` + `panel_vintages` → hub mode → R1 → beta → launch 1.
 
-## 6. Τι χρειάζεται από σένα (εξωτερικές ενέργειες)
+## 5. Ποιος κάνει τι
 
-1. Έγκριση των ADRs του G0.
-2. Λογαριασμός PyPI (και TestPyPI) και ρύθμιση pending trusted publisher για το `fintwin`.
-3. Λογαριασμός/organisation στο Hugging Face και `HF_TOKEN` ως GitHub secret (εγώ δεν βλέπω το token).
-4. Έγκριση πριν από κάθε δημόσια δημοσίευση: push, PyPI release, HF dataset δημόσιο, Kaggle, Zenodo, awesome-list PRs.
-5. Τα posts του launch (HN, Reddit) από τους λογαριασμούς σου.
+Κάθε ροή σε δικό της worktree/branch με τους κανόνες του `AGENT_BRIEF.md` (identity, χωρίς push, `interfaces/`,
+`requests/`). **Καμία ροή δεν ξεκινά πριν περάσει review η ροή από την οποία εξαρτάται.** (OG)
 
-## 7. Κίνδυνοι
+| Εργασία | Ποιος |
+|---|---|
+| ADRs, pre-specs (R0, bench), αποφάσεις, merges, README, κείμενα launch | κύρια συνεδρία (Opus) |
+| L1 + L2 (config, API, **εξαγωγή PIT twin**) | ένας Opus agent, πριν ξεκινήσει το H2 (AR-22) |
+| H1 σχήμα, H6 hub mode | Sonnet υλοποίηση, **Opus review** (κρίνουν αν η βιβλιοθήκη αναπαράγει το paper) |
+| H2 exporter, H3a, H4, H5, H7, H8 | Sonnet |
+| H3b έλεγχος απέναντι στις καταθέσεις | Sonnet (διαβάζει 10-Q)· δειγματοληψία από την κύρια |
+| R0/R1 | compute στον burst server· γραφή Sonnet, τελικό κείμενο κύρια |
+| B1 | κύρια· B2–B5 Sonnet |
+| W | Sonnet (frontend)· W3 SSR review Opus |
+| M | Sonnet |
+| D notebooks | Sonnet· link check Haiku |
+| G2/G3 templates, labels, κείμενα PRs σε awesome lists | Haiku |
+| Review πριν από κάθε launch | 3 φρέσκοι agents (code Opus, data Sonnet, «νέος χρήστης» σε καθαρό server Sonnet) **+ human beta** |
+
+**Budget ανθρώπινου review:** πόσες ώρες/εβδομάδα μπορείς· ορίζει πόσες ροές τρέχουν παράλληλα.
+
+## 6. Compute και κόστος
+
+Burst server για R0 (~1 h cax21), `panel_vintages` (~8 h 2×cax31), baselines, first-run tests: εκτίμηση < 3 EUR μέχρι το
+launch 1. Εβδομαδιαίο build σε δωρεάν Actions (με bulk archives της SEC). HF δωρεάν όσο μένει σε λίγα GB (αλλιώς storage
+grant, Zenodo ως εφεδρεία). (DE-20)
+
+## 7. Τι χρειάζεται από σένα
+
+1. Έγκριση των ADRs του G0 και των A1–A14.
+2. Ώρες/εβδομάδα για review.
+3. PyPI/TestPyPI + pending trusted publisher· λογαριασμός HF και `HF_TOKEN` σε GitHub environment.
+4. Επαφή με τους ερευνητές για beta (και αν κάποιος έχει WRDS για το H3c).
+5. Custom domain (launch 3) και νομικός έλεγχος διατύπωσης (A11).
+6. Έγκριση πριν από κάθε δημόσια κίνηση· τα posts από τους λογαριασμούς σου.
+
+## 8. Μετρικές, όρια, σχέδιο αποτυχίας (OG-17/19)
+
+- Από τώρα: εβδομαδιαίο Action που αποθηκεύει την κίνηση του GitHub (το API κρατά 14 μέρες)· cookieless μετρητής στο
+  Pages· **καμία telemetry στη βιβλιοθήκη**.
+- Όρια για 90 μέρες μετά το launch 1, προκαθορισμένα: 500 PyPI downloads/μήνα χωρίς mirrors, 300 HF downloads,
+  5 εξωτερικά issues (≥ 2 για λάθη δεδομένων), 1 εξωτερικό PR που δεν είναι docstring, 2 citations.
+- Αν δεν πιαστούν: συνεντεύξεις με 5 χρήστες που ήρθαν και έφυγαν, αλλαγή αγκίστρου ή κοινού, όχι repost.
+
+## 9. Ευρήματα έρευνας G0 (28-10)
+
+**Benchmark, τι είναι καινούριο.** Κοντινότερα: V4FinBench (2026, Visegrad, label από λογιστικό κανόνα, χωρίς PIT),
+EDGAR-CORPUS/ECL (LoPucki labels, Compustat, ετήσια), arXiv 2606.05623 (10-K κείμενο). Live/prospective: ForecastBench,
+Foresight Arena, TS-Arena, κανένα σε credit. **Λέμε** «δεν βρήκαμε προηγούμενο» για: ανοιχτό CC-BY PIT panel XBRL· labels
+από ημερομηνίες 8-K 1.03 σε 4/8 τρίμηνα· task ρευστότητας· CRPS για ταμειακές ροές· prospective track σε credit.
+**Δεν λέμε** «πρώτο».
+
+**Άδειες ανά σειρά.**
+
+| Σειρά | Στο CC-BY dataset |
+|---|---|
+| BAA10Y (Moody's) | Όχι· αφαιρείται |
+| Philly Fed RTDSM | Όχι· script, ή BEA/ALFRED vintages μετά από έλεγχο |
+| Damodaran rating spreads | Όχι· κατεβαίνει τοπικά με αναφορά |
+| Wikipedia S&P/GICS | Όχι (CC BY-SA)· universe/τομείς από SEC |
+| DGS3MO, DGS10 | Ναι, από Treasury/H.15, ξεχωριστό config |
+| GDP | Ναι, από BEA, ξεχωριστό config |
+| USREC | Ναι, από ημερομηνίες NBER με αναφορά |
+| FASB taxonomy | Μόνο ονόματα tags |
+
+**Weekly build:** ~13,5 s/εταιρεία· 5.300 χωρούν στα δωρεάν runners (~75–80′) αν τα shards δεν καλούν την SEC.
+
+## 10. Κίνδυνοι
 
 | Κίνδυνος | Αντιμετώπιση |
 |---|---|
-| Λάθη στα δεδομένα γίνονται δημόσια | validation suite, data-error template, διορθώσεις στο επόμενο εβδομαδιαίο build, changelog δεδομένων |
-| Άδειες τρίτων (FRED Moody's/ICE) | A6· έλεγχος ανά σειρά πριν το G2 |
-| Κάποιος πάρει το όνομα στο PyPI | alpha στο PyPI στο τέλος του G1 (όχι placeholder) |
-| Ένας maintainer, burnout | αυτοματοποίηση (weekly build, CI leaderboard, maintainer skill), σαφή good-first-issues |
-| Το bench δεν είναι καινούριο | B0 πριν από κάθε δήλωση· το prospective track και τα PIT labels είναι η διαφορά |
-| Μέγεθος Pages | W5 (company JSON στο HF) |
-| Rate limits SEC από χρήστες | hub mode προεπιλογή· live mode με το throttle που ήδη υπάρχει |
-
-## 8. Ευρήματα G0 (28-10)
-
-**Πόσο καινούριο είναι το benchmark.** Κοντινότερα: V4FinBench (2026, 1M+ firm-years Visegrad, label κανόνας από λογιστικά, χωρίς PIT, χωρίς live track),
-EDGAR-CORPUS/ECL (labels LoPucki, αριθμοί Compustat, ετήσιο), arXiv 2606.05623 (10-K κείμενο, ετήσιο).
-Live/prospective: ForecastBench, Foresight Arena, TS-Arena (commit-reveal), κανένα σε credit/θεμελιώδη.
-Ένα ανοιχτό PIT dataset βρέθηκε μόνο ως CC BY-NC με το ιστορικό αναθεωρήσεων επί πληρωμή (StockAlloy FiledFact-100K).
-**Μπορούμε να πούμε** (ως «δεν βρήκαμε προηγούμενο»): ανοιχτό CC-BY PIT/as-first-reported panel XBRL· labels από
-ημερομηνίες 8-K 1.03 σε 4 και 8 τρίμηνα· task έλλειψης ρευστότητας· CRPS για ταμειακές ροές με/χωρίς revenue·
-prospective track σε credit. **Δεν λέμε**: «πρώτο bankruptcy benchmark», «πρώτο σε SEC», «πρώτο live», «πρώτο PIT».
-
-**Άδειες ανά σειρά (αντικαθιστά το A6).**
-
-| Σειρά | Στο CC-BY dataset; |
-|---|---|
-| BAA10Y (Moody's) | Όχι. Script που την κατεβάζει τοπικά. |
-| Philly Fed RTDSM (GDP vintages) | Όχι χωρίς γραπτή άδεια. Script + παραπομπή Croushore & Stark (2001). Προαιρετικά email στη Philly Fed. |
-| DGS3MO, DGS10 | Ναι, από την πηγή (Fed H.15 ή Treasury yield curve), όχι από FRED. |
-| GDP | Ναι, από BEA, με αναφορά. |
-| USREC | Ναι, χτισμένο από τις ημερομηνίες NBER («Permission to copy is granted, provided attribution»). |
-
-Νέο αρχείο `THIRD_PARTY.md` με πηγή και όρους κάθε σειράς· οι σειρές NBER/BEA/Fed εξαιρούνται ρητά από τη CC-BY.
+| Αδύναμο άγκιστρο | R0 go/no-go πριν χτιστεί οτιδήποτε γύρω του |
+| Κριτική για ποιότητα / «αυτό το δίνει ήδη η SEC» | H3a–c δημοσιευμένα, πίνακας σύγκρισης στο README |
+| Κακό εβδομαδιαίο build | staging PR, πύλες, rollback < 24 h + ανακοίνωση |
+| Αποκλεισμός IP από την SEC | bulk archives, κοινό limiter, διακόπτης 403, shards χωρίς SEC |
+| Μόλυνση άδειας (CC BY-SA, Moody's, Philly Fed) | A6, `THIRD_PARTY.md`, έλεγχος wheel στο CI |
+| Προσωπικά δεδομένα από 8-K | μόνο κωδικοί items |
+| Διαρροή HF token | environment, ξεχωριστό publish job, ελάχιστο scope |
+| Σπασμένα pins | κανένα squash, immutable tags |
+| Υπερπροσαρμογή στο ιστορικό leaderboard / ξένος κώδικας στο CI | A10, B3 sandbox |
+| Απόκλιση από Compustat / κατάχρηση pre-2011 δεδομένων | H3c, πίνακας κάλυψης |
+| Ποινή SEO για thin content / παράπονο εταιρείας για «κίνδυνο χρεοκοπίας» | A9, A11, νομικός έλεγχος |
+| Παραποίηση από LLM | M1/M2 |
+| Burnout ενός maintainer | τρία launches, εβδομαδιαίο triage, αυτοματοποίηση |
+| Κάποιος πάρει το όνομα | `3.1.0` στο τέλος του G1 |
