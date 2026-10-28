@@ -21,7 +21,7 @@ from ..scenarios.presets import DEFAULT_LEVERS, PRESETS, build_scenario
 from ..stochastic.calibrate import calibrate
 from ..stochastic.mc import run, summarize
 from ..stochastic.shocks import draw_shocks
-from .batch import contiguous_prefix, data_legacy
+from .batch import data_legacy, following, window_ok
 from .scoring import crps_gaussian, crps_samples, interval_hit, pit
 
 CUTOFFS: dict[str, dict[str, str]] = {
@@ -33,8 +33,11 @@ BANDS = [5, 25, 50, 75, 95]
 
 def _realized(full: pd.DataFrame, after: pd.Timestamp, horizon: int) -> pd.DataFrame:
     r = full[full.index > after + pd.Timedelta(days=20)].head(horizon).copy()
-    if not data_legacy():  # SW-4: stop at the first missing quarter instead of shifting later quarters into its slot
-        r = r.iloc[: contiguous_prefix(after, r.index)]
+    if not data_legacy():  # SW-4 / D1: keep the longest gap-free run of quarters, never a window across a hole
+        k = len(r)
+        while k and following(full, after, k)[1] is not None:
+            k -= 1
+        r = r.iloc[:k]
     r["cash_like"] = r["cash"] + r["short_investments"]
     r["ebitda"] = r["operating_income"] + r["da"]
     r["fcf"] = r["cfo"] - r["capex"]
@@ -227,7 +230,10 @@ def cross_section(tickers: list[str] = UNIVERSE, n_paths: int = 2000) -> dict:
             win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
             fcf = win["cfo"] - win["capex"]
             if not data_legacy() and not np.isfinite(fcf.to_numpy(float)).all():
-                failed[t] = "missing cash-flow quarter in 2020-21"  # D4: unknown, not zero burn
+                failed[t] = "missing cash-flow quarter in 2020-21"  # D4 / D1: unknown, not zero burn
+                continue
+            if not window_ok(hist.quarters, 4):
+                failed[t] = "no four consecutive quarters before the cutoff"
                 continue
             fcf = fcf.fillna(0).cumsum()
             pre_liq = p["cash0"]

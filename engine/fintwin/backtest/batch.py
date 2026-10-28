@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from ..data.facts import load_company
+from ..data.facts import QUARTER_DAYS, contiguous, load_company
 from ..data.fred import macro_quarterly
 from ..model.sd_model import simulate
 from ..scenarios.presets import DEFAULT_LEVERS, PRESETS, build_scenario
@@ -135,28 +135,35 @@ UNIVERSE_XL = [
 ]
 
 
-STEP_DAYS = (60, 125)  # one fiscal quarter apart, allowing for 52/53-week calendars and stub periods
-
-
 def data_legacy() -> bool:
     """FINTWIN_DATA_LEGACY=1 restores the v2 data handling (zero-filled outcome gaps, positional alignment, 90-day
     reporting lag) for the one comparison run of REVISION_PLAN_3 §0.3."""
     return os.environ.get("FINTWIN_DATA_LEGACY", "0") == "1"
 
 
-def contiguous_prefix(prev: pd.Timestamp, idx: pd.DatetimeIndex) -> int:
-    """How many of the quarter ends in `idx` follow `prev` (and each other) one quarter apart, up to the first gap.
+def window_ok(q: pd.DataFrame, n: int, col: str = "revenue") -> bool:
+    """The last n rows are n consecutive reported quarters (workstream A's `facts.contiguous`: no gap row, no
+    fiscal-year-end break, no step over one quarter). Under FINTWIN_DATA_LEGACY only the row count, as in v2."""
+    if data_legacy():
+        return len(q) >= n
+    return contiguous(q, n, col)
 
-    Realized quarters are matched to forecast quarters by position, so a missing quarter would compare simulated
-    quarter h with a later quarter (SW-4). Workstream A's full calendar turns such quarters into NaN rows; this check
-    also holds for a spine that drops them."""
-    n = 0
-    for t in idx:
-        if not STEP_DAYS[0] <= (t - prev).days <= STEP_DAYS[1]:
-            break
-        n += 1
-        prev = t
-    return n
+
+def following(full: pd.DataFrame, last: pd.Timestamp, n: int) -> tuple[pd.DataFrame, str | None]:
+    """The n quarters after `last` and why they cannot be used: "short" (not yet reported) or "gap" (a gap row, a
+    fiscal-year break or a missing step inside the window, or between `last` and its first quarter; SW-4, D1).
+
+    Realized quarters are matched to simulated quarters by position, so a window with a hole is rejected whole
+    rather than compared with the wrong quarters. Legacy: the next n rows, as in v2."""
+    nxt = full[full.index > last + pd.Timedelta(days=20)].head(n)
+    if len(nxt) < n:
+        return nxt.iloc[:0], "short"
+    if data_legacy():
+        return nxt, None
+    first = (nxt.index[0] - last).days
+    if not QUARTER_DAYS[0] <= first <= QUARTER_DAYS[1] or not contiguous(nxt, n):
+        return nxt.iloc[:0], "gap"
+    return nxt, None
 
 
 def first_filed(cik: int) -> dict[str, pd.Series]:
@@ -198,10 +205,16 @@ def seen_by(target: pd.Series, filed: pd.Series | None, cutoff: pd.Timestamp, la
     return when <= cutoff
 
 
-def _realized(full: pd.DataFrame, after: pd.Timestamp) -> pd.DataFrame:
-    r = full[full.index > after + pd.Timedelta(days=20)].head(H).copy()
-    if not data_legacy():
-        r = r.iloc[: contiguous_prefix(after, r.index)]
+def _realized(full: pd.DataFrame, after: pd.Timestamp, why: dict | None = None) -> pd.DataFrame:
+    """The H realized quarters after `after`; empty (reason in `why["realized"]`) if they are not all reported or
+    contain a gap. Legacy: the next H rows, however many there are."""
+    if data_legacy():
+        r = full[full.index > after + pd.Timedelta(days=20)].head(H).copy()
+    else:
+        r, reason = following(full, after, H)
+        r = r.copy()
+        if reason and why is not None:
+            why["realized"] = reason
     r["cash_like"] = r["cash"] + r["short_investments"]
     return r
 
@@ -258,13 +271,18 @@ def company_cases(ticker: str, n_paths: int = 2000) -> dict:
     for origin in ORIGINS:
         try:
             hist = load_company(ticker, asof=origin)
-            if len(hist.quarters) < 16:
-                skipped[origin] = "fewer than 16 quarters of history"
+            if not window_ok(hist.quarters, 16):
+                skipped[origin] = "fewer than 16 consecutive quarters of history"
                 continue
             vintages.append(_vintage(hist, origin, macro_quarterly(origin)))
-            real = _realized(full, hist.quarters.index[-1])
+            why: dict = {}
+            real = _realized(full, hist.quarters.index[-1], why)
             if len(real) < H:
-                skipped[origin] = "not enough realized quarters yet"
+                skipped[origin] = (
+                    "gap in the realized quarters"
+                    if why.get("realized") == "gap"
+                    else "not enough realized quarters yet"
+                )
                 continue
             p = calibrate(hist, macro_quarterly(origin), H)
             eps = draw_shocks(p, n_paths, H, seed=11)
@@ -332,16 +350,22 @@ def covid_row(ticker: str, full: pd.DataFrame, why: dict | None = None) -> dict 
     try:
         cutoff = "2020-02-20"
         hist = load_company(ticker, asof=cutoff)
-        if len(hist.quarters) < 16:
-            why["covid"] = "fewer than 16 quarters of history"
+        if not window_ok(hist.quarters, 16):
+            why["covid"] = "fewer than 16 consecutive quarters of history"
             return None
         p = calibrate(hist, macro_quarterly(cutoff), 8)
         eps = draw_shocks(p, 2000, 8, seed=7)
         st = summarize(simulate(p, build_scenario(PRESETS["pandemic"]["knobs"], 8), eps, DEFAULT_LEVERS))
         win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
         fcf = win["cfo"] - win["capex"]
+        if not data_legacy() and len(win) and not contiguous(win, len(win)):
+            why["covid"] = "gap in the 2020-21 quarters"  # D1: a calendar hole, not a quiet quarter
+            return None
         if not data_legacy() and not np.isfinite(fcf.to_numpy(float)).all():
             why["covid"] = "missing cash-flow quarter in 2020-21"  # D4: not zero burn
+            return None
+        if not window_ok(hist.quarters, 4):
+            why["covid"] = "no four consecutive quarters before the cutoff"
             return None
         fcf = fcf.fillna(0).cumsum()
         rev_ttm = float(hist.quarters["revenue"].tail(4).sum())

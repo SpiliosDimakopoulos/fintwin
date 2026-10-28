@@ -114,7 +114,7 @@ def _one(key: str, year: int, X: np.ndarray) -> dict | None:
         return None
     full = load_company(key).quarters
     pre = hist.quarters
-    nxt = _following(full, pre.index[-1], 8)
+    nxt = _following(full, pre.index[-1], 8)  # empty if unreported or a gap row (D1); the shard counts the None
     rev_ttm = _ttm(pre, "revenue")
     if len(nxt) < 8 or nxt["revenue"].isna().any() or nxt["cfo"].isna().any() or not rev_ttm > 50e6:
         return None
@@ -174,7 +174,8 @@ def shard(i: int, n: int) -> None:
             failed[type(e).__name__] = failed.get(type(e).__name__, 0) + 1
             print(f"  {key} {year}: {type(e).__name__}: {e}", flush=True)
             continue
-        if r is None:
+        if r is None:  # not usable at the cutoff, or the eight outcome quarters are unreported or hold a gap
+            failed["excluded_window"] = failed.get("excluded_window", 0) + 1
             continue
         r["_stamp"] = st
         out.write_text(json.dumps(_clean(r)), encoding="utf-8")

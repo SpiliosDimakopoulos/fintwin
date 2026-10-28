@@ -26,14 +26,15 @@ import pandas as pd
 from ..backtest.batch import (
     _baseline,
     _realized,
-    contiguous_prefix,
     data_legacy,
     filed_for,
     first_filed,
+    following,
     rw_empirical,
+    window_ok,
 )
 from ..backtest.scoring import crps_gaussian, crps_samples
-from ..data.facts import CompanyData, load_company
+from ..data.facts import CompanyData, contiguous, contiguous_mask, load_company
 from ..data.fred import macro_quarterly as _macro_quarterly
 from ..model.ratings import rating_rank
 from ..model.ratings import spreads_asof as _spreads_asof
@@ -369,30 +370,32 @@ def _f(x) -> float | None:
 
 
 def usable(hist: CompanyData, asof: str) -> bool:
-    """16 quarters of history, and a company that was still filing: the last known quarter is recent.
+    """16 consecutive reported quarters of history (D1: gap rows are calendar quarters without a filing, so the row
+    count is not enough), and a company that was still filing: the last known quarter is recent.
 
     Without the second condition a company that stopped filing in 2016 would enter a 2019 cutoff with stale data.
     """
     q = hist.quarters
-    return len(q) >= 16 and (pd.Timestamp(asof) - q.index[-1]).days <= 200 and _spans(q.index[-16:], 16)
-
-
-def _spans(idx: pd.DatetimeIndex, k: int) -> bool:
-    """k quarter ends that are consecutive quarters (a dropped quarter makes the window a calendar quarter longer)."""
-    if data_legacy() or len(idx) < k:
-        return True
-    return (idx[-1] - idx[-k]).days <= (k - 1) * 91.3 + 30
+    return window_ok(q, 16) and (pd.Timestamp(asof) - q.index[-1]).days <= 200
 
 
 def _ttm(q: pd.DataFrame, col: str) -> float:
+    """Sum of the last four quarters of `col`; NaN unless they are four consecutive quarters with `col` reported."""
     s = q[col].tail(4)
-    return float(s.sum()) if s.notna().sum() == 4 and _spans(s.index, 4) else np.nan
+    if data_legacy():
+        return float(s.sum()) if s.notna().sum() == 4 else np.nan
+    return float(s.sum()) if window_ok(q, 4) and window_ok(q, 4, col) else np.nan
 
 
-def _following(full: pd.DataFrame, last: pd.Timestamp, n: int) -> pd.DataFrame:
-    """The next `n` reported quarters after `last`, cut at the first gap: position h must be quarter h (SW-4)."""
-    nxt = full[full.index > last + pd.Timedelta(days=20)].head(n)
-    return nxt if data_legacy() else nxt.iloc[: contiguous_prefix(last, nxt.index)]
+def _following(
+    full: pd.DataFrame, last: pd.Timestamp, n: int, fails: Failures | None = None, where: str = ""
+) -> pd.DataFrame:
+    """The next `n` quarters after `last`, or an empty frame if any is unreported or a gap row (SW-4, D1); the reason
+    is recorded as an exclusion under `where`, never silently."""
+    nxt, why = following(full, last, n)
+    if why and fails is not None:
+        fails.skip(where, why)
+    return nxt
 
 
 def health_at_open(p: dict) -> float:
@@ -435,7 +438,10 @@ def _features(c: CompanyData, p: dict) -> dict:
     ebitda = F(np.sum(p["ebitda_ttm0"]))
     interest = F(np.sum(p["interest_ttm0"]))
     ni = F(_ttm(q, "net_income"))
-    ni_prev = F(q["net_income"].iloc[-8:-4].sum()) if len(q) >= 8 else F(np.nan)
+    if data_legacy():
+        ni_prev = F(q["net_income"].iloc[-8:-4].sum()) if len(q) >= 8 else F(np.nan)
+    else:  # the four quarters before the TTM window, consecutive and reported (a gap row would sum as 0)
+        ni_prev = F(q["net_income"].iloc[-8:-4].sum()) if window_ok(q, 8, "net_income") else F(np.nan)
     cfo = F(_ttm(q, "cfo"))
     cash = F(np.nansum([last["cash"], last["short_investments"]]))
     debt = F(last["total_debt"]) if np.isfinite(last["total_debt"]) else F(0.0)
@@ -508,7 +514,7 @@ def _run(p: dict, knobs: dict, levers: dict, n: int, horizon: int, seed: int) ->
     return out
 
 
-def covid(ticker: str, full: pd.DataFrame | None) -> dict | None:
+def covid(ticker: str, full: pd.DataFrame | None, fails: Failures | None = None) -> dict | None:
     hist = load_company(ticker, asof=COVID_CUT)
     if not usable(hist, COVID_CUT):
         return None
@@ -528,8 +534,8 @@ def covid(ticker: str, full: pd.DataFrame | None) -> dict | None:
     out["ablations_h12"] = {k: _run(p12, FREEZE, lv, 2000, 12, 7) for k, lv in ABLATIONS.items()}
     out["sector_adjusted"] = _run({**p, "sector_tol": tol}, FREEZE, {}, 2000, 8, 7)
     out["features"] = features(hist, p)
-    out["realized"] = covid_outcomes(hist, full) if full is not None else {}
-    out["structural"] = structural(hist, raw, full, macro_quarterly(COVID_CUT)) if full is not None else {}
+    out["realized"] = covid_outcomes(hist, full, fails) if full is not None else {}
+    out["structural"] = structural(hist, raw, full, macro_quarterly(COVID_CUT), fails=fails) if full is not None else {}
     # the stress score under a demand freeze of each depth: `stats` evaluates it at the company's industry shock
     out["depth_grid"] = {f"{d:.2f}": _run(raw, {**FREEZE, "sales_depth": d}, {}, 1000, 8, 7)["health"] for d in DEPTHS}
     return out
@@ -572,7 +578,7 @@ def _spread_scale(asof: str) -> float:
 
 def _margin(pre: pd.DataFrame, cash: pd.Series, k: int) -> float:
     c, r = cash.tail(k), pre["revenue"].tail(k)
-    if c.notna().sum() < k or r.notna().sum() < k or r.sum() <= 0:
+    if c.notna().sum() < k or r.notna().sum() < k or r.sum() <= 0 or not window_ok(pre, k):
         return np.nan
     return float(c.sum() / r.sum())
 
@@ -668,10 +674,9 @@ def structural(
     """
     fails = fails if fails is not None else Failures()
     pre = hist.quarters
-    nxt = _following(full, pre.index[-1], n_q)
+    nxt = _following(full, pre.index[-1], n_q, fails, "structural")
     rev_ttm = _ttm(pre, "revenue")
     if len(nxt) < n_q:
-        fails.skip("structural", "gap_or_short")
         return {}
     if nxt["revenue"].isna().any() or not np.isfinite(rev_ttm) or rev_ttm <= 0:
         fails.skip("structural", "revenue")
@@ -698,7 +703,7 @@ def structural(
         return round(float(np.median(tot(x))), 4)
 
     pre_cfo, pre_fcf = pre["cfo"], pre["cfo"] - pre["capex"]
-    capex_pre = float(pre["capex"].tail(4).sum())
+    capex_pre = float(pre["capex"].tail(4).sum()) if data_legacy() else _ttm(pre, "capex")
     ebitda_real = (nxt["operating_income"] + nxt["da"].fillna(0)).to_numpy(float)
     out: dict = {
         "rev": pc(rev),
@@ -869,18 +874,17 @@ def _abnormal_burn(pre: pd.DataFrame, window: pd.DataFrame, rev_ttm: float) -> f
     return float(min(gap.min(), 0.0) / rev_ttm * 100)
 
 
-def covid_outcomes(hist: CompanyData, full: pd.DataFrame) -> dict:
+def covid_outcomes(hist: CompanyData, full: pd.DataFrame, fails: Failures | None = None) -> dict:
+    fails = fails if fails is not None else Failures()
     pre = hist.quarters
     rev_ttm = _ttm(pre, "revenue")
     win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
     if len(win) < 4 or not np.isfinite(rev_ttm) or rev_ttm <= 0:
+        fails.skip("covid_outcomes", "short")
         return {}
-    if (
-        not data_legacy()
-        and len(win) > 1
-        and contiguous_prefix(win.index[0] - pd.Timedelta(days=91), win.index) < len(win)
-    ):
-        return {}  # SW-4: a dropped quarter inside the window would shift every cumulative value
+    if not data_legacy() and not contiguous(win, len(win)):
+        fails.skip("covid_outcomes", "gap")  # SW-4 / D1: a hole in the window would shift every cumulative value
+        return {}
     path = _fcf_path(win)
     fcf = path.cumsum() if path is not None else pd.Series(np.nan, index=win.index)
     yoy = (full["revenue"] / full["revenue"].shift(4) - 1).reindex(win.index)
@@ -921,10 +925,10 @@ def _liquidity_realized(pre: pd.DataFrame, nxt: pd.DataFrame, rev_ttm: float) ->
     return out
 
 
-def _distress(hist: CompanyData, full: pd.DataFrame, filed: dict | None = None) -> dict:
+def _distress(hist: CompanyData, full: pd.DataFrame, filed: dict | None = None, fails: Failures | None = None) -> dict:
     """Outcomes over the eight reported quarters after the cutoff's last known quarter."""
     pre = hist.quarters
-    nxt = _following(full, pre.index[-1], 8)
+    nxt = _following(full, pre.index[-1], 8, fails, "outcome")
     rev_ttm = _ttm(pre, "revenue")
     if len(nxt) < 8 or not np.isfinite(rev_ttm) or rev_ttm <= 0:
         return {}
@@ -933,6 +937,11 @@ def _distress(hist: CompanyData, full: pd.DataFrame, filed: dict | None = None) 
     both = pd.concat([pre.tail(4), nxt])
     ebit = (both["operating_income"]).rolling(4).sum().tail(8)
     intr = both["interest_expense"].rolling(4).sum().tail(8)
+    yoy_ok = pd.Series(True, index=both.index)
+    if not data_legacy():  # trailing sums and year-on-year changes only over consecutive quarters (D1)
+        ebit = ebit.where(contiguous_mask(both, 4, "operating_income").tail(8))
+        intr = intr.where(contiguous_mask(both, 4, "interest_expense").tail(8))
+        yoy_ok = contiguous_mask(both, 5)
     icr = (ebit / intr.where(intr > 0)).dropna()
     icr0 = _ttm(pre, "operating_income") / max(_ttm(pre, "interest_expense"), 1e-9)
     div_pre = float(pre["dividends"].tail(4).fillna(0).sum())
@@ -946,7 +955,10 @@ def _distress(hist: CompanyData, full: pd.DataFrame, filed: dict | None = None) 
         "icr_min": _f(icr.min()) if len(icr) else None,
         "div_payer": bool(div_pre > 0),
         "div_cut": bool(div_pre > 0 and div_post < 0.5 * div_pre),
-        "rev_drop8": _f((nxt["revenue"] / both["revenue"].shift(4).reindex(nxt.index) - 1).min() * 100),
+        "rev_drop8": _f(
+            ((nxt["revenue"] / both["revenue"].shift(4).reindex(nxt.index) - 1).where(yoy_ok.reindex(nxt.index))).min()
+            * 100
+        ),
         **_liquidity_realized(pre, nxt, rev_ttm),
         # when the last outcome quarter was first reported (D10): a model trained for a later cutoff may use this
         # firm-year only if this date precedes that cutoff
@@ -1017,9 +1029,10 @@ def _forecast_origin(
 ) -> list[dict]:
     fails = fails if fails is not None else Failures()
     rows: list[dict] = []
-    real = _realized(full, hist.quarters.index[-1])
+    why: dict = {}
+    real = _realized(full, hist.quarters.index[-1], why)
     if len(real) < H_FC:
-        fails.skip("forecast", "gap_or_short")
+        fails.skip("forecast", why.get("realized", "short"))
         return rows
     p = calibrate(hist, macro_quarterly(origin), H_FC)
     out = simulate(p, build_scenario({}, H_FC), draw_shocks(p, 2000, H_FC, seed=11), DEFAULT_LEVERS)
@@ -1147,7 +1160,7 @@ def company(
     if years is None or 2020 in years:
         fails.tried("covid")
         try:
-            res["covid"] = covid(ticker, None if full_data is None else full_data.quarters)
+            res["covid"] = covid(ticker, None if full_data is None else full_data.quarters, fails)
         except Exception as e:
             res["errors"]["covid"] = f"{type(e).__name__}: {e}"
             fails.fail("covid", e)
@@ -1178,7 +1191,7 @@ def company(
                 "recession": _run(raw, PRESETS["recession"]["knobs"], {}, 1500, 12, 5),
                 "base_no_loops": _run(raw, {}, ABLATIONS["no_loops"], 1500, 12, 5),
                 "features": features(hist, p),
-                "outcome": _distress(hist, full_data.quarters, filed),
+                "outcome": _distress(hist, full_data.quarters, filed, fails),
                 "structural": structural(hist, raw, full_data.quarters, macro_quarterly(origin), fails=fails),
                 # stress score under a generic demand shock of each depth (no market closure), so that `stats`
                 # can give each firm its industry's realized shock in any episode (2015-16, 2020, 2022)
