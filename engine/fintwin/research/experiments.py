@@ -675,6 +675,7 @@ def structural(
     capex cuts) for the twin, each loop ablation, a static runway calculation with the same inputs, and reality.
     """
     fails = fails if fails is not None else Failures()
+    fails.tried("structural")  # the denominator of the exclusion shares
     pre = hist.quarters
     nxt = _following(full, pre.index[-1], n_q, fails, "structural")
     rev_ttm = _ttm(pre, "revenue")
@@ -878,6 +879,7 @@ def _abnormal_burn(pre: pd.DataFrame, window: pd.DataFrame, rev_ttm: float) -> f
 
 def covid_outcomes(hist: CompanyData, full: pd.DataFrame, fails: Failures | None = None) -> dict:
     fails = fails if fails is not None else Failures()
+    fails.tried("covid_outcomes")
     pre = hist.quarters
     rev_ttm = _ttm(pre, "revenue")
     win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
@@ -929,10 +931,15 @@ def _liquidity_realized(pre: pd.DataFrame, nxt: pd.DataFrame, rev_ttm: float) ->
 
 def _distress(hist: CompanyData, full: pd.DataFrame, filed: dict | None = None, fails: Failures | None = None) -> dict:
     """Outcomes over the eight reported quarters after the cutoff's last known quarter."""
+    fails = fails if fails is not None else Failures()
+    fails.tried("outcome")
     pre = hist.quarters
     nxt = _following(full, pre.index[-1], 8, fails, "outcome")
     rev_ttm = _ttm(pre, "revenue")
-    if len(nxt) < 8 or not np.isfinite(rev_ttm) or rev_ttm <= 0:
+    if len(nxt) < 8:
+        return {}
+    if not np.isfinite(rev_ttm) or rev_ttm <= 0:
+        fails.skip("outcome", "revenue")
         return {}
     path = _fcf_path(nxt)
     fcf = path.cumsum() if path is not None else pd.Series(np.nan, index=nxt.index)

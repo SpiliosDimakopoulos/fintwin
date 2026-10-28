@@ -21,7 +21,7 @@ from ..scenarios.presets import DEFAULT_LEVERS, PRESETS, build_scenario
 from ..stochastic.calibrate import calibrate
 from ..stochastic.mc import run, summarize
 from ..stochastic.shocks import draw_shocks
-from .batch import data_legacy, following, window_ok
+from .batch import _calendar, data_legacy, usable_prefix, window_ok
 from .scoring import crps_gaussian, crps_samples, interval_hit, pit
 
 CUTOFFS: dict[str, dict[str, str]] = {
@@ -34,10 +34,7 @@ BANDS = [5, 25, 50, 75, 95]
 def _realized(full: pd.DataFrame, after: pd.Timestamp, horizon: int) -> pd.DataFrame:
     r = full[full.index > after + pd.Timedelta(days=20)].head(horizon).copy()
     if not data_legacy():  # SW-4 / D1: keep the longest gap-free run of quarters, never a window across a hole
-        k = len(r)
-        while k and following(full, after, k)[1] is not None:
-            k -= 1
-        r = r.iloc[:k]
+        r = r.iloc[: usable_prefix(r, after)]  # the run `following` accepts, found in one pass
     r["cash_like"] = r["cash"] + r["short_investments"]
     r["ebitda"] = r["operating_income"] + r["da"]
     r["fcf"] = r["cfo"] - r["capex"]
@@ -46,17 +43,22 @@ def _realized(full: pd.DataFrame, after: pd.Timestamp, horizon: int) -> pd.DataF
 
 def _baseline(hist: pd.DataFrame, var: str, h: int) -> tuple[float, float]:
     """Naive benchmarks: seasonal random walk for revenue, plain random walk for balances."""
+    legacy = data_legacy()  # otherwise changes on the calendar series (gap rows blank), not across a hole
     if var == "revenue":
         s = hist["revenue"].dropna()
         same_season = s.iloc[-4 + ((h - 1) % 4)]
-        yoy = np.log(s / s.shift(4)).dropna().tail(20)
+        r = s if legacy else _calendar(hist, hist["revenue"])
+        yoy = np.log(r / r.shift(4)).dropna().tail(20)
         sd = float(yoy.std()) * np.sqrt(int(np.ceil(h / 4)))
         return float(same_season), float(same_season * sd)
     col = {"cash_like": None, "total_debt": "total_debt"}[var]
     s = (hist["cash"] + hist["short_investments"]) if col is None else hist[col]
-    s = s.dropna()
-    sd = float(s.diff().tail(20).std()) * np.sqrt(h)
-    return float(s.iloc[-1]), sd
+    if legacy:
+        s = s.dropna()
+        sd = float(s.diff().tail(20).std()) * np.sqrt(h)
+        return float(s.iloc[-1]), sd
+    s = _calendar(hist, s)
+    return float(s.dropna().iloc[-1]), float(s.diff().dropna().tail(20).std()) * np.sqrt(h)
 
 
 def forecast_backtest(ticker: str, cutoff_key: str, horizon: int = 8, n_paths: int = 4000) -> dict:
@@ -222,19 +224,21 @@ def cross_section(tickers: list[str] = UNIVERSE, n_paths: int = 2000) -> dict:
     for t in tickers:
         try:
             hist = load_company(t, asof=cutoff)
-            p = calibrate(hist, macro, 8)
-            eps = draw_shocks(p, n_paths, 8, seed=7)
-            sm_base = summarize(run(p, eps=eps))
-            sm_stress = summarize(run(p, PRESETS["pandemic"]["knobs"], eps=eps))
+            # cheap data checks before calibration and simulation (no earlier 16-quarter screen here, so the
+            # four-quarter one is needed for the trailing revenue)
+            if not window_ok(hist.quarters, 4):
+                failed[t] = "no four consecutive quarters before the cutoff"
+                continue
             full = load_company(t).quarters
             win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
             fcf = win["cfo"] - win["capex"]
             if not data_legacy() and not np.isfinite(fcf.to_numpy(float)).all():
                 failed[t] = "missing cash-flow quarter in 2020-21"  # D4 / D1: unknown, not zero burn
                 continue
-            if not window_ok(hist.quarters, 4):
-                failed[t] = "no four consecutive quarters before the cutoff"
-                continue
+            p = calibrate(hist, macro, 8)
+            eps = draw_shocks(p, n_paths, 8, seed=7)
+            sm_base = summarize(run(p, eps=eps))
+            sm_stress = summarize(run(p, PRESETS["pandemic"]["knobs"], eps=eps))
             fcf = fcf.fillna(0).cumsum()
             pre_liq = p["cash0"]
             rev_ttm = float(hist.quarters["revenue"].tail(4).sum())

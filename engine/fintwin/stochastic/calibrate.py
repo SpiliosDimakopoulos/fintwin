@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from ..data.facts import CompanyData
+from ..data.facts import CompanyData, contiguous
 from ..data.fred import recession_regime
 from . import spec as S
 
@@ -50,8 +50,15 @@ STOCK_FIELDS = (
 )
 
 
-def _last_known(q: pd.DataFrame, fields: tuple[str, ...], limit: int) -> tuple[pd.Series, list[str]]:
-    """Last row with each stock field replaced by its last finite value within `limit` rows (see STALE_ROWS)."""
+def _last_known(
+    q: pd.DataFrame, fields: tuple[str, ...], limit: int, imputed: pd.DataFrame | None = None
+) -> tuple[pd.Series, list[str]]:
+    """Last row with each stock field replaced by its last finite value within `limit` rows (see STALE_ROWS).
+
+    With the data layer's `imputed` mask (CompanyData.imputed), staleness counts from the last value genuinely
+    reported, not from the rows the data layer carried it forward into, and the note gives the reported date."""
+    if imputed is not None:
+        return _last_reported(q, fields, limit, imputed)
     last = q.iloc[-1].copy()
     notes = []
     for k in fields:
@@ -69,6 +76,53 @@ def _last_known(q: pd.DataFrame, fields: tuple[str, ...], limit: int) -> tuple[p
             last[k] = float(s.dropna().iloc[-1])
             notes.append(f"{k} stale, last reported {s.dropna().index[-1].date()}")
     return last, notes
+
+
+def _last_reported(
+    q: pd.DataFrame, fields: tuple[str, ...], limit: int, imputed: pd.DataFrame
+) -> tuple[pd.Series, list[str]]:
+    last = q.iloc[-1].copy()
+    notes = []
+    for k in fields:
+        if k not in q:
+            continue
+        s = q[k].astype(float)
+        mask = imputed[k].reindex(q.index, fill_value=False) if k in imputed else pd.Series(False, index=q.index)
+        rep = s.where(~mask.astype(bool))
+        if not rep.notna().any():  # never reported: keep the data layer's value (0 if never tagged) and its note
+            if np.isfinite(float(last[k])):
+                continue
+            if k in STOCK_ZERO:
+                last[k] = 0.0
+                notes.append(f"{k} never reported, assumed 0")
+            continue
+        when = rep.last_valid_index()
+        back = len(q) - 1 - q.index.get_loc(when)  # rows since the last genuine report
+        if back == 0:
+            continue
+        if back <= limit:
+            last[k] = float(rep.loc[when])
+            notes.append(f"{k} carried from {when.date()} (last reported, {back} quarters back)")
+        elif k in STOCK_ZERO:
+            last[k] = 0.0
+            notes.append(f"{k} last reported {when.date()} ({back} quarters back), assumed 0")
+        elif k in STOCK_ANY:
+            last[k] = float(rep.loc[when])
+            notes.append(f"{k} stale, last reported {when.date()}")
+        else:  # too stale to start from: the code's documented fallback for a missing value applies
+            last[k] = np.nan
+            notes.append(f"{k} last reported {when.date()} ({back} quarters back), treated as missing")
+    return last, notes
+
+
+def _trailing(q: pd.DataFrame, reported: pd.DataFrame, n: int) -> tuple[pd.DataFrame, int]:
+    """The last `n` quarters if they are `n` consecutive reported quarters (`facts.contiguous`), else the longest
+    contiguous run ending at the cutoff (k < n rows) and k; if even the last quarter lacks revenue, the last `n`
+    reported rows as before (k = 0). Sums over the run are annualized by the caller (x n / k)."""
+    if contiguous(q, n):
+        return q.tail(n), n
+    k = next((m for m in range(n - 1, 0, -1) if contiguous(q, m)), 0)
+    return (q.tail(k), k) if k else (reported.tail(n), 0)
 
 
 def _seasonal(rev: pd.Series, seasons: pd.Series) -> np.ndarray:
@@ -465,7 +519,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
         gap = q["gap"].astype("boolean").fillna(False).astype(bool)
         reported = q[~gap]
         n_hist = int((~gap).sum())
-        last, stale = _last_known(q, STOCK_FIELDS, STALE_ROWS)
+        last, stale = _last_known(q, STOCK_FIELDS, STALE_ROWS, c.imputed)
         if stale:
             src["stale"] = "; ".join(stale)
 
@@ -602,7 +656,18 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
         rho_gm = _clip(np.corrcoef(resid_g[-n:], resid_m[-n:])[0, 1], -0.8, 0.8, 0.0)
 
     # ---- balance-sheet ratios ----
-    t4 = reported.tail(4)
+    t4, t8, k4 = reported.tail(4), reported.tail(8), 4
+    if new_data:  # trailing windows only over consecutive quarters, never across a gap row or a fiscal-year break
+        t4, k4 = _trailing(q, reported, 4)
+        t8, k8 = _trailing(q, reported, 8)
+        if not k8:
+            src["trailing"] = "no revenue reported at the cutoff: trailing windows over the last reported rows"
+        elif k8 < 8:
+            src["trailing"] = (
+                f"last 8 quarters not consecutive: 8-quarter ratios over {k8} quarters to {q.index[-1].date()}"
+            )
+            if k4 < 4:
+                src["trailing"] += f"; TTM revenue (x 4/{k4}), 4-quarter ratios and covenant history from {k4} quarters"
     cost_t4 = (F + v * t4["revenue"]).clip(lower=1e-9)
     dso = _clip((t4["receivables"] / t4["revenue"]).mean() * DAYS_Q, 0, 200, 30)
     dio = _clip((t4["inventory"] / cost_t4).mean() * DAYS_Q, 0, 600, 0)
@@ -610,7 +675,6 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     ddays = _clip((t4["deferred_revenue"] / t4["revenue"]).mean() * DAYS_Q, 0, 400, 0)
     src["ddays"] = "customer deposits / deferred revenue in days of revenue (cash collected in advance)"
 
-    t8 = reported.tail(8)
     ppe_prev = q["ppe"].shift(1).loc[t8.index]
     dep_rate = dep_rate_f4 if f4 else _clip(np.nanmedian(t8["da"] / ppe_prev), 0.005, 0.15, 0.03)
     capex_ratio = _clip(np.nanmedian(t8["capex"] / t8["revenue"]), 0.0, 0.6, 0.05)
@@ -681,7 +745,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     fcf8 = (t8["cfo"] - t8["capex"]).clip(lower=0).sum()
     bb_ratio = _clip(t8["buybacks"].sum() / fcf8 if fcf8 > 0 else 0.0, 0.0, 1.2, 0.0)
 
-    rev_ttm = float(reported["revenue"].tail(4).sum())
+    rev_ttm = float(t4["revenue"].sum()) * (4 / k4 if 0 < k4 < 4 else 1.0)
     cap_recent = q["revolver_capacity"].dropna()
     if len(cap_recent) and (q.index[-1] - cap_recent.index[-1]).days < 730:
         revolver_cap = float(cap_recent.iloc[-1])
@@ -692,14 +756,14 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
 
     # the latest quarter occasionally lacks the cash tag: carry the last reported balance forward
     cash0 = float(q["cash"].ffill().iloc[-1] + q["short_investments"].fillna(0).iloc[-1])
-    quarterly_costs = F + v * reported["revenue"].tail(4).mean()
+    quarterly_costs = F + v * t4["revenue"].mean()
     # Minimum operating cash revealed by the company's own behaviour: half its 10th-percentile cash balance over
     # three years, bounded by 1% of quarterly revenue and 20% of quarterly costs. (A cost-based floor alone forces
     # high-turnover, low-cash retailers such as Walmart to "borrow up" to cash levels they never hold.)
     hist_cash = (q["cash"] + (q["short_investments"].fillna(0) if new_data else q["short_investments"])).tail(12)
     hist_cash = hist_cash.dropna()
     revealed = 0.5 * float(hist_cash.quantile(0.1)) if len(hist_cash) >= 4 else 0.2 * quarterly_costs
-    cash_floor = float(np.clip(revealed, 0.01 * reported["revenue"].tail(4).mean(), 0.2 * quarterly_costs))
+    cash_floor = float(np.clip(revealed, 0.01 * t4["revenue"].mean(), 0.2 * quarterly_costs))
     src["cash_floor"] = "half the company's 10th-percentile cash balance over 12 quarters (revealed minimum)"
     cash_target = max(0.6 * cash0, 1.5 * cash_floor)
     cash_cap = 1.5 * max(cash0, cash_target)
@@ -784,13 +848,15 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     wc_other0 = float((ca - cl) - (cash0 + ar0 + inv0 - ap0 - def0)) if np.isfinite(ca) and np.isfinite(cl) else 0.0
     retained0 = float(last["retained_earnings"]) if np.isfinite(last["retained_earnings"]) else 0.0
 
-    hist4 = reported.tail(4)  # the last 4 reported quarters (a gap row would count as zero EBIT)
+    hist4 = t4  # the last 4 consecutive reported quarters (a gap row would count as zero EBIT)
     ebit4 = hist4["operating_income"].fillna(0).values
     ebitda4 = (hist4["operating_income"] + da_used.loc[hist4.index].fillna(0)).fillna(0).values
-    int4 = hist4["interest_expense"].fillna(reported["total_debt"].tail(4) * coupon / 4)
+    int4 = hist4["interest_expense"].fillna(hist4["total_debt"] * coupon / 4)
     if new_data:
         int4 = int4.fillna(debt0 * coupon / 4)
     int4 = int4.values
+    if 0 < k4 < 4:  # a shorter run: the missing earlier quarters at the run's average (annualizing the run)
+        ebit4, ebitda4, int4 = (np.r_[np.full(4 - k4, x.mean()), x] for x in (ebit4, ebitda4, int4))
 
     season_next = (int(q["season"].iloc[-1]) + 1) % 4
     base_rev0 = float(deseason.iloc[-1])
