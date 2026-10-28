@@ -359,8 +359,9 @@ def test_data_layer_gaps_and_missing_last_values_give_finite_params(macro, spec_
     assert p["history_quarters"] == len(q) - 1
     assert p["inv0"] == pytest.approx(q["inventory"].iloc[-2]) and p["debt0"] == 0.0
     assert p["div_q"] == pytest.approx(q["dividends"].dropna().tail(2).mean())
-    rep = q[~q["gap"]].tail(4)
-    assert p["ebit_ttm0"] == pytest.approx(rep["operating_income"].tolist())  # no zero quarter from the gap row
+    x = q["operating_income"].tail(2).to_numpy()  # the 2-quarter run after the gap row, earlier slots at its mean
+    assert p["ebit_ttm0"] == pytest.approx([x.mean(), x.mean(), *x])  # no zero quarter from the gap row (CR-4)
+    assert "x 4/2" in p["_sources"]["trailing"]
     assert "total_debt not reported" in p["_sources"]["stale"]
 
 
@@ -373,6 +374,6 @@ def test_F4_uses_the_fiscal_year_da_when_quarterly_da_is_missing(macro):  # noqa
     q.loc[miss, "da"] = np.nan
     q.loc[miss, "da_missing"] = True
     p = cal(c, macro, "v3", "F4")
-    rep = q[~q["gap"]].tail(4)
-    assert p["ebitda_ttm0"] == pytest.approx((rep["operating_income"] + rep["da_annual"]).tolist())
+    x = (q["operating_income"] + q["da_annual"]).tail(2).to_numpy()
+    assert p["ebitda_ttm0"] == pytest.approx([x.mean(), x.mean(), *x])
     assert "fiscal-year total" in p["_sources"]["da"]
