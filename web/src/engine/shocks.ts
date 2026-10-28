@@ -49,14 +49,16 @@ export function makeRng(seed: number) {
 export function drawShocks(p: Params, N: number, T: number, seed = 7): Float64Array {
   const rng = makeRng(seed);
   const eps = new Float64Array(N * T * 5);
-  const rho = p.rho_gm, df = p.t_df, tScale = Math.sqrt((df - 2) / df);
+  // F7: p.t_scale makes the MAD s.d. 1; F8: p.t_mix_indep gives demand and margin their own mixing variable
+  const rho = p.rho_gm, df = p.t_df, tScale = p.t_scale ?? Math.sqrt((df - 2) / df), indep = !!p.t_mix_indep;
   for (let i = 0; i < N * T; i++) {
     const z0 = rng.normal(), z1 = rng.normal(), z2 = rng.normal(), z3 = rng.normal();
     let g = z0, m = rho * z0 + Math.sqrt(1 - rho * rho) * z1;
     if (df < 30) {
-      const w = rng.chisq(df) / df;
-      const k = tScale / Math.sqrt(w);
-      g *= k; m *= k;
+      const wG = rng.chisq(df) / df;
+      const kG = tScale / Math.sqrt(wG);
+      const kM = indep ? tScale / Math.sqrt(rng.chisq(df) / df) : kG;
+      g *= kG; m *= kM;
     }
     eps[i * 5] = g; eps[i * 5 + 1] = m; eps[i * 5 + 2] = z2; eps[i * 5 + 3] = z3; eps[i * 5 + 4] = rng.uniform();
   }

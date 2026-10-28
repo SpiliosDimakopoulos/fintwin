@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import { simulate } from "./model";
+import { simulateBlocks } from "./model";
 import { buildScenario } from "./scenario";
 import { drawShocks } from "./shocks";
 import { summarize } from "./summary";
@@ -20,7 +20,7 @@ self.onmessage = (e: MessageEvent<SimRequest>) => {
     shocks = drawShocks(params, nPaths, params.horizon, seed);
     shockKey = key;
   }
-  const out = simulate(params, buildScenario(knobs, params.horizon), shocks, nPaths, levers);
+  const out = simulateBlocks(params, buildScenario(knobs, params.horizon), shocks, nPaths, levers);
   const summary = summarize(out);
   (self as unknown as Worker).postMessage({ id, summary, ms: performance.now() - t0 });
 };
