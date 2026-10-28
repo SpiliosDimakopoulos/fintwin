@@ -226,9 +226,12 @@ def _boot_se(theta: np.ndarray, star: np.ndarray) -> np.ndarray:
     return np.where(se > 0, se, np.nan)
 
 
-def _finite_rows(star: np.ndarray) -> np.ndarray:
+def _finite_rows(star: np.ndarray, cols: np.ndarray | list[int] | None = None) -> np.ndarray:
+    """Resamples finite in the columns in use (`cols`, default all). A column that is not in use (a model without a
+    loss, an undefined hypothesis) may be NaN in every row; filtering on it would leave no resample at all."""
     star = np.atleast_2d(np.asarray(star, float))
-    return star[np.isfinite(star).all(axis=1)]
+    use = star if cols is None else star[:, cols]
+    return star[np.isfinite(use).all(axis=1)]
 
 
 def stepm(theta: np.ndarray, star: np.ndarray, side: str = "two-sided", alpha: float = 0.05) -> dict:
@@ -238,7 +241,7 @@ def stepm(theta: np.ndarray, star: np.ndarray, side: str = "two-sided", alpha: f
     is the null distribution; hypotheses are visited from the largest statistic down, the p-value of the j-th is the
     share of resamples whose maximum over the hypotheses not yet rejected reaches it, made monotone."""
     theta = np.asarray(theta, float)
-    star = _finite_rows(star)
+    star = _finite_rows(star, np.flatnonzero(np.isfinite(theta)))
     se = _boot_se(theta, star)
     t = theta / se
     tn = (star - theta) / se
@@ -264,7 +267,7 @@ def spa(d: np.ndarray, star: np.ndarray, n: int) -> dict:
     Returns the consistent p-value and the lower and upper bounds (the upper is White's reality check). The recentring
     g_c keeps a model at the boundary unless its standardized mean is below -sqrt(2 log log n)."""
     d = np.asarray(d, float)
-    star = _finite_rows(star)
+    star = _finite_rows(star, np.flatnonzero(np.isfinite(d)))
     se = _boot_se(d, star)
     t = d / se
     stat = max(float(np.nanmax(t)), 0.0) if np.isfinite(t).any() else 0.0
@@ -288,8 +291,8 @@ def mcs(loss: np.ndarray, star: np.ndarray, names: list[str], alpha: float = 0.1
     the bootstrap p-value of the largest is below alpha that model goes. Elimination continues to the last model so
     every model gets its MCS p-value (the running maximum); the set is the models with p_MCS >= alpha."""
     loss = np.asarray(loss, float)
-    star = _finite_rows(star)
     alive = [i for i in range(len(names)) if np.isfinite(loss[i])]
+    star = _finite_rows(star, alive)
     p_mcs: dict[str, float] = {}
     order: list[str] = []
     running = 0.0
@@ -433,8 +436,11 @@ def bankruptcy_filings() -> dict[int, list[pd.Timestamp]]:
 
 
 def _data_legacy() -> bool:
-    """FINTWIN_DATA_LEGACY=1 restores the revision-2 data layer (one comparison run, REVISION_PLAN_3 0.3)."""
-    return os.environ.get("FINTWIN_DATA_LEGACY", "").strip() not in ("", "0")
+    """FINTWIN_DATA_LEGACY=1 restores the revision-2 data layer (one comparison run, REVISION_PLAN_3 0.3). The one
+    definition of the switch (exactly "1"), shared with the data layer and the backtests."""
+    from ..data.edgar import data_legacy
+
+    return data_legacy()
 
 
 def cases(dates: list[pd.Timestamp], gap_days: int = 1095) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
