@@ -22,4 +22,17 @@ docs/paper/*.bbl
 docs/paper/*.blg
 docs/paper/*.fls
 docs/paper/*.fdb_latexmk
-snapshot/
+engine/snapshot/
+
+# stray local files (never meant for the repo)
+grep.exe.stackdump
+klein_list.txt
+*.stackdump
+Feedback_from_researchers.txt
+docs/MESSAGES_TO_RESEARCHERS.md
+docs/OUTREACH.md
+
+# LaTeX build leftovers anywhere under docs/paper (the PDF itself is tracked)
+docs/paper/**/*.aux
+docs/paper/*.toc
+docs/paper/*.synctex.gz

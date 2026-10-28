@@ -1,18 +1,30 @@
-# Recompute the paper's statistics from the per-company outputs of an earlier `research` run, with the current code.
+# Recompute the paper's statistics from the per-company outputs of an earlier `research` run.
+# Run it from the same commit/tag as that run: `stats` refuses shards written under a different code/data stamp,
+# so a mismatch fails here instead of producing numbers from mixed code. Shard artifacts expire after 90 days;
+# for a permanent copy attach research-results to the paper release (research.yml, input release_tag).
 name: research-stats
 on:
   workflow_dispatch:
     inputs:
       run_id: { description: "ID of the research run whose shard outputs to use", required: true }
+      snapshot_release: { description: "Release tag with the frozen inputs (must match the research run); empty = live", default: paper-data }
 permissions: { contents: read, actions: read }
+env:
+  OPENBLAS_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
 jobs:
   stats:
     runs-on: ubuntu-latest
     timeout-minutes: 150
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      - run: uv sync --locked
+      - if: ${{ inputs.snapshot_release != '' }}
+        uses: ./.github/actions/snapshot
+        with: { release: "${{ inputs.snapshot_release }}" }
       - name: Download the shard outputs
         env: { GH_TOKEN: "${{ github.token }}" }
         # the merged outputs if that run's stats job finished, otherwise the 16 shard artifacts
@@ -25,8 +37,8 @@ jobs:
             find /tmp/shards -name "*.json" -exec cp {} .cache/research/ \;
           fi
           ls .cache/research | wc -l
-      - run: uv sync && uv run python -m fintwin.research stats
-      - uses: actions/upload-artifact@v7
-        with: { name: research-stats, path: docs/paper/research.json }
-      - uses: actions/upload-artifact@v7
-        with: { name: research-results, include-hidden-files: true, path: engine/.cache/research/ }
+      - run: uv run python -m fintwin.research stats
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with: { name: research-stats, path: docs/paper/research.json, retention-days: 90 }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with: { name: research-results, include-hidden-files: true, path: engine/.cache/research/, retention-days: 90 }
