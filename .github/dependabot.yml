@@ -8,6 +8,11 @@ updates:
     directory: /web
     schedule: { interval: monthly }
     groups: { web: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /tools
+    schedule: { interval: monthly }
+    groups: { tools: { patterns: ["*"] } }
+  # the workflows pin actions to commit SHAs (with a version comment); Dependabot bumps both
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: monthly }

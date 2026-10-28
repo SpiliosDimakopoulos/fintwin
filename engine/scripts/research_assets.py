@@ -283,7 +283,8 @@ rows = []
 for g, lab in HET.items():
     first = True
     for lev, c in cfo["heterogeneity"][g].items():
-        rows.append(f"{lab if first else ''} & {lev.replace('%', '\\%').replace('>', '$>$')} & {big(c['n'])} & {f2(c['T1|N1'])} & "
+        lev_tex = lev.replace("%", "\\%").replace(">", "$>$")  # kept out of the f-string: backslashes there need Python 3.12
+        rows.append(f"{lab if first else ''} & {lev_tex} & {big(c['n'])} & {f2(c['T1|N1'])} & "
                     f"{f2(c['N3|N1'])} & {f2(c['T1|N6'])} & {f1(c['mae_N1'])} & {f1(c['mae_T1'])} \\\\")
         first = False
     rows.append("\\addlinespace")

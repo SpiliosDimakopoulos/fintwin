@@ -2,7 +2,6 @@
 
 [![ci](https://github.com/SpiliosDimakopoulos/fintwin/actions/workflows/ci.yml/badge.svg)](https://github.com/SpiliosDimakopoulos/fintwin/actions/workflows/ci.yml)
 [![data](https://github.com/SpiliosDimakopoulos/fintwin/actions/workflows/data.yml/badge.svg)](https://github.com/SpiliosDimakopoulos/fintwin/actions/workflows/data.yml)
-![coverage](https://img.shields.io/badge/coverage-88%25-brightgreen)
 ![ruff](https://img.shields.io/badge/lint-ruff-261230)
 ![mypy](https://img.shields.io/badge/types-mypy-2a6db2)
 ![lighthouse](https://img.shields.io/badge/lighthouse-94%20%C2%B7%20100%20%C2%B7%20100%20%C2%B7%20100-brightgreen)
@@ -68,7 +67,7 @@ Where it fails, in the paper's own words ([docs/paper/fintwin.pdf](docs/paper/fi
 
 ```bash
 cp .env.example .env                       # SEC_USER_AGENT (required by SEC)
-cd engine && uv sync && uv run pytest -q   # tests: balance-sheet identity (Hypothesis), offline XBRL end-to-end, 52/53-week calendars, point-in-time, the transmission nulls, CRPS...
+cd engine && uv sync --locked && uv run pytest -q   # CI badge above = current status; tests: balance-sheet identity (Hypothesis), offline XBRL end-to-end, 52/53-week calendars, point-in-time, the transmission nulls, CRPS...
 bash scripts/full_pipeline.sh              # validation (~30k forecasts) + all snapshots + backtests (hours; CI shards it)
 cd ../web && npm ci && npm test && npm run dev    # includes Python <-> TypeScript parity
 ```
@@ -77,6 +76,9 @@ Optional extras:
 - `uv run python -m fintwin.notes` regenerates the analyst notes. The optional LLM memos need your own API key: `uv run --extra ai python -m fintwin.memo CCL`.
 - `uv run --extra api python -m fintwin.api` lets you twin any ticker live.
 - `uv run python scripts/paper_assets.py` regenerates the paper's figures and numbers.
+- `uv run python scripts/research_assets.py` regenerates the evaluation tables, figures and number macros from `docs/paper/research.json`; `uv run python -m fintwin.research shard <i> <n>` and `... stats` produce that file.
+- Reproducing the paper (frozen data snapshot, `make research`, `make paper`, the `paper-*` tag): see [REPRODUCE.md](REPRODUCE.md). Data sources and their terms: [LICENSE-DATA](LICENSE-DATA).
+- Version: 3.0.0-dev. The released paper version is the `paper-*` tag, not `main`.
 
 ## Repository map
 

@@ -1,0 +1,21 @@
+name: restore-snapshot
+description: Restore the frozen research inputs (EDGAR facts, FRED vintages) from a GitHub release and verify them against the manifest.
+inputs:
+  release:
+    description: Release tag holding fintwin_snapshot_*.tar and manifest.json (see REPRODUCE.md)
+    default: paper-data
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RELEASE: ${{ inputs.release }}
+      run: |
+        set -euo pipefail
+        mkdir -p /tmp/snap engine/snapshot
+        gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" -p 'fintwin_snapshot_*.tar' -p manifest.json -D /tmp/snap
+        cp /tmp/snap/manifest.json engine/snapshot/manifest.json
+        cd engine
+        uv run python scripts/freeze_snapshot.py restore /tmp/snap/fintwin_snapshot_*.tar
+        echo "FINTWIN_FROZEN=1" >> "$GITHUB_ENV"
