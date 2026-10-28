@@ -16,9 +16,66 @@ Everything is vectorized across the N Monte Carlo paths.
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
-from .ratings import ICR_LOWER, SPREADS
+from .ratings import ICR_LOWER, ICR_MATERIALITY, SPREADS, effective_icr
+
+try:  # revision-3 specification switches (workstream B1)
+    from ..stochastic.spec import active as _spec_active
+except ImportError:  # pragma: no cover - B1 not merged yet: same env semantics, B2's ids only
+    _spec_active = None
+
+# Fixes of this module that each specification turns on. M1, M4 and M5 are pre-specified extensions, off in every
+# specification (REVISION_PLAN_3 §1: switches, closed in the H2 comparisons); they are turned on with FINTWIN_FIXES.
+_SPEC_FIXES = {"v2-pre": set(), "v2-rev": set(), "v3": {"F11"}}
+
+
+def active(fix_id: str) -> bool:
+    """Is a revision-3 fix or extension switched on? FINTWIN_FIXES (comma list) overrides FINTWIN_SPEC."""
+    if _spec_active is not None:
+        return bool(_spec_active(fix_id))
+    fixes = os.environ.get("FINTWIN_FIXES", "").strip()
+    if fixes:
+        return fix_id in {x.strip() for x in fixes.split(",")}
+    return fix_id in _SPEC_FIXES.get(os.environ.get("FINTWIN_SPEC", "v2-pre").strip(), set())
+
+
+def _switch(levers: dict, fix_id: str) -> bool:
+    """A lever with the fix id as key (e.g. levers["M1"] = True) overrides the environment for one run."""
+    return bool(levers[fix_id]) if fix_id in levers else active(fix_id)
+
+
+# M1: maintenance covenant defaults (override per company with the p keys of the same name).
+# 4.0x net debt / EBITDA and 2.5x EBITDA / interest are the usual levels of maintenance tests in US leveraged
+# and crossover revolvers (most cluster between 3.5x and 4.5x leverage and 2.0x and 3.0x coverage). One quarter of
+# cure: a failed test must be fixed by the next test date (equity cure or waiver), else it is a breach. On breach the
+# undrawn commitment is frozen (revolver availability 0); drawn amounts are not accelerated.
+COVENANT_DEFAULTS = {
+    "cov_max_nd_ebitda": 4.0,
+    "cov_min_icr": 2.5,
+    "cov_cure_q": 1,
+    "cov_revolver_avail": 0.0,
+    "revolver_maturity_q": None,
+}
+# M5: payout floors. A REIT must distribute 90% of taxable income (IRC §857(a)); net income stands in for it.
+# Utilities protect their dividend: under stress they keep `payout_keep_div` of it instead of cutting to zero
+# (assumption; FirstEnergy's 2014 cut, one of the largest, kept 64%).
+PAYOUT_DEFAULTS = {
+    "reit": {"payout_floor_ni": 0.9, "payout_keep_div": 0.0},
+    "utility": {"payout_floor_ni": 0.0, "payout_keep_div": 0.65},
+}
+
+
+def payout_class(sic: int | None) -> str:
+    """'reit' (SIC 6798), 'utility' (4900-4949) or '' for the M5 payout floor."""
+    if sic is None:
+        return ""
+    if int(sic) == 6798:
+        return "reit"
+    return "utility" if 4900 <= int(sic) <= 4949 else ""
+
 
 DAYS_Q = 91.25
 OUTPUTS = [
@@ -106,7 +163,26 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
     acc_mid, acc_low = p.get("access_levels", (0.6, 0.3))
     icr_fixed = np.full(N, float(np.sum(p["ebit_ttm0"])) / max(float(np.sum(p["interest_ttm0"])), 1e-9), f)
 
+    # revision-3 switches; every branch below is skipped when they are off, so v2-pre outputs are unchanged
+    on_m1, on_f11, on_m5 = _switch(levers, "M1"), _switch(levers, "F11"), _switch(levers, "M5")
+    mat = p.get("icr_materiality", ICR_MATERIALITY)
+    if on_m1 or on_f11:
+        rev_hist = np.full((N, 4), p.get("rev_ttm0", 4.0 * p["base_rev0"]) / 4.0, f)
+    if on_f11:
+        icr_fixed = effective_icr(icr_fixed, float(np.sum(p["interest_ttm0"])), rev_hist.sum(1), cash - debt, mat)
+    if on_m1:
+        cv = {k: p.get(k, d) for k, d in COVENANT_DEFAULTS.items()}
+        rcap = np.full(N, p["revolver_cap"], f)  # committed facility still available to draw
+        cov_fail = np.zeros(N, f)
+        cov_breached = np.zeros(N, bool)
+    if on_m5:
+        po = {**PAYOUT_DEFAULTS.get(p.get("payout_class", ""), {"payout_floor_ni": 0.0, "payout_keep_div": 0.0})}
+        po = {k: p.get(k, d) for k, d in po.items()}
+
     out = {k: np.zeros((N, T), f) for k in OUTPUTS}
+    if on_m1:
+        out["cov_breach"] = np.zeros((N, T), f)
+        out["revolver_avail"] = np.zeros((N, T), f)
     ladder = np.asarray(p["maturities_q"], f)
     seasonal = np.asarray(p["seasonal"], f)
 
@@ -144,6 +220,8 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
         rate = rate + p["kappa"] * (p["theta"] - rate) + p["sigma_r"] * e_r
         r_eff = np.maximum(rate + scn["rate_shift"][t], 0.0)
         icr_prev = ebit_hist.sum(1) / np.maximum(int_hist.sum(1), 1e-9)
+        if on_f11:
+            icr_prev = effective_icr(icr_prev, int_hist.sum(1), rev_hist.sum(1), cash - debt - revolver, mat)
         spread = spreads[_rank(icr_prev if loop_r1 else icr_fixed)] * spread_scale + scn["spread_shift"][t]
         mkt_rate = r_eff + p["term_premium"] + spread
 
@@ -181,6 +259,10 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
         if levers.get("cut_payouts", True):
             div = np.where(stressed, 0.0, div)
             bb = np.where(stressed, 0.0, bb)
+            if on_m5:  # M5: utilities keep part of the dividend under stress
+                div = np.where(stressed, np.maximum(div, po["payout_keep_div"] * p["div_q"]), div)
+        if on_m5:  # M5: the REIT distribution requirement binds whatever the stress
+            div = np.maximum(div, po["payout_floor_ni"] * np.maximum(ni, 0.0))
 
         # --- debt: maturities, rollover and new issuance.
         # R2: market access shrinks as coverage deteriorates (distressed issuers only place part of
@@ -210,10 +292,25 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
         )
         debt = new_debt
 
+        rev_cap = p["revolver_cap"]
+        if on_m1:
+            # M1: the facility expires at its maturity; the drawn balance is termed out like maturing debt (as far
+            # as market access allows), the rest is repaid from cash, and nothing can be drawn afterwards
+            if cv["revolver_maturity_q"] is not None and t == int(cv["revolver_maturity_q"]):
+                termed = revolver * p["refi_ratio"] * access
+                coupon = np.where(
+                    debt + termed > 0, (coupon * debt + mkt_rate * termed) / np.maximum(debt + termed, 1e-9), coupon
+                )
+                cash = cash - (revolver - termed)
+                debt = debt + termed
+                revolver = np.zeros(N, f)
+                rcap = np.zeros(N, f)
+            rev_cap = rcap
+
         # --- liquidity backstops: revolver, then equity ---
         floor = p["cash_floor"]
         if levers.get("draw_revolver", True):
-            draw = np.clip(floor - cash, 0.0, np.maximum(p["revolver_cap"] - revolver, 0.0))
+            draw = np.clip(floor - cash, 0.0, np.maximum(rev_cap - revolver, 0.0))
         else:
             draw = np.zeros(N, f)
         repay = np.where(cash > p["cash_target"], np.minimum(revolver, cash - p["cash_target"]), 0.0)
@@ -249,8 +346,26 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
         ebitda_ttm = ebitda_hist.sum(1)
         net_debt = debt + revolver - cash
         nd_ebitda = np.where(ebitda_ttm > 0, net_debt / np.maximum(ebitda_ttm, 1e-9), 99.0)
+        if on_m1 or on_f11:
+            rev_hist = np.column_stack([rev_hist[:, 1:], rev])
+        if on_f11:
+            icr = effective_icr(icr, int_hist.sum(1), rev_hist.sum(1), -net_debt, mat)
+        if on_m1:
+            # M1: quarter-end maintenance test on TTM figures; it governs the revolver from the next quarter
+            int_ttm = int_hist.sum(1)
+            fail = np.zeros(N, bool)
+            if cv["cov_max_nd_ebitda"] is not None:
+                fail |= (net_debt > 0) & ((ebitda_ttm <= 0) | (nd_ebitda > cv["cov_max_nd_ebitda"]))
+            if cv["cov_min_icr"] is not None:  # coverage tested only where interest is material (as MM-F11)
+                material = int_ttm > mat * np.abs(rev_hist.sum(1))
+                fail |= material & (ebitda_ttm / np.maximum(int_ttm, 1e-9) < cv["cov_min_icr"])
+            cov_fail = np.where(fail, cov_fail + 1, 0)
+            cov_breached = cov_breached | (cov_fail > cv["cov_cure_q"])
+            # lenders freeze (or cut to a share of) the undrawn commitment; once cut it is not restored
+            rcap = np.where(cov_breached, np.minimum(rcap, np.maximum(revolver, cv["cov_revolver_avail"] * rcap)), rcap)
+            rev_cap = rcap
         rank = _rank(icr)
-        undrawn = np.maximum(p["revolver_cap"] - revolver, 0.0)
+        undrawn = np.maximum(rev_cap - revolver, 0.0)
         liquidity = cash + undrawn
         breached = breached | (cash < 0)
 
@@ -307,9 +422,68 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
             ("h_solv", s_solv),
         ):
             out[k][:, t] = val
+        if on_m1:
+            out["cov_breach"][:, t] = cov_breached
+            out["revolver_avail"][:, t] = undrawn
 
         # identity residual: assets - liabilities - equity must stay at its initial value (zero by construction)
         out.setdefault("identity_gap", np.zeros((N, T), f))[:, t] = (
             cash + ar + inv + ppe + other_net - ap - deferred - debt - revolver - equity
         )
     return out
+
+
+# ---------------------------------------------------------------- M7: decision outputs (pure functions of `out`)
+def p_liquidity_below(out: dict, x: float, n: int | None = None) -> float:
+    """P(cash + undrawn revolver < x in any of the first n quarters); n = None means the whole horizon."""
+    liq = out["liquidity"][:, : (n or out["liquidity"].shape[1])]
+    return float((liq.min(1) < x).mean())
+
+
+def maturity_wall(p: dict, horizon: int | None = None) -> list[float]:
+    """Contractual term-debt maturities by quarter (the calibrated ladder). The revolver is drawn path by path, so
+    its maturity (M1 `revolver_maturity_q`) is reported by `decision_outputs` from the simulated balance."""
+    T = horizon or p["horizon"]
+    wall = np.zeros(T)
+    ladder = np.asarray(p["maturities_q"], float)[:T]
+    wall[: len(ladder)] = ladder
+    return wall.tolist()
+
+
+def first_covenant_breach(out: dict) -> np.ndarray:
+    """Per path, the first quarter (0-based) of a covenant breach, -1 if none (needs M1 on)."""
+    b = out["cov_breach"] > 0
+    return np.where(b.any(1), b.argmax(1), -1)
+
+
+def decision_outputs(out: dict, p: dict, x: float | None = None, n: int | None = None) -> dict:
+    """Runway, funding gap, maturity wall, P(liquidity < x within n) and the first covenant breach (M1).
+
+    runway: quarters until cash + undrawn revolver first falls below zero (censored at the horizon T);
+    funding gap: per path, the worst shortfall of cash below the floor left after the model's own backstops.
+    """
+    liq, cash = out["liquidity"], out["cash"]
+    T = liq.shape[1]
+    gone = liq < 0
+    runway = np.where(gone.any(1), gone.argmax(1), T).astype(float)
+    gap = np.maximum(p["cash_floor"] - cash, 0.0).max(1)
+    res = {
+        "runway_q_median": float(np.median(runway)),
+        "runway_q_p10": float(np.percentile(runway, 10)),
+        "runway_censored_share": float((runway >= T).mean()),
+        "funding_gap_p50": float(np.percentile(gap, 50)),
+        "funding_gap_p95": float(np.percentile(gap, 95)),
+        "funding_gap_mean": float(gap.mean()),
+        "p_funding_gap": float((gap > 0).mean()),
+        "maturity_wall": maturity_wall(p, T),
+    }
+    mq = p.get("revolver_maturity_q")
+    if mq is not None and 0 < int(mq) < T:  # drawn balance falling due at the revolver's maturity (median path)
+        res["revolver_due"] = {"q": int(mq), "median": float(np.median(out["revolver"][:, int(mq) - 1]))}
+    if x is not None:
+        res["p_liquidity_below"] = {"x": float(x), "n": int(n or T), "p": p_liquidity_below(out, x, n)}
+    if "cov_breach" in out:
+        first = first_covenant_breach(out)
+        res["p_cov_breach"] = float((first >= 0).mean())
+        res["first_cov_breach_q_median"] = float(np.median(first[first >= 0])) if (first >= 0).any() else None
+    return res

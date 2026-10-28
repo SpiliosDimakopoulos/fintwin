@@ -44,3 +44,16 @@ def rating_rank(icr: np.ndarray) -> np.ndarray:
 
 def rating_spread(icr: np.ndarray) -> np.ndarray:
     return SPREADS[rating_rank(icr)]
+
+
+# MM-F11: coverage is only meaningful when interest is material. Below this share of TTM revenue the company is
+# treated as debt-free for rating purposes, and a net-cash company is floored at the lowest investment-grade bucket
+# (BBB, ICR 2.5): its coverage is undefined, not catastrophic, so it must not be rated D or trigger the B1 cuts.
+ICR_MATERIALITY = 0.001
+NET_CASH_ICR = 2.5
+
+
+def effective_icr(icr, interest_ttm, revenue_ttm, net_cash, materiality: float = ICR_MATERIALITY):
+    """ICR used for rating, spread, market access and the B1 stress test under MM-F11."""
+    immaterial = interest_ttm <= materiality * np.abs(revenue_ttm)
+    return np.where(immaterial & (net_cash >= 0) & (icr < NET_CASH_ICR), NET_CASH_ICR, icr)
