@@ -23,7 +23,9 @@ DEFAULT_SPEC = "v2-rev"
 # any ID and simply reports whether it is in the active set.
 ALL_FIXES = ("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F12", "F13", "F14", "M2", "M3")
 # MM-F9 (parameter uncertainty) and M2 (floating by sector) are §2 extensions: off in v3, so H2 is unaffected.
-V3_FIXES = frozenset(ALL_FIXES) - {"F9", "M2"}
+# MM-F11 (debt-free loss-makers are not rated D) lives in model/sd_model.py (B2) and is part of v3; M1, M4, M5 are §2
+# extensions, off in every spec.
+V3_FIXES = (frozenset(ALL_FIXES) - {"F9", "M2"}) | {"F11"}
 DEFAULT_FIXES = {"v2-pre": frozenset(), "v2-rev": frozenset(), "v3": V3_FIXES}
 
 # The cumulative ladder of REVISION_PLAN_3 §0.2, as FINTWIN_FIXES values on top of FINTWIN_SPEC=v2-pre.
