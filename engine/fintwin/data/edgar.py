@@ -32,12 +32,23 @@ def _user_agent() -> str:
     return ua
 
 
+def frozen() -> bool:
+    """FINTWIN_FROZEN=1: read only the archived snapshot (any age), never the network; a missing file is an error."""
+    return os.environ.get("FINTWIN_FROZEN", "0") == "1"
+
+
+class FrozenMiss(FileNotFoundError):
+    """A file the frozen snapshot does not contain."""
+
+
 def _get_json(url: str, cache_name: str, max_age_hours: float) -> dict:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / (cache_name + ".gz")  # gzip: company facts compress ~8x
-    if path.exists() and (time.time() - path.stat().st_mtime) < max_age_hours * 3600:
+    if path.exists() and (frozen() or (time.time() - path.stat().st_mtime) < max_age_hours * 3600):
         with gzip.open(path, "rt", encoding="utf-8") as fh:
             return json.load(fh)
+    if frozen():
+        raise FrozenMiss(f"not in the frozen snapshot: {path.name}")
 
     global _last_request
     for attempt in range(4):  # transient network errors, SEC throttling (429) and 5xx are retried with backoff

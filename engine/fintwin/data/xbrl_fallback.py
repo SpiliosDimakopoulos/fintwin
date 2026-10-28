@@ -77,6 +77,8 @@ def _download(cik: int, accn: str, name: str) -> bytes:
     path = E.CACHE_DIR / f"xbrl_{accn}_{name}.gz"
     if path.exists():
         return gzip.decompress(path.read_bytes())
+    if E.frozen():
+        raise E.FrozenMiss(f"not in the frozen snapshot: {path.name}")
     url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn.replace('-', '')}/{name}"
     last = None
     for _ in range(3):

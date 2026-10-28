@@ -22,3 +22,4 @@ docs/paper/*.bbl
 docs/paper/*.blg
 docs/paper/*.fls
 docs/paper/*.fdb_latexmk
+snapshot/

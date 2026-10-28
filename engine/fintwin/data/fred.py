@@ -9,6 +9,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from .edgar import FrozenMiss, frozen
+
 VINTAGES = Path(__file__).with_name("gdp_vintages.csv")
 
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "fred"
@@ -22,7 +24,9 @@ SERIES = {
 def fred_series(series_id: str, max_age_hours: float = 24) -> pd.Series:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / f"{series_id}.csv"
-    if not path.exists() or time.time() - path.stat().st_mtime > max_age_hours * 3600:
+    if frozen() and not path.exists():
+        raise FrozenMiss(f"not in the frozen snapshot: {path.name}")
+    if not path.exists() or (not frozen() and time.time() - path.stat().st_mtime > max_age_hours * 3600):
         url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
         resp = requests.get(url, timeout=60)
         resp.raise_for_status()
