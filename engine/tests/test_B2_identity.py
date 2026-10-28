@@ -355,6 +355,28 @@ def test_v2_specs_are_bit_identical(monkeypatch, spec):
         assert all(np.array_equal(new[k], ref[k]) for k in ref)
 
 
+@pytest.mark.parametrize("extra", [{}, {"fixed_adj_lambda": 0.0, "fixed_adj_f": 0.3, "m_dev0": 0.0}])
+def test_f3_f6_on_without_their_calibration_is_bit_identical(monkeypatch, extra):
+    """MM-F3 at lambda 0 and MM-F6 at m_dev0 = 0 are today's model exactly (B1 emits the keys only under v3)."""
+    monkeypatch.setenv("FINTWIN_FIXES", "F3,F6")
+    for p in _firms().values():
+        p = {**p, **extra}
+        scn = build_scenario(PRESETS["recession"]["knobs"], p["horizon"])
+        eps = draw_shocks(p, 300, p["horizon"], seed=9)
+        ref = _reference_simulate(p, scn, eps, DEFAULT_LEVERS)
+        new = sd_model.simulate(p, scn, eps, DEFAULT_LEVERS)
+        assert all(np.array_equal(new[k], ref[k]) for k in ref)
+
+
+def test_f3_f6_keys_ignored_when_switches_off(no_switch_env):
+    p = {**_firms()["levered"], "fixed_adj_lambda": 0.5, "fixed_adj_f": 0.2, "m_dev0": 0.05}
+    scn = build_scenario({}, p["horizon"])
+    eps = draw_shocks(p, 300, p["horizon"], seed=2)
+    ref = _reference_simulate(p, scn, eps, DEFAULT_LEVERS)
+    new = sd_model.simulate(p, scn, eps, DEFAULT_LEVERS)
+    assert all(np.array_equal(new[k], ref[k]) for k in ref)
+
+
 def test_explicit_off_levers_are_bit_identical(monkeypatch):
     monkeypatch.setenv("FINTWIN_FIXES", "M1,F11,M5")
     p = _firms()["stressed"]
