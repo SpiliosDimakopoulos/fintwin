@@ -21,6 +21,7 @@ from ..scenarios.presets import DEFAULT_LEVERS, PRESETS, build_scenario
 from ..stochastic.calibrate import calibrate
 from ..stochastic.mc import run, summarize
 from ..stochastic.shocks import draw_shocks
+from .batch import contiguous_prefix, data_legacy
 from .scoring import crps_gaussian, crps_samples, interval_hit, pit
 
 CUTOFFS: dict[str, dict[str, str]] = {
@@ -32,6 +33,8 @@ BANDS = [5, 25, 50, 75, 95]
 
 def _realized(full: pd.DataFrame, after: pd.Timestamp, horizon: int) -> pd.DataFrame:
     r = full[full.index > after + pd.Timedelta(days=20)].head(horizon).copy()
+    if not data_legacy():  # SW-4: stop at the first missing quarter instead of shifting later quarters into its slot
+        r = r.iloc[: contiguous_prefix(after, r.index)]
     r["cash_like"] = r["cash"] + r["short_investments"]
     r["ebitda"] = r["operating_income"] + r["da"]
     r["fcf"] = r["cfo"] - r["capex"]
@@ -157,6 +160,9 @@ def structural_backtest(p: dict, real: pd.DataFrame, eps: np.ndarray) -> dict:
     out = simulate(p, scn, eps, DEFAULT_LEVERS)
     actual = real["fcf"].values[:H]
     ok = np.isfinite(actual)
+    if not data_legacy() and not ok.all():  # D4: cumulate only up to the first missing quarter, never through it
+        H = int(np.argmin(ok))
+        actual, ok = actual[:H], ok[:H]
     if ok.sum() == 0:
         return {}
     sim_cum = np.cumsum(out["fcf"][:, :H], axis=1)
@@ -219,7 +225,11 @@ def cross_section(tickers: list[str] = UNIVERSE, n_paths: int = 2000) -> dict:
             sm_stress = summarize(run(p, PRESETS["pandemic"]["knobs"], eps=eps))
             full = load_company(t).quarters
             win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
-            fcf = (win["cfo"] - win["capex"]).fillna(0).cumsum()
+            fcf = win["cfo"] - win["capex"]
+            if not data_legacy() and not np.isfinite(fcf.to_numpy(float)).all():
+                failed[t] = "missing cash-flow quarter in 2020-21"  # D4: unknown, not zero burn
+                continue
+            fcf = fcf.fillna(0).cumsum()
             pre_liq = p["cash0"]
             rev_ttm = float(hist.quarters["revenue"].tail(4).sum())
             debt_raise = float(win["total_debt"].max() - p["debt0"])
