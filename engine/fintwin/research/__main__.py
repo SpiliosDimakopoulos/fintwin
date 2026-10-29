@@ -49,13 +49,19 @@ def _code_digest() -> str:
     return h.hexdigest()
 
 
+# Switches that change how a run is executed or merged, not what a shard contains (stats bootstrap sizes, fetch policy).
+RUN_ONLY_ENV = frozenset(
+    {"FINTWIN_MAX_FAIL_SHARE", "FINTWIN_B", "FINTWIN_B_PANEL", "FINTWIN_B_FAMILY", "FINTWIN_B_LAD", "FINTWIN_FILL_ONLY"}
+)
+
+
 def stamp() -> str:
     """Hash of the code, committed inputs, data snapshot and switches that produce a shard: a shard written under a
     different stamp is stale and is recomputed, and `stats` refuses to merge shards of mixed stamps. A walk-forward
     selection table enters by its content, not its path."""
     h = hashlib.sha256(_code_digest().encode())
     for k in sorted(os.environ):
-        if k.startswith("FINTWIN_") and k != "FINTWIN_MAX_FAIL_SHARE":
+        if k.startswith("FINTWIN_") and k not in RUN_ONLY_ENV:
             h.update(f"{k}={os.environ[k]}".encode())
     sel = os.environ.get("FINTWIN_SELECTION")
     if sel and Path(sel).exists():

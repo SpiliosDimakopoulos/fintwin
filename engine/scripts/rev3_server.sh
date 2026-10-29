@@ -8,9 +8,9 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.local/bin:$PATH"
 command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
 uv sync --locked -q
+N=$(nproc --all)  # before the thread pinning: GNU nproc honours OMP_NUM_THREADS and would report 1
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 export SEC_USER_AGENT="${SEC_USER_AGENT:-FinTwin research spiliosdimakk@gmail.com}"
-N=$(nproc)
 mkdir -p out
 py() { uv run --quiet python "$@"; }
 t0=$(date +%s)
@@ -23,6 +23,7 @@ if [ ! -f snapshot/.topped_up ]; then
   FINTWIN_FILL_ONLY=1 py -m fintwin.data.edgar_universe > out/universe.log 2>&1
   stamp "top up facts and filings for the (new) universe"
   FINTWIN_FILL_ONLY=1 py -m fintwin.research prefetch > out/topup.log 2>&1
+  FINTWIN_FILL_ONLY=1 py scripts/freeze_snapshot.py fred >> out/topup.log 2>&1
   py scripts/freeze_snapshot.py pack > out/pack.log
   touch snapshot/.topped_up
   stamp "snapshot: $(tail -1 out/pack.log)"
@@ -53,7 +54,8 @@ EOF
 case "${1:-dry}" in
 dry)
   stamp "full test suite"
-  if py -m pytest -q -p no:cacheprovider > out/tests.log 2>&1; then stamp "tests: $(tail -1 out/tests.log)"; else stamp "TESTS FAILED: $(tail -1 out/tests.log)"; fi
+  # unit tests use their own fixtures, not the snapshot; test_d_repo needs the repo root, which is not pushed
+  if env -u FINTWIN_FROZEN uv run --quiet python -m pytest -q -p no:cacheprovider --deselect tests/test_d_repo.py > out/tests.log 2>&1; then stamp "tests: $(tail -1 out/tests.log)"; else stamp "TESTS FAILED: $(tail -1 out/tests.log)"; fi
   stamp "dry ladder: 300 firms x 2015/2020/2022"
   ladder_all --limit 300 --cutoffs 2015,2020,2022
   stamp "dry stats"

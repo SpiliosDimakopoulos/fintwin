@@ -1,6 +1,7 @@
 """Freeze the research inputs into one archived snapshot, so every rerun reads the same data vintage.
 
 python scripts/freeze_snapshot.py build     # fetch every universe company's facts, filings and FRED series, then pack
+python scripts/freeze_snapshot.py fred      # fetch the FRED series the code reads (only missing ones with FINTWIN_FILL_ONLY=1)
 python scripts/freeze_snapshot.py pack      # re-pack engine/.cache after a FINTWIN_FILL_ONLY=1 top-up
 python scripts/freeze_snapshot.py verify    # check engine/.cache against snapshot/manifest.json
 python scripts/freeze_snapshot.py restore F # unpack snapshot tarball F into engine/.cache and verify it
@@ -21,6 +22,8 @@ ENGINE = Path(__file__).resolve().parents[1]
 CACHE = ENGINE / ".cache"
 OUT = ENGINE / "snapshot"
 PARTS = ("edgar", "fred")
+# Every FRED series the code reads: the macro frame (fred.SERIES) plus the recession regime (fred.recession_regime).
+REGIME_SERIES = ("USREC", "GDP")
 
 
 def _sha(path: Path) -> str:
@@ -42,14 +45,19 @@ def manifest() -> dict:
     return {"files": files, "n_files": len(files), "digest": digest}
 
 
-def build() -> None:
+def fred(max_age_hours: float = 24) -> None:
     from fintwin.data.fred import SERIES, fred_series
+
+    for series_id in (*SERIES.values(), *REGIME_SERIES):
+        fred_series(series_id, max_age_hours=max_age_hours)
+
+
+def build() -> None:
     from fintwin.research.__main__ import prefetch
 
     started = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
     prefetch()
-    for series_id in SERIES.values():
-        fred_series(series_id, max_age_hours=0)
+    fred(max_age_hours=0)
     pack({"started": started, "finished": dt.datetime.now(dt.UTC).isoformat(timespec="seconds")})
 
 
@@ -96,4 +104,4 @@ if __name__ == "__main__":
     if sys.argv[1] == "restore":
         restore(sys.argv[2])
     else:
-        {"build": build, "verify": verify, "pack": pack}[sys.argv[1]]()
+        {"build": build, "fred": fred, "verify": verify, "pack": pack}[sys.argv[1]]()
