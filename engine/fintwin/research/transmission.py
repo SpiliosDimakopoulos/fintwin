@@ -824,6 +824,9 @@ def _gains(df: pd.DataFrame, b: int, fy: dict, seed: int) -> dict:
         d: _Losses = r["_data"]
         firms, years = df["ticker"].to_numpy()[d.idx], d.yt
         res: dict = {"n": r["n"], "test_years": r["test_years"]}
+        if not d.test_years:  # too little history for any combination weight (small dry runs)
+            out[var] = res
+            continue
         for a, c in GAINS:
             ia, ic = idx[a], idx[c]
             ew_a, e_a = d.rows(a)
