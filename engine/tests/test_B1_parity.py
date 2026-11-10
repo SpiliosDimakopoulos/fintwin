@@ -157,4 +157,33 @@ def test_v2_specs_reproduce_revision2_code_exactly(macro, monkeypatch, spec):
     for k in gold:
         # v2-pre's default prior is the pre-specified 35%, so its default-assumption run is the old "pre" run
         want = k.replace("/rev", "/pre") if spec == "v2-pre" else k
-        assert got[k] == gold[want], k
+        _same(got[k], gold[want], k)
+
+
+# The golden file was written on Windows; on Linux (x86 and ARM) libm/BLAS differ in the last bits: the largest
+# difference measured on 10-11-2026 was relative 8e-13 (`p/phi`, stale_seasonal). Structure, strings, booleans and
+# counts must match exactly; floats to a relative 1e-9 (absolute 1e-12 near zero). Anything above is a code change.
+REL, ABS = 1e-9, 1e-12
+
+
+def _same(a, b, path: str) -> None:
+    if isinstance(b, dict):
+        assert isinstance(a, dict) and a.keys() == b.keys(), path
+        for k in b:
+            _same(a[k], b[k], f"{path}/{k}")
+    elif isinstance(b, list):
+        assert isinstance(a, list) and len(a) == len(b), path
+        for i, (x, y) in enumerate(zip(a, b, strict=True)):
+            _same(x, y, f"{path}[{i}]")
+    elif isinstance(b, float) and not isinstance(a, bool) and isinstance(a, (int, float)):
+        assert a == pytest.approx(b, rel=REL, abs=ABS, nan_ok=True), path
+    else:
+        assert a == b, path
+
+
+def test_parity_tolerance_still_catches_a_real_change():
+    _same({"x": [1.0, 2.0]}, {"x": [1.0, 2.0 * (1 + 1e-12)]}, "ok")  # float noise passes
+    with pytest.raises(AssertionError):
+        _same({"x": [1.0, 2.0]}, {"x": [1.0, 2.0 * (1 + 1e-7)]}, "change")
+    with pytest.raises(AssertionError):
+        _same({"x": "a"}, {"x": "b"}, "string")
