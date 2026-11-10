@@ -2,7 +2,7 @@
 
 python -m fintwin.research prefetch                 # download every company's XBRL facts once (SEC rate limit: serial)
 python -m fintwin.research shard 3 16               # shard 3 of 16 -> .cache/research/<spec>/<key>.json
-python -m fintwin.research shard 0 1 --limit 300 --cutoffs 2015,2020,2022   # dry run -> .cache/research/<spec>_dry/
+python -m fintwin.research shard 0 1 --limit 300 --cutoffs 2015,2020,2022   # dry run -> .cache/research/<spec>_s300_c2015.2020.2022/
 python -m fintwin.research select                   # tau / lambda walk-forward -> .cache/research/_selection/<spec>.json
 python -m fintwin.research ladder 3 16 [--limit ...] # every rung of REVISION_PLAN_3 §0.2, one cache dir per rung
 python -m fintwin.research stats                    # merge one spec's shards -> docs/paper/research.json (+ a copy)
@@ -41,7 +41,8 @@ MAX_FAIL_SHARE = float(os.environ.get("FINTWIN_MAX_FAIL_SHARE", "0.10"))
 def _code_digest() -> str:
     root = Path(__file__).resolve().parents[1]
     h = hashlib.sha256()
-    for p in sorted([*root.rglob("*.py"), *DATA.glob("*.csv")]):
+    # committed inputs: *.csv and *.json (sector_norms.json is read by calibrate and rewritten by the weekly pipeline)
+    for p in sorted([*root.rglob("*.py"), *DATA.glob("*.csv"), *DATA.glob("*.json")]):
         h.update(p.relative_to(root).as_posix().encode())
         h.update(p.read_bytes().replace(b"\r\n", b"\n"))
     snap = root.parent / "snapshot" / "manifest.json"
@@ -61,7 +62,8 @@ def stamp() -> str:
     selection table enters by its content, not its path."""
     h = hashlib.sha256(_code_digest().encode())
     for k in sorted(os.environ):
-        if k.startswith("FINTWIN_") and k not in RUN_ONLY_ENV:
+        # FINTWIN_SELECTION enters by content below, not by its (machine-specific) absolute path
+        if k.startswith("FINTWIN_") and k not in RUN_ONLY_ENV and k != "FINTWIN_SELECTION":
             h.update(f"{k}={os.environ[k]}".encode())
     sel = os.environ.get("FINTWIN_SELECTION")
     if sel and Path(sel).exists():
@@ -70,22 +72,41 @@ def stamp() -> str:
 
 
 def _stamp_of(path: Path) -> str | None:
+    return _meta_of(path)[0]
+
+
+def _meta_of(path: Path) -> tuple[str | None, dict | None]:
     try:
-        return json.loads(path.read_text(encoding="utf-8")).get("_stamp")
+        rec = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
+        return None, None
+    return rec.get("_stamp"), rec.get("_run")
 
 
-def spec_dir(dry: bool = False) -> Path:
+def run_tag(limit: int | None = None, years: set[int] | None = None) -> str:
+    """Directory suffix of a restricted run: every (firm sample, cutoffs) combination gets its own directory, so a
+    300-firm x 3-cutoff dry run, a 40-firm probe and a 1,000-firm sample never resume into or merge with each
+    other (each has the same stamp). The full run has no suffix."""
+    return (f"_s{limit}" if limit is not None else "") + (
+        "_c" + ".".join(str(y) for y in sorted(years)) if years else ""
+    )
+
+
+def run_record(limit: int | None = None, years: set[int] | None = None) -> dict:
+    return {"limit": limit, "cutoffs": sorted(years) if years else None}
+
+
+def spec_dir(tag: str = "") -> Path:
     from .experiments import spec_label
 
-    return ROOT / (spec_label() + ("_dry" if dry else ""))
+    return ROOT / (spec_label() + tag)
 
 
-def selection_path(label: str | None = None) -> Path:
+def selection_path(label: str | None = None, tag: str = "") -> Path:
+    """The walk-forward table of one rung on one run (a sample's table comes from that sample's own shards)."""
     from .experiments import spec_label
 
-    return ROOT / "_selection" / f"{label or spec_label()}.json"
+    return ROOT / "_selection" / f"{label or spec_label()}{tag}.json"
 
 
 def research_tickers() -> list[str]:
@@ -121,22 +142,21 @@ def prefetch() -> None:
 
 
 def shard(i: int, n: int, limit: int | None = None, years: set[int] | None = None) -> Path:
-    """Run shard i of n under the current specification. `limit` / `years` make a dry run (own directory)."""
+    """Run shard i of n under the current specification. `limit` / `years` restrict the run (own directory)."""
     from ..export import _clean
     from .experiments import company
 
-    dry = limit is not None or years is not None
-    out_dir = spec_dir(dry)
+    out_dir = spec_dir(run_tag(limit, years))
     out_dir.mkdir(parents=True, exist_ok=True)
     fc = forecast_ciks()
     st = stamp()
     keys = dry_tickers(limit) if limit is not None else research_tickers()
-    run = {"limit": limit, "cutoffs": sorted(years) if years else None}
+    run = run_record(limit, years)
     for k, t in enumerate(keys):
         if k % n != i:
             continue
         out = out_dir / f"{t}.json"
-        if out.exists() and _stamp_of(out) == st:  # resumable, but only under the same code, data and switches
+        if out.exists() and _meta_of(out) == (st, run):  # resumable only under the same code, data, switches, run
             continue
         t0 = time.time()
         try:
@@ -172,21 +192,46 @@ def check_failures(shards: list[dict], max_share: float = MAX_FAIL_SHARE) -> dic
     return summary
 
 
-def select() -> Path:
-    """Choose tau / lambda per cutoff year from earlier years of this spec's first-pass shards (REVISION_PLAN_3 §0.1)."""
+def check_run(d: Path, limit: int | None = None, years: set[int] | None = None) -> list[Path]:
+    """The shard files of one run, refusing an empty, stale (another stamp), mixed (another `_run`) or incomplete
+    directory: `stats` and `select` both read only complete runs."""
+    st, run = stamp(), run_record(limit, years)
+    files = list(d.glob("*.json"))
+    if not files:
+        raise SystemExit(f"no shards in {d}: run the grid pass for this run first")
+    stale = [p.name for p in files if _stamp_of(p) != st]
+    if stale:
+        raise SystemExit(f"{len(stale)} shard files were written under another stamp (e.g. {stale[:3]}): rerun them")
+    other = [p.name for p in files if _meta_of(p)[1] != run]
+    if other:
+        raise SystemExit(f"{len(other)} shard files belong to another run than {run} (e.g. {other[:3]})")
+    expected = len(dry_tickers(limit)) if limit is not None else len(research_tickers())
+    if len(files) != expected:
+        raise SystemExit(f"{len(files)} shards in {d}, expected {expected}: the run is incomplete")
+    return files
+
+
+def select(limit: int | None = None, years: set[int] | None = None) -> Path:
+    """Choose tau / lambda per cutoff year from earlier years of this spec's first-pass shards (REVISION_PLAN_3 §0.1),
+    on one run: a sample's selection comes from that sample's shards, and only from a complete grid pass (a table
+    from a partial panel, or from none, would be stamped into the "-wf" pass without any sign of it)."""
     from .experiments import select_from_shards
 
-    sel = select_from_shards(spec_dir())
-    path = selection_path()
+    tag = run_tag(limit, years)
+    d = spec_dir(tag)
+    check_run(d, limit, years)
+    sel = select_from_shards(d)
+    path = selection_path(tag=tag)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(sel, indent=1), encoding="utf-8")
     print(json.dumps({k: sel.get(k) for k in ("rule", "n_rows", "tau", "lambda")}))
     return path
 
 
-def ladder(i: int, n: int, extra: list[str], rungs: list[str] | None = None) -> None:
+def ladder(i: int, n: int, extra: list[str], rungs: list[str] | None = None, tag: str = "") -> None:
     """Every rung of the ladder (and v2-rev) for shard i of n, each in a subprocess with its own environment. Rungs
-    with F1 or F3 get a second pass at the walk-forward tau / lambda once `select` has written their table."""
+    with F1 or F3 get a second pass at the walk-forward tau / lambda once `select` has written their table for
+    this run (`tag`)."""
     from .experiments import LADDER
 
     for name, env in LADDER:
@@ -196,7 +241,7 @@ def ladder(i: int, n: int, extra: list[str], rungs: list[str] | None = None) -> 
         e |= env
         print(f"== {name}", flush=True)
         subprocess.run([sys.executable, "-m", "fintwin.research", "shard", str(i), str(n), *extra], env=e, check=True)
-        sel = selection_path(name)
+        sel = selection_path(name, tag)
         if sel.exists():
             print(f"== {name} at the walk-forward selection", flush=True)
             subprocess.run(
@@ -206,14 +251,11 @@ def ladder(i: int, n: int, extra: list[str], rungs: list[str] | None = None) -> 
             )
 
 
-def stats(dry: bool = False) -> None:
+def stats(limit: int | None = None, years: set[int] | None = None) -> None:
     from .stats import OUT, main
 
-    d = spec_dir(dry)
-    st = stamp()
-    stale = [p.name for p in d.glob("*.json") if _stamp_of(p) != st]
-    if stale:
-        raise SystemExit(f"{len(stale)} shard files were written under another stamp (e.g. {stale[:3]}): rerun them")
+    d = spec_dir(run_tag(limit, years))
+    check_run(d, limit, years)
     summary = check_failures(_shards(d))
     main(d)
     copy = ROOT / "_results" / f"{d.name}.json"  # one result per spec, next to the shared docs/paper/research.json
@@ -244,13 +286,14 @@ def main(argv: list[str]) -> None:
     elif cmd == "shard":
         shard(int(pos[1]), int(pos[2]), limit, years)
     elif cmd == "select":
-        select()
+        select(limit, years)
     elif cmd == "ladder":
         extra = [
             *(["--limit", str(limit)] if limit is not None else []),
             *(["--cutoffs", opt["cutoffs"]] if years else []),
         ]
-        ladder(int(pos[1]), int(pos[2]), extra, opt["rungs"].split(",") if "rungs" in opt else None)
+        rungs = opt["rungs"].split(",") if "rungs" in opt else None
+        ladder(int(pos[1]), int(pos[2]), extra, rungs, run_tag(limit, years))
     elif cmd == "sobol-shard":
         from .assumption_sobol import shard as sobol_shard
 
@@ -260,7 +303,9 @@ def main(argv: list[str]) -> None:
 
         print(json.dumps({k: v for k, v in sobol_stats().items() if k != "indices"}, default=str)[:2000])
     elif cmd == "stats":
-        stats(dry="dry" in opt)
+        if "dry" in opt:
+            raise SystemExit("`stats --dry` is gone: pass the run's --limit / --cutoffs (one directory per run)")
+        stats(limit, years)
     else:
         raise SystemExit(f"unknown command {cmd}")
 

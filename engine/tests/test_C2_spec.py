@@ -51,7 +51,10 @@ def test_ladder_rungs_get_distinct_cache_dirs(monkeypatch):
     assert names[:6] == ["v2-pre", "v2-pre+F5", "v2-pre+F5+F4", "v2-pre+F5+F4+F1", "v2-pre+F5+F4+F1+F2", "v3"]
     monkeypatch.setenv("FINTWIN_SELECTION", "x.json")
     assert X.spec_label().endswith("-wf")  # the walk-forward pass never overwrites the grid pass
-    assert spec_dir(dry=True).name.endswith("_dry")
+    from fintwin.research.__main__ import run_tag
+
+    assert spec_dir(run_tag(300, {2015, 2020, 2022})).name.endswith("-wf_s300_c2015.2020.2022")
+    assert run_tag() == "" and run_tag(1000) == "_s1000" and run_tag(None, {2020}) == "_c2020"
 
 
 # Outputs of the code before revision 3 on the synthetic firm (structural / _run / _distress on commit 20b2610, before any C2 change).
@@ -142,7 +145,7 @@ def test_shard_writes_spec_dir_and_dry_dir(monkeypatch, tmp_path):
 
     monkeypatch.setattr(X, "company", fake_company)
     d = M.shard(0, 1, limit=3, years={2015, 2020, 2022})
-    assert d == tmp_path / "v2-pre_dry"
+    assert d == tmp_path / "v2-pre_s3_c2015.2020.2022"
     files = sorted(d.glob("*.json"))
     assert len(files) == 3 and all(y == {2015, 2020, 2022} for _, y in seen)
     rec = json.loads(files[0].read_text(encoding="utf-8"))
@@ -151,6 +154,57 @@ def test_shard_writes_spec_dir_and_dry_dir(monkeypatch, tmp_path):
     seen.clear()
     M.shard(0, 1, limit=3, years={2015, 2020, 2022})
     assert seen == []  # resumable under the same stamp
+    # another restricted run (same firms, all cutoffs) has its own directory and does not resume into the first
+    d2 = M.shard(0, 1, limit=3)
+    assert d2 == tmp_path / "v2-pre_s3" and len(seen) == 3 and all(y is None for _, y in seen)
+
+
+def test_stats_refuses_mixed_runs_and_incomplete_dirs(monkeypatch, tmp_path):
+    import fintwin.research.__main__ as M
+
+    monkeypatch.setenv("FINTWIN_SPEC", "v2-pre")
+    monkeypatch.setattr(M, "ROOT", tmp_path)
+    monkeypatch.setattr(M, "research_tickers", lambda: [f"CIK{i:010d}" for i in range(1, 11)])
+    d = M.spec_dir("_s3")
+    d.mkdir(parents=True)
+    keys = M.dry_tickers(3)
+    for t in keys[:2]:
+        (d / f"{t}.json").write_text(json.dumps({"_stamp": M.stamp(), "_run": {"limit": 3, "cutoffs": None}}))
+    with pytest.raises(SystemExit, match="incomplete"):
+        M.stats(3)
+    (d / f"{keys[2]}.json").write_text(json.dumps({"_stamp": M.stamp(), "_run": {"limit": 3, "cutoffs": [2020]}}))
+    with pytest.raises(SystemExit, match="another run"):
+        M.stats(3)
+
+
+def test_select_refuses_an_empty_run(monkeypatch, tmp_path):
+    import fintwin.research.__main__ as M
+
+    monkeypatch.setenv("FINTWIN_SPEC", "v3")
+    monkeypatch.setattr(M, "ROOT", tmp_path)
+    monkeypatch.setattr(M, "research_tickers", lambda: [f"CIK{i:010d}" for i in range(1, 11)])
+    with pytest.raises(SystemExit, match="no shards"):
+        M.select(3)
+    d = M.spec_dir("_s3")
+    d.mkdir(parents=True)
+    t = M.dry_tickers(3)[0]
+    (d / f"{t}.json").write_text(json.dumps({"_stamp": M.stamp(), "_run": {"limit": 3, "cutoffs": None}}))
+    with pytest.raises(SystemExit, match="incomplete"):  # a grid pass cut short gives no table
+        M.select(3)
+    assert M.selection_path("v3", "_s1000").name == "v3_s1000.json"
+
+
+def test_stamp_ignores_the_selection_path_but_not_its_content(monkeypatch, tmp_path):
+    import fintwin.research.__main__ as M
+
+    a, b = tmp_path / "a.json", tmp_path / "b.json"
+    a.write_text("{}"), b.write_text("{}")
+    monkeypatch.setenv("FINTWIN_SELECTION", str(a))
+    s1 = M.stamp()
+    monkeypatch.setenv("FINTWIN_SELECTION", str(b))
+    assert M.stamp() == s1  # same table on another machine / path
+    b.write_text('{"tau": 1}')
+    assert M.stamp() != s1
 
 
 def test_cli_options():
@@ -158,7 +212,7 @@ def test_cli_options():
 
     pos, opt = _opts(["shard", "2", "8", "--limit", "300", "--cutoffs", "2015,2020,2022"])
     assert pos == ["shard", "2", "8"] and opt == {"limit": "300", "cutoffs": "2015,2020,2022"}
-    assert _opts(["stats", "--dry"])[1] == {"dry": True}
+    assert _opts(["stats", "--limit", "300"])[1] == {"limit": "300"}
 
 
 def test_stamp_changes_with_selection_content(monkeypatch, tmp_path):

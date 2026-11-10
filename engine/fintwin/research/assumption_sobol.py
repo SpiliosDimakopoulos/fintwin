@@ -18,6 +18,7 @@ prior's weight is replaced by its s.d. tau.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -101,8 +102,44 @@ def sample(seed: int = 7) -> list[tuple[str, int]]:
     return [(keys[i], int(rng.integers(2016, 2023))) for i in rng.choice(len(keys), 4 * N_SAMPLE, replace=False)]
 
 
-def _one(key: str, year: int, X: np.ndarray) -> dict | str:
-    """The firm-year's outputs at every design point, or the reason it is excluded (a data rule, not an error)."""
+def eligible() -> tuple[list[tuple[str, int]], dict, dict]:
+    """The Sobol firm-years: the first N_SAMPLE candidates of `sample()` that pass the data rules of `_one`, in
+    sample order, plus the exceptions (by type) and data exclusions (by reason) met on the way. Fixed before any
+    design point runs, so the set does not depend on the shard count (a per-shard quota of N_SAMPLE // n did)."""
+    from .__main__ import stamp
+
+    d = cache_dir()
+    path = d / "_eligible.json"
+    st = stamp()
+    if path.exists():
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        if rec.get("_stamp") == st and rec.get("n_sample") == N_SAMPLE:
+            return [tuple(x) for x in rec["keys"]], rec["failed"], rec["excluded"]
+    keys, failed, excluded = [], {}, {}
+    for key, year in sample():
+        if len(keys) >= N_SAMPLE:
+            break
+        try:
+            r = _one(key, year, None)
+        except Exception as e:  # a firm that cannot be loaded is skipped, and counted by type (SW-3)
+            failed[type(e).__name__] = failed.get(type(e).__name__, 0) + 1
+            print(f"  {key} {year}: {type(e).__name__}: {e}", flush=True)
+            continue
+        if isinstance(r, str):  # a data exclusion (not usable, outcome window short or with a gap, ...), not an error
+            excluded[r] = excluded.get(r, 0) + 1
+        else:
+            keys.append((key, year))
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")  # several shard processes may write it at once: same content
+    rec = {"_stamp": st, "n_sample": N_SAMPLE, "keys": keys, "failed": failed, "excluded": excluded}
+    tmp.write_text(json.dumps(rec), encoding="utf-8")
+    os.replace(tmp, path)
+    return keys, failed, excluded
+
+
+def _one(key: str, year: int, X: np.ndarray | None) -> dict | str:
+    """The firm-year's outputs at every design point, or the reason it is excluded (a data rule, not an error).
+    With X None only the data rules run (`eligible`): a dict with no outputs means the firm-year qualifies."""
     from ..data.facts import load_company
     from ..model.sd_model import simulate
     from ..scenarios.presets import DEFAULT_LEVERS, build_scenario
@@ -126,6 +163,8 @@ def _one(key: str, year: int, X: np.ndarray) -> dict | str:
     m4 = _margin(pre, pre["cfo"], 4)
     if not np.isfinite(m4):
         return "no_margin"
+    if X is None:
+        return {"key": key, "year": year}
     rev = nxt["revenue"].to_numpy(float)
     macro = macro_quarterly(origin)
     fs = factors()
@@ -165,9 +204,12 @@ def shard(i: int, n: int) -> None:
     d.mkdir(parents=True, exist_ok=True)
     X = points()
     st = stamp()
-    done, failed, excluded = 0, {}, {}
-    for k, (key, year) in enumerate(sample()):
-        if k % n != i or done >= N_SAMPLE // n:
+    keys, failed0, excluded0 = eligible()
+    # the selection step's counts are reported once (by shard 0), the design-point failures by every shard
+    failed, excluded = (dict(failed0), dict(excluded0)) if i == 0 else ({}, {})
+    done = 0
+    for k, (key, year) in enumerate(keys):
+        if k % n != i:
             continue
         out = d / f"{key}_{year}.json"
         if out.exists() and _stamp_of(out) == st:
@@ -256,7 +298,8 @@ def stats(n_boot: int = 500, seed: int = 3) -> dict:
     from scipy.stats import spearmanr
 
     d = cache_dir()
-    rows = [json.loads(f.read_text(encoding="utf-8")) for f in sorted(d.glob("*.json"))]
+    # firm-year rows only: `_eligible.json` (and any other `_*` bookkeeping file) is not a row
+    rows = [json.loads(f.read_text(encoding="utf-8")) for f in sorted(d.glob("*.json")) if not f.name.startswith("_")]
     stamps = {r.get("_stamp") for r in rows}
     if len(stamps) > 1:
         raise SystemExit(f"Sobol shards under {len(stamps)} stamps in {d}: rerun the stale ones")

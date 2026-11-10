@@ -16,7 +16,9 @@ import hashlib
 import json
 import os
 import re
+import time
 import warnings
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 
@@ -1133,6 +1135,16 @@ def credit_events(cik: int) -> dict:
     return credit_events_from(submissions(cik)["filings"])
 
 
+@contextmanager
+def _timed(acc: dict, stage: str):
+    """Wall-clock seconds per stage (the rev3 cost model, REV3_LIGHT_PLAN B1). Timing only: no effect on results."""
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        acc[stage] = round(acc.get(stage, 0.0) + time.perf_counter() - t0, 3)
+
+
 def company(
     ticker: str, with_forecasts: bool = True, years: set[int] | None = None, fails: Failures | None = None
 ) -> dict:
@@ -1152,6 +1164,8 @@ def company(
         "spec": spec_record(),
         "errors": {},
     }
+    tm: dict = {}
+    res["_timing"] = tm
     filed: dict = {}
     if full_data is not None:
         res["data"] = data_vintage(int(full_data.cik))
@@ -1169,7 +1183,8 @@ def company(
     if years is None or 2020 in years:
         fails.tried("covid")
         try:
-            res["covid"] = covid(ticker, None if full_data is None else full_data.quarters, fails)
+            with _timed(tm, "covid"):
+                res["covid"] = covid(ticker, None if full_data is None else full_data.quarters, fails)
         except Exception as e:
             res["errors"]["covid"] = f"{type(e).__name__}: {e}"
             fails.fail("covid", e)
@@ -1180,7 +1195,8 @@ def company(
     for origin in fc_origins if with_forecasts else panel_origins:
         fails.tried("load")
         try:
-            hists[origin] = load_company(ticker, asof=origin)
+            with _timed(tm, "load"):
+                hists[origin] = load_company(ticker, asof=origin)
         except Exception as e:
             res["errors"][origin] = f"{type(e).__name__}: {e}"
             fails.fail("load", e)
@@ -1191,17 +1207,28 @@ def company(
             continue
         fails.tried("panel")
         try:
-            p = calibrate(hist, macro_quarterly(origin), 12)
+            with _timed(tm, "calibrate"):
+                p = calibrate(hist, macro_quarterly(origin), 12)
             raw = {**p, "sector_tol": 1.0}
-            dg = {f"{d:.2f}": _run(raw, {**DEMAND, "sales_depth": d}, {}, 1000, 12, 7) for d in DEPTHS}
+            with _timed(tm, "depth_grid"):
+                dg = {f"{d:.2f}": _run(raw, {**DEMAND, "sales_depth": d}, {}, 1000, 12, 7) for d in DEPTHS}
+            with _timed(tm, "base3"):
+                runs3 = {
+                    "base": _run(raw, {}, {}, 1500, 12, 5),
+                    "recession": _run(raw, PRESETS["recession"]["knobs"], {}, 1500, 12, 5),
+                    "base_no_loops": _run(raw, {}, ABLATIONS["no_loops"], 1500, 12, 5),
+                }
+            feats = features(hist, p)
+            with _timed(tm, "outcome"):
+                outcome = _distress(hist, full_data.quarters, filed, fails)
+            with _timed(tm, "structural"):
+                st = structural(hist, raw, full_data.quarters, macro_quarterly(origin), fails=fails)
             row = {
                 "origin": origin,
-                "base": _run(raw, {}, {}, 1500, 12, 5),
-                "recession": _run(raw, PRESETS["recession"]["knobs"], {}, 1500, 12, 5),
-                "base_no_loops": _run(raw, {}, ABLATIONS["no_loops"], 1500, 12, 5),
-                "features": features(hist, p),
-                "outcome": _distress(hist, full_data.quarters, filed, fails),
-                "structural": structural(hist, raw, full_data.quarters, macro_quarterly(origin), fails=fails),
+                **runs3,
+                "features": feats,
+                "outcome": outcome,
+                "structural": st,
                 # stress score under a generic demand shock of each depth (no market closure), so that `stats`
                 # can give each firm its industry's realized shock in any episode (2015-16, 2020, 2022)
                 "depth_grid": {k: v["health"] for k, v in dg.items()},
@@ -1222,7 +1249,8 @@ def company(
     res["panel"] = panel
     if with_forecasts:
         try:
-            res["forecasts"] = forecasts(ticker, full_data, hists, fails, filed, fc_origins)
+            with _timed(tm, "forecasts"):
+                res["forecasts"] = forecasts(ticker, full_data, hists, fails, filed, fc_origins)
         except Exception as e:
             res["errors"]["forecasts"] = f"{type(e).__name__}: {e}"
             fails.fail("forecasts", e)

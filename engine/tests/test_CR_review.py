@@ -206,6 +206,34 @@ def test_sobol_shard_separates_exclusions_from_exceptions(monkeypatch, tmp_path)
     assert rep == {"failed": {"KeyError": 1}, "excluded": {"outcome_gap": 1, "small": 1}}
 
 
+def test_sobol_firm_years_do_not_depend_on_the_shard_count(monkeypatch, tmp_path):
+    cands = [(k, 2018) for k in "ABCDEFGHIJ"]
+    monkeypatch.setattr(AS, "cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(AS, "points", lambda: np.zeros((1, 1)))
+    monkeypatch.setattr(AS, "sample", lambda: cands)
+    monkeypatch.setattr(AS, "N_SAMPLE", 4)
+    ran = []
+
+    def one(key, year, X):
+        if key in "BE":  # excluded by a data rule
+            return "small"
+        if X is not None:
+            ran.append(key)
+        return {"key": key, "year": year}
+
+    monkeypatch.setattr(AS, "_one", one)
+    for n in (1, 3):
+        ran.clear()
+        for f in tmp_path.glob("*.json"):
+            f.unlink()
+        for i in range(n):
+            AS.shard(i, n)
+        assert sorted(ran) == ["A", "C", "D", "F"]  # the first 4 eligible, whatever the shard count
+    assert (tmp_path / "_eligible.json").exists()
+    rows = [f for f in tmp_path.glob("*.json") if not f.name.startswith("_")]
+    assert len(rows) == 4  # the bookkeeping file is not counted as a firm-year by `stats`
+
+
 @pytest.mark.parametrize("value,legacy", [("1", True), ("0", False), ("true", False), ("yes", False)])
 def test_one_legacy_switch(monkeypatch, value, legacy):
     from fintwin.data import edgar
