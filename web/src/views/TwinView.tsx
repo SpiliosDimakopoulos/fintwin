@@ -70,7 +70,7 @@ export function TwinView({ c, meta, index, onStress, onMachine, onOpen, onRewind
           foot={`${pct(base.p_downgrade_below_ig)} chance of junk in 3 years`} info="Mapped from trailing interest coverage with Damodaran's table for large non-financial firms (Jan 2026)." />
         <MetricText label="Breaking point" value={rev.p50 == null ? "none" : `−${pct(rev.p50)}`}
           foot={rev.p50 == null ? "funds itself through a 95% drop" : "revenue drop for 50% breach odds"}
-          info="Reverse stress test: the smallest revenue drop, held for three quarters, that gives even odds of running out of cash. Solved by bisection." />
+          info="Reverse stress test: the smallest revenue drop (held three quarters, the first at half depth) that gives even odds of running out of cash. Solved by bisection." />
         <Metric label="Coverage under 1.5×" value={base.p_icr_below_1_5 * 100} format={(v) => v.toFixed(0)} unit="%"
           foot="probability within 3 years" info="Below 1.5× interest coverage the synthetic rating is single-B or worse and the twin narrows access to new debt." />
       </div>
