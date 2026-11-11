@@ -7,7 +7,7 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from test_B1_parity import macro, synthetic_company  # noqa: F401  (fixture)
+from test_B1_parity import synthetic_company
 from test_C2_synth import quarters, split
 
 from fintwin.backtest import batch as B
@@ -134,12 +134,12 @@ def _layer(c, gap_back: int):
     return c
 
 
-def _cal(c, macro):  # noqa: F811
+def _cal(c, macro):
     with spec.using("v2-pre"):
         return C.calibrate(c, macro, 8)
 
 
-def test_trailing_windows_are_contiguous_and_annualized(macro):  # noqa: F811
+def test_trailing_windows_are_contiguous_and_annualized(macro):
     c = _layer(synthetic_company(seed=21), gap_back=3)  # gap 3 rows back: a 2-quarter run ends at the cutoff
     q = c.quarters
     p = _cal(c, macro)
@@ -157,7 +157,7 @@ def test_trailing_windows_are_contiguous_and_annualized(macro):  # noqa: F811
             assert np.isfinite(v)
 
 
-def test_staleness_counts_from_the_last_reported_value(macro):  # noqa: F811
+def test_staleness_counts_from_the_last_reported_value(macro):
     c = _layer(synthetic_company(seed=22), gap_back=12)
     q = c.quarters
     # inventory reported last 5 rows back, carried forward by the data layer into the next two rows

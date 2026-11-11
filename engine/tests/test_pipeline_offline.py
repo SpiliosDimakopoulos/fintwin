@@ -11,7 +11,6 @@ import pandas as pd
 import pytest
 
 import fintwin.data.facts as facts
-import fintwin.stochastic.calibrate as calibrate_mod
 from fintwin.backtest.batch import _scores
 from fintwin.data.quality import quality_report
 from fintwin.notes import fact_sheet, write_note
@@ -138,28 +137,10 @@ def synthetic_companyfacts() -> dict:
 
 
 @pytest.fixture
-def offline(monkeypatch):
+def offline(monkeypatch, macro):
     cf = synthetic_companyfacts()
     monkeypatch.setattr(facts, "company_facts", lambda cik: cf)
     monkeypatch.setattr(facts, "ticker_to_cik", lambda t: (123, "Synthetic Industries Inc"))
-    gdp = pd.Series(np.full(80, 0.05), index=pd.date_range("2005-03-31", periods=80, freq="QE"))
-    monkeypatch.setattr(
-        calibrate_mod,
-        "recession_regime",
-        lambda asof=None: {
-            "hazard": 0.045,
-            "exit": 0.24,
-            "gdp_shortfall_q": 0.01,
-            "in_recession_now": False,
-            "gdp_yoy": gdp,
-            "n_recessions": 12,
-        },
-    )
-    idx = pd.date_range("2000-03-31", "2025-12-31", freq="QE")
-    macro = pd.DataFrame(
-        {"short_rate": 0.02 + 0.01 * np.sin(np.arange(len(idx)) / 8), "long_rate": 0.035, "credit_spread": 0.02},
-        index=idx,
-    )
     return macro
 
 
@@ -200,7 +181,11 @@ def test_stress_tools_and_notes(offline):
     p = block["params"]
     rs = reverse_stress(p, n_paths=300)
     assert set(rs) == {"sales_depth", "rate_bp", "cost_pp"}
-    assert len(tornado(p, n_paths=300)) == 6
+    rows = tornado(p, n_paths=300)
+    assert len(rows) == 6
+    assert [r["d_health"] for r in rows] == sorted(r["d_health"] for r in rows)  # the UI draws them in this order
+    assert rows[0]["d_health"] < 0  # the worst knob lowers health
+    assert {r["knob"] for r in rows} == {"sales_depth", "rate_bp", "spread_bp", "cost_pp", "refi_freeze", "dio_days"}
     note = write_note(block, meta_block())
     assert note["verdict"] in {"Healthy", "Watch", "Strained", "Distressed"}
     assert note["key_risks"] and note["watch_list"]

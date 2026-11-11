@@ -27,12 +27,6 @@ def sim(p, knobs=None, n=200, seed=1, **lev):
     return sd_model.simulate(p, build_scenario(knobs or {}, p["horizon"]), eps, {**DEFAULT_LEVERS, **lev})
 
 
-@pytest.fixture(autouse=True)
-def _clean_env(monkeypatch):
-    monkeypatch.delenv("FINTWIN_FIXES", raising=False)
-    monkeypatch.delenv("FINTWIN_SPEC", raising=False)
-
-
 # ------------------------------------------------------------------------------------------- switches (spec.py stub)
 def test_spec_fallback_semantics(monkeypatch):
     assert not sd_model.active("F11") and not sd_model.active("M1")
