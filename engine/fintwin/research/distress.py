@@ -183,7 +183,7 @@ def exposure(xs: pd.DataFrame, b: int) -> dict:
     return out
 
 
-# ---------------------------------------------------------------- probability scores (E8)
+# ---------------------------------------------------------------- probability scores
 def _ok(p: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     p, y = np.asarray(p, float), np.asarray(y, float)
     m = np.isfinite(p) & np.isfinite(y)
@@ -301,7 +301,7 @@ MIN_TRAIN, MIN_TRAIN_EVENTS = 300, 10
 
 def known_by(df: pd.DataFrame, cutoff: pd.Timestamp, k: int) -> np.ndarray:
     """Firm-years whose k-quarter label was observable at `cutoff`: the event window has closed and the last outcome
-    quarter has been filed (actual filing date, D10; quarter window + 90 days where unknown)."""
+    quarter has been filed (actual filing date; quarter window + 90 days where unknown)."""
     origin = pd.to_datetime(df["origin"])
     days = pd.Timedelta(days=365 * k // 4)
     col = "outcome_filed" if k == 8 else "outcome_filed4"
@@ -328,7 +328,7 @@ def benchmark_probs(df: pd.DataFrame, y: np.ndarray, k: int, cols: tuple[str, ..
     return out
 
 
-# ---------------------------------------------------------------- credit events (M9) and liquidity shortfall (E12)
+# ---------------------------------------------------------------- credit events and liquidity shortfall
 CREDIT_ITEMS = ("1.03", "2.04", "3.01")
 
 
@@ -480,9 +480,9 @@ def _versus(df: pd.DataFrame, p: np.ndarray, y: np.ndarray, k: int, years: list[
 
 
 def liquidity_section(df: pd.DataFrame, b: int = 2000) -> dict:
-    """E12: P(cash + undrawn revolver < 0 within 4 and 8 quarters) against realized shortfalls, under each firm's
+    """P(cash + undrawn revolver < 0 within 4 and 8 quarters) against realized shortfalls, under each firm's
     realized industry shock (cutoffs Feb 2015, 2020, 2022) and under the Recession preset (every cutoff with a
-    trainable benchmark), scored by Brier, log score and the Murphy decomposition (E8)."""
+    trainable benchmark), scored by Brier, log score and the Murphy decomposition."""
     if df.empty:
         return {}
     out: dict = {
@@ -508,7 +508,7 @@ def liquidity_section(df: pd.DataFrame, b: int = 2000) -> dict:
 
 
 def credit_section(df: pd.DataFrame, b: int = 2000) -> dict:
-    """M9 / B3 (secondary): AUC of the twin's baseline verdict for the broad credit-event label and each item."""
+    """Secondary: AUC of the twin's baseline verdict for the broad credit-event label and each item."""
     if df.empty:
         return {}
     firms = df["ticker"].to_numpy()
@@ -528,7 +528,7 @@ def credit_section(df: pd.DataFrame, b: int = 2000) -> dict:
 
 
 def event_scores(panel: pd.DataFrame) -> dict:
-    """E8 for the structural liquidity decisions: the twin's event probabilities (realized revenue fed in) scored by
+    """Scores for the structural liquidity decisions: the twin's event probabilities (realized revenue fed in) scored by
     Brier, log score and Murphy decomposition against what happened, with the climatology of earlier years as the
     reference forecast (base rate of cutoffs <= Y-3)."""
     from .experiments import EVENTS

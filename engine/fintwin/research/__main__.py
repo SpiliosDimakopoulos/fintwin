@@ -31,7 +31,6 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2] / ".cache" / "research"
-CACHE = ROOT  # kept for callers that import it; per-spec directories are `spec_dir()`
 DATA = Path(__file__).resolve().parents[1] / "data"
 DRY_SEED = 2026
 MAX_FAIL_SHARE = float(os.environ.get("FINTWIN_MAX_FAIL_SHARE", "0.10"))
@@ -180,7 +179,7 @@ def _shards(d: Path) -> list[dict]:
 
 
 def check_failures(shards: list[dict], max_share: float = MAX_FAIL_SHARE) -> dict:
-    """Failure counts by stage and type (SW-3); refuse to build the paper numbers if any stage failed too often."""
+    """Failure counts by stage and type; refuse to build the paper numbers if any stage failed too often."""
     from .experiments import failure_summary
 
     summary = failure_summary(shards)
