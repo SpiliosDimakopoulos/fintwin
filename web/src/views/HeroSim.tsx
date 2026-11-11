@@ -38,7 +38,7 @@ export function HeroSim({ meta, onOpen }: { meta: Meta; onOpen: (preset: string)
     const id = ++runId.current;
     runSimulation(c.params, meta.presets[key].knobs, meta.levers, N_PATHS, 11).then((r) => {
       if (id === runId.current) setRes({ s: r.summary, ms: r.ms, run: id });
-    });
+    }, (e) => console.error("hero simulation failed", e));
   }, [c, key, meta]);
   // ambient cycling until the visitor takes control
   useEffect(() => {

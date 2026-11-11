@@ -3,7 +3,8 @@ import { CommandPalette } from "./CommandPalette";
 import { loadCompany, loadIndex, type Company, type Index } from "./data";
 import { prettyName, shortcutLabel } from "./format";
 import { useHashState } from "./hooks";
-import { IconChevron, IconMoon, IconSun, Skeleton, Wordmark } from "./ui";
+import { IconChevron, IconMoon, IconSun, LoadError, PAPER_URL, REPO_URL, Skeleton, Wordmark } from "./ui";
+import { MissingTwin } from "./views/MissingTwin";
 import { OverviewView } from "./views/OverviewView";
 import { TwinView } from "./views/TwinView";
 
@@ -51,6 +52,8 @@ export default function App() {
   const [palette, setPalette] = useState(false);
   const [help, setHelp] = useState(false);
   const [dark, toggleTheme] = useTheme();
+  // a company view whose ticker is neither in the index nor loadable: show a way out instead of the fetch error
+  const unknownTicker = !!index && !!error && COMPANY_VIEWS.has(view) && !index.companies[ticker];
 
   useEffect(() => { loadIndex().then(setIndex).catch((e) => setError(String(e))); }, []);
   useEffect(() => {
@@ -108,7 +111,7 @@ export default function App() {
               <span className="kbd">{shortcutLabel}</span>
               <IconChevron />
             </button>
-            <a className="star-btn" href="https://github.com/SpiliosDimakopoulos/fintwin" target="_blank" rel="noreferrer" aria-label="Star FinTwin on GitHub" title="Star FinTwin on GitHub">
+            <a className="star-btn" href={REPO_URL} target="_blank" rel="noreferrer" aria-label="Star FinTwin on GitHub" title="Star FinTwin on GitHub">
               <span aria-hidden="true">★</span><span className="star-label">Star</span>
             </a>
             <button className="icon-btn" onClick={toggleTheme} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}>
@@ -121,8 +124,10 @@ export default function App() {
       {index && <CommandPalette index={index} open={palette} onClose={() => setPalette(false)} onPick={openCompany} liveEnabled={LIVE_API} />}
 
       <main className="page">
-        {error && <p className="callout" style={{ marginBottom: 24 }}>{error}</p>}
-        {!index ? <Skeleton h={420} /> : (
+        {index && error && !unknownTicker && <p className="callout" style={{ marginBottom: 24 }}>{error}</p>}
+        {!index ? (error ? <LoadError what="the company index" /> : <Skeleton h={420} />) : unknownTicker ? (
+          <MissingTwin ticker={ticker} onSearch={() => setPalette(true)} onCompare={() => go("compare")} />
+        ) : (
           <Suspense fallback={<Skeleton h={520} />}>
             {view === "overview" && <OverviewView index={index} onOpen={(t) => go("twin", t)} onGo={(v) => go(v)} onStress={(p) => go("stress", "CCL", p)} />}
             {COMPANY_VIEWS.has(view) && (!company || company.ticker !== ticker) && !error && <Skeleton h={520} />}
@@ -147,7 +152,7 @@ export default function App() {
 
       {help && (
         <div className="palette-backdrop" onMouseDown={() => setHelp(false)}>
-          <div className="palette fade-in" style={{ padding: "18px 20px" }} role="dialog" aria-label="Keyboard shortcuts" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="palette fade-in" style={{ padding: "18px 20px" }} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" onMouseDown={(e) => e.stopPropagation()}>
             <div className="eyebrow" style={{ marginBottom: 12 }}>Keyboard shortcuts</div>
             <dl style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "10px 18px", margin: 0 }}>
               {[[`${shortcutLabel} or /`, "Find a company"], [`1 – ${NAV.length}`, NAV.map(([, l]) => l).join(" · ")], ["T", "Toggle light and dark"], ["?", "Show or hide this panel"], ["Esc", "Close"]].map(([k, d]) => (
@@ -160,7 +165,7 @@ export default function App() {
 
       <footer className="footer">
         <span><span className="live-dot" style={{ background: "var(--good)" }} />Data rebuilt {index?.meta.generated} from SEC EDGAR and FRED · refreshes automatically every Monday. Research project: model-implied figures, not a forecast, credit opinion or investment advice.</span>
-        <span><button className="btn-link" onClick={() => setHelp(true)}>Shortcuts <span className="kbd">?</span></button> · <a href="https://github.com/SpiliosDimakopoulos/fintwin" target="_blank" rel="noreferrer">Source</a> · <a href="https://github.com/SpiliosDimakopoulos/fintwin/blob/main/docs/paper/fintwin.pdf" target="_blank" rel="noreferrer">Paper</a></span>
+        <span><button className="btn-link" onClick={() => setHelp(true)}>Shortcuts <span className="kbd">?</span></button> · <a href={REPO_URL} target="_blank" rel="noreferrer">Source</a> · <a href={PAPER_URL} target="_blank" rel="noreferrer">Paper</a></span>
       </footer>
     </div>
   );
