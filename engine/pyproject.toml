@@ -2,6 +2,22 @@
 name = "fintwin"
 version = "3.0.0.dev0"
 description = "Corporate financial health digital twin: SEC XBRL -> system dynamics -> Monte Carlo stress tests"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Spilios Dimakopoulos" }]
+keywords = ["finance", "xbrl", "monte-carlo", "system-dynamics", "financial-distress", "stress-testing"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Financial and Insurance Industry",
+  "Topic :: Office/Business :: Financial",
+  "Topic :: Scientific/Engineering",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.26",
@@ -11,6 +27,11 @@ dependencies = [
   "python-dotenv>=1.0",
   "statsmodels>=0.14",
 ]
+
+[project.urls]
+Homepage = "https://spiliosdimakopoulos.github.io/fintwin/"
+Repository = "https://github.com/SpiliosDimakopoulos/fintwin"
+Issues = "https://github.com/SpiliosDimakopoulos/fintwin/issues"
 
 [project.optional-dependencies]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
