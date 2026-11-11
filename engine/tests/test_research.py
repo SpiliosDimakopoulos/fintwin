@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from fintwin.data.edgar import ticker_to_cik
 from fintwin.model.sd_model import simulate
@@ -166,6 +167,7 @@ def _synthetic_research(tmp_path, n=160, bankrupt=12):
     return tmp_path, bk_dates
 
 
+@pytest.mark.slow
 def test_stats_pipeline_recovers_planted_signal(tmp_path, monkeypatch):
     import fintwin.research.stats as st
 

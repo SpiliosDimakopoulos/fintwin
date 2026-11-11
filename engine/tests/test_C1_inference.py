@@ -100,6 +100,7 @@ def test_mcs_with_identical_models_keeps_all_of_them():
 
 
 # ---------------------------------------------------------------- E9, SW-14: few clusters
+@pytest.mark.slow
 def test_cluster_ols_matches_statsmodels_one_way_and_uses_t_of_g_minus_one():
     import statsmodels.api as sm
 
@@ -529,6 +530,7 @@ def test_old_shards_without_point_keys_keep_the_sum_of_medians():
     assert df["T1_cfo"].iloc[0] == 20.0
 
 
+@pytest.mark.slow
 def test_provenance_block():
     pv = S.provenance()
     assert {"python", "platform", "versions", "git_sha", "uv_lock_sha256", "snapshot_digest", "spec", "env"} <= set(pv)
