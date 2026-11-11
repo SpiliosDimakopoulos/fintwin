@@ -20,10 +20,6 @@ SITE = "https://spiliosdimakopoulos.github.io/fintwin/"
 LABELS = {"liq": "liquidity runway", "cov": "interest coverage", "lev": "leverage", "solv": "solvency (Altman Z'')"}
 
 
-def _round(x, nd: int):
-    return None if x is None else round(x, nd)
-
-
 def _drivers(before: dict | None, after: dict | None) -> list[dict]:
     """Contribution of each component to the change in the score, largest first."""
     if not before or not after:
@@ -62,8 +58,8 @@ def diff(prev: dict, new: dict, today: str | None = None) -> dict:
                 "delta": round(h1 - h0, 1),
                 "stress_before": None if s0 is None else round(s0, 1),
                 "stress_after": None if s1 is None else round(s1, 1),
-                "p_breach_before": _round(ba.get("p_breach"), 3),
-                "p_breach_after": _round(bb.get("p_breach"), 3),
+                "p_breach_before": None if ba.get("p_breach") is None else round(ba["p_breach"], 3),
+                "p_breach_after": None if bb.get("p_breach") is None else round(bb["p_breach"], 3),
                 "new_filing": filed,
                 "quarter": b.get("last_quarter"),
                 "drivers": _drivers(a.get("components"), b.get("components")),
@@ -108,7 +104,9 @@ def rss(history: dict) -> str:
     """RSS 2.0 feed, one item per weekly rebuild."""
     items = []
     for w in history["weeks"]:
-        lines = [_line(m) for m in w["movers"][:12]] or ["No company's baseline health moved by 5 points or more."]
+        lines = [_line(m) for m in w["movers"][:12]] or [
+            f"No company's baseline health moved by {THRESHOLD:g} points or more."
+        ]
         pub = format_datetime(datetime.fromisoformat(w["date"]).replace(hour=8, tzinfo=UTC))
         items.append(
             "<item>"

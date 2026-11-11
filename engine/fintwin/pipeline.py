@@ -55,11 +55,9 @@ def norms() -> None:
 def shard(i: int, n: int) -> None:
     from .backtest.batch import company_cases
     from .data.fred import macro_quarterly
-    from .export import SHOWCASE, SOBOL_SET, company_block
+    from .export import SOBOL_SET, company_block
 
-    tickers = [
-        t for k, t in enumerate(universe.tickers() + [s for s in SHOWCASE if s not in universe.tickers()]) if k % n == i
-    ]
+    tickers = [t for k, t in enumerate(expected_tickers()) if k % n == i]
     macro = macro_quarterly()
     (CACHE / "failed" / f"shard{i}.json").unlink(missing_ok=True)  # a fixed failure must not linger in the report
     failed = {}
@@ -170,7 +168,10 @@ def aggregate() -> None:
 
 if __name__ == "__main__":
     warnings.simplefilter("ignore")
-    cmd = sys.argv[1]
+    usage = "usage: python -m fintwin.pipeline norms | shard I N | aggregate"
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if cmd == "shard" and len(sys.argv) != 4:
+        raise SystemExit(usage)
     if cmd == "norms":
         norms()
     elif cmd == "shard":
@@ -178,4 +179,4 @@ if __name__ == "__main__":
     elif cmd == "aggregate":
         aggregate()
     else:
-        raise SystemExit(f"unknown command {cmd}")
+        raise SystemExit(f"unknown command {cmd!r}; {usage}")

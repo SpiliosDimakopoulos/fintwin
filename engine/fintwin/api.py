@@ -25,31 +25,39 @@ _BUILD_CACHE_MAXSIZE = 32
 _BUILD_CACHE_TTL_SECONDS = 60 * 60
 _BUILD_CACHE: OrderedDict[str, tuple[float, str]] = OrderedDict()
 _BUILD_CACHE_LOCK = threading.Lock()
+# One lock per ticker: concurrent requests for a cold ticker wait for the first build instead of each starting one.
+_TICKER_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _cached(ticker: str) -> str | None:
+    with _BUILD_CACHE_LOCK:
+        cached = _BUILD_CACHE.get(ticker)
+        if cached is None:
+            return None
+        cached_at, payload = cached
+        if monotonic() - cached_at < _BUILD_CACHE_TTL_SECONDS:
+            _BUILD_CACHE.move_to_end(ticker)
+            return payload
+        del _BUILD_CACHE[ticker]
+        return None
 
 
 def _build(ticker: str) -> str:
-    requested_at = monotonic()
+    payload = _cached(ticker)
+    if payload is not None:
+        return payload
     with _BUILD_CACHE_LOCK:
-        cached = _BUILD_CACHE.get(ticker)
-        if cached is not None:
-            cached_at, payload = cached
-            if requested_at - cached_at < _BUILD_CACHE_TTL_SECONDS:
-                _BUILD_CACHE.move_to_end(ticker)
-                return payload
-            del _BUILD_CACHE[ticker]
-
-    payload = dumps(company_block(ticker, macro_quarterly(), n_paths=3000))
-
-    with _BUILD_CACHE_LOCK:
-        # Do not let a slower concurrent build overwrite a newer cached result.
-        cached = _BUILD_CACHE.get(ticker)
-        if cached is None or cached[0] <= requested_at:
+        lock = _TICKER_LOCKS.setdefault(ticker, threading.Lock())
+    with lock:
+        payload = _cached(ticker)  # built by the request this one waited for
+        if payload is not None:
+            return payload
+        payload = dumps(company_block(ticker, macro_quarterly(), n_paths=3000))
+        with _BUILD_CACHE_LOCK:
             _BUILD_CACHE[ticker] = (monotonic(), payload)
             _BUILD_CACHE.move_to_end(ticker)
             while len(_BUILD_CACHE) > _BUILD_CACHE_MAXSIZE:
                 _BUILD_CACHE.popitem(last=False)
-        else:
-            payload = cached[1]
     return payload
 
 
