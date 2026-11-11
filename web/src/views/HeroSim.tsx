@@ -15,15 +15,23 @@ export function HeroSim({ meta, onOpen }: { meta: Meta; onOpen: (preset: string)
   const [c, setC] = useState<Company | null>(null);
   const [key, setKey] = useState<string>("base");
   const [auto, setAuto] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [reducedMotion] = useState(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [res, setRes] = useState<{ s: Summary; ms: number; run: number } | null>(null);
   const runId = useRef(0);
   const [ref, width] = useSize<HTMLDivElement>();
 
   // start once the browser is idle, so the first paint and the headline are never delayed by the simulation
   useEffect(() => {
-    const start = () => loadCompany("CCL").then(setC);
-    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
-    if (w.requestIdleCallback) w.requestIdleCallback(start, { timeout: 1200 }); else setTimeout(start, 300);
+    let live = true;
+    const start = () => loadCompany("CCL").then((x) => { if (live) setC(x); }).catch((e) => { console.error(e); if (live) setFailed(true); });
+    // Safari has no requestIdleCallback
+    if ("requestIdleCallback" in window) {
+      const h = requestIdleCallback(start, { timeout: 1200 });
+      return () => { live = false; cancelIdleCallback(h); };
+    }
+    const h = setTimeout(start, 300);
+    return () => { live = false; clearTimeout(h); };
   }, []);
   useEffect(() => {
     if (!c) return;
@@ -34,10 +42,10 @@ export function HeroSim({ meta, onOpen }: { meta: Meta; onOpen: (preset: string)
   }, [c, key, meta]);
   // ambient cycling until the visitor takes control
   useEffect(() => {
-    if (!auto || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (!auto || reducedMotion) return;
     const t = setInterval(() => setKey((k) => SCENARIOS[(SCENARIOS.findIndex(([x]) => x === k) + 1) % SCENARIOS.length][0]), 4200);
     return () => clearInterval(t);
-  }, [auto]);
+  }, [auto, reducedMotion]);
 
   const health = useTween(res?.s.healthScore ?? NaN, 500);
   const breach = useTween((res?.s.pBreach ?? NaN) * 100, 500);
@@ -48,26 +56,34 @@ export function HeroSim({ meta, onOpen }: { meta: Meta; onOpen: (preset: string)
   const start = c?.presets.base.health_score ?? 50;
   const path = (vals: number[]) => line<number>().x((_, i) => x(i)).y((v) => y(v))([start, ...vals]) ?? "";
   const fut = c ? futureQuarters(c.params.last_quarter, T) : [];
+  const scenLabel = SCENARIOS.find(([k]) => k === key)?.[1] ?? "";
+  const readout = res ? `${scenLabel}: median health ${res.s.healthScore.toFixed(0)} of 100, ${(res.s.pBreach * 100).toFixed(0)}% of paths run out of cash` : "";
 
   return (
-    <div className="terminal" aria-label="Live Monte Carlo simulation of Carnival">
+    <div className="terminal" role="group" aria-label="Live Monte Carlo simulation of Carnival">
       <div className="term-head">
         <span><span className="live-dot" /> LIVE · CCL Carnival</span>
-        <span>{N_PATHS.toLocaleString()} paths · {res ? `${res.ms.toFixed(0)} ms` : "…"}</span>
+        <span>{N_PATHS.toLocaleString()} paths · {failed ? "unavailable" : res ? `${res.ms.toFixed(0)} ms` : "…"}</span>
       </div>
       <div className="term-chips" role="group" aria-label="Scenario">
         {SCENARIOS.map(([k, label]) => (
           <button key={k} aria-pressed={key === k} onClick={() => { setAuto(false); setKey(k); }}>{label}</button>
         ))}
+        {!reducedMotion && (
+          <button className="term-pause" aria-pressed={!auto} onClick={() => setAuto(!auto)}>{auto ? "Pause" : "Cycle scenarios"}</button>
+        )}
       </div>
+      {/* announce only scenarios the visitor picked, not the ambient cycle */}
+      <p className="sr-only" aria-live="polite">{auto ? "" : readout}</p>
       <div className="term-readout">
         <div><div className="t-label">Median health</div><div className="t-value">{Number.isFinite(health) ? health.toFixed(0) : "–"}<small>/100</small></div></div>
         <div><div className="t-label">Runs out of cash</div><div className="t-value">{Number.isFinite(breach) ? breach.toFixed(0) : "–"}<small>%</small></div></div>
         <div><div className="t-label">Horizon</div><div className="t-value">{T}<small> qtrs</small></div></div>
       </div>
       <div ref={ref} style={{ position: "relative" }}>
-        {width > 0 && (
-          <svg width={width} height={H} role="img" aria-label="Simulated health score paths">
+        {failed && <p style={{ color: "var(--t-muted)", padding: "40px 0" }}>The simulation could not load. Reload the page to try again.</p>}
+        {width > 0 && !failed && (
+          <svg width={width} height={H} role="img" aria-label={readout ? `Simulated health score paths. ${readout}.` : "Simulated health score paths"}>
             {[30, 50, 70].map((t) => (
               <g key={t}>
                 <line x1={M.l} x2={width - M.r} y1={y(t)} y2={y(t)} stroke="var(--t-rule)" strokeDasharray="2 4" />

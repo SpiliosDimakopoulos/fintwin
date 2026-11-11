@@ -4,28 +4,28 @@ import { FanChart, FanLegend } from "../charts/FanChart";
 import { Scatter } from "../charts/Scatter";
 import { loadBacktest, loadCalibration, loadResearch, type Backtest, type Calibration, type ResearchSummary } from "../data";
 import { fixed, money, moneyTick, pct, prettyName, quarterLabel, signed, UNIVERSE_TEXT } from "../format";
-import { Metric, MetricText, ModelNote, Section, Skeleton, SpecStamp } from "../ui";
+import { ExtLink, LoadError, Metric, MetricText, ModelNote, PAPER_URL, Section, Skeleton, SpecStamp } from "../ui";
+import { fragilityBuckets, SEVERE_BURN_PCT } from "./crossSection";
 
 const VARS: Record<string, string> = { revenue: "Revenue", cash_like: "Cash", total_debt: "Debt" };
 
 export function BacktestView({ onOpen, generated }: { onOpen: (t: string) => void; generated?: string }) {
   const [bt, setBt] = useState<Backtest | null>(null);
-  const [cal, setCal] = useState<Calibration | null>(null);
-  const [res, setRes] = useState<ResearchSummary | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  // undefined while loading, null when the file could not be fetched
+  const [cal, setCal] = useState<Calibration | null | undefined>(undefined);
+  const [res, setRes] = useState<ResearchSummary | null | undefined>(undefined);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
-    loadBacktest().then(setBt).catch((e) => setErr(String(e)));
+    loadBacktest().then(setBt).catch((e) => { console.error(e); setFailed(true); });
     loadCalibration().then(setCal);
     loadResearch().then(setRes);
   }, []);
-  if (err) return <p className="callout">{err}</p>;
+  if (failed || cal === null) return <LoadError what="the evidence data" />;
   if (!bt || !cal) return <Skeleton h={600} />;
 
   const xs = cal.cross_section;
-  const rows = xs.rows.filter((r) => r.realized_min_cum_fcf_pct_rev != null);
-  const sorted = [...rows].sort((a, b) => a.health_stress - b.health_stress);
-  const k = Math.floor((sorted.length * 2) / 5);
-  const severe = (rs: typeof rows) => rs.filter((r) => (r.realized_min_cum_fcf_pct_rev ?? 0) < -10).length / Math.max(rs.length, 1);
+  const { rows, fragileSevere, robustSevere } = fragilityBuckets(xs);
+  const severeFoot = `cash burn worse than ${-SEVERE_BURN_PCT}% of revenue`;
 
   return (
     <div className="fade-in">
@@ -45,11 +45,12 @@ export function BacktestView({ onOpen, generated }: { onOpen: (t: string) => voi
             style={{ width: "100%", height: "auto", borderRadius: 6, border: "1px solid var(--rule)" }}
             alt="Two panels from the research paper. Left: out-of-sample error of eight-quarter operating cash flow given the realized revenue, for simple margin rules, a regression, the twin and blends. The 16-quarter margin is more accurate than the twin alone, and blending a simple regression into the margin does almost as well as blending in the twin. Right: AUC for a bankruptcy petition within two years among US-GAAP filers reporting in USD with at least $50M of revenue; the twin, its own scoring formula without simulation and the Ohlson score are close to level. The exact values are given in Findings 1 and 2 below." />
           <figcaption className="muted" style={{ marginTop: 8, fontSize: 13 }}>The research paper in one picture.{" "}
-            <a href="https://github.com/SpiliosDimakopoulos/fintwin/blob/main/docs/paper/fintwin.pdf">Read the paper</a>.</figcaption>
+            <ExtLink href={PAPER_URL}>Read the paper</ExtLink>.</figcaption>
         </figure>
       </Section>
 
       {res && <ResearchFindings r={res} />}
+      {res === null && <LoadError what="the research findings" />}
 
       <Section eyebrow="Illustration" title="February 2020 in the dashboard's companies: fragility, mostly persistence">
         <SpecStamp generated={generated} />
@@ -57,8 +58,8 @@ export function BacktestView({ onOpen, generated }: { onOpen: (t: string) => voi
           <Metric label="Rank correlation" value={xs.spearman} format={(v) => `ρ ${v.toFixed(2)}`} foot={`95% CI ${fixed(xs.ci95[0], 2)}–${fixed(xs.ci95[1], 2)}`}
             info="Spearman correlation between the twin's demand-freeze health score (Feb 2020 data) and realized cumulative free cash flow, 2020Q1–2021Q2." />
           <MetricText label="Significance" value={xs.p_value != null ? (xs.p_value < 1e-6 ? "p < 10⁻⁶" : `p = ${xs.p_value.toExponential(1)}`) : "–"} foot={`${xs.n} companies`} />
-          <Metric label="Severe burn, fragile two-fifths" value={severe(sorted.slice(0, k)) * 100} format={(v) => v.toFixed(0)} unit="%" foot="cash burn worse than 10% of revenue" />
-          <Metric label="Severe burn, robust two-fifths" value={severe(sorted.slice(-k)) * 100} format={(v) => v.toFixed(0)} unit="%" foot="same threshold" />
+          <Metric label="Severe burn, fragile two-fifths" value={fragileSevere * 100} format={(v) => v.toFixed(0)} unit="%" foot={severeFoot} />
+          <Metric label="Severe burn, robust two-fifths" value={robustSevere * 100} format={(v) => v.toFixed(0)} unit="%" foot="same threshold" />
         </div>
         <Scatter points={rows.map((r) => ({ id: r.ticker, x: r.health_stress, y: r.realized_min_cum_fcf_pct_rev as number, label: r.ticker,
           detail: `${prettyName(r.name)} · debt raised ${fixed(r.realized_debt_raise_pct_rev, 0)}% of revenue` }))}
@@ -69,7 +70,7 @@ export function BacktestView({ onOpen, generated }: { onOpen: (t: string) => voi
           pandemic actually hit. Walmart is the visible miss: fragile to a demand collapse it never suffered.</p>
         <p className="muted" style={{ marginTop: 6, maxWidth: 760 }}>This is the dashboard's own sample of today's S&amp;P 500
           companies, so it inherits survivorship bias; Findings 1 and 2 above come from the survivorship-free research sample.{" "}
-          <a href="https://github.com/SpiliosDimakopoulos/fintwin/blob/main/docs/paper/fintwin.pdf">Read the paper</a>.</p>
+          <ExtLink href={PAPER_URL}>Read the paper</ExtLink>.</p>
       </Section>
 
       <SpecStamp generated={generated} />

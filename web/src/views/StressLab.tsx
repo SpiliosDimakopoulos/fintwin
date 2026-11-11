@@ -55,9 +55,9 @@ function customDescription(k: Required<Knobs>, levers: Levers, meta: Meta): stri
   return lines.length ? `${lines.join("; ").replace(/^./, (ch) => ch.toUpperCase())}.` : "Your own combination of shocks.";
 }
 
-export function StressLab({ c, meta, preset: initialPreset, query = "", setPreset: syncUrl, names = {}, onCompany }: {
-  c: Company; meta: Meta; preset: string; query?: string; setPreset: (p: string, q: string) => void;
-  names?: Record<string, string>; onCompany?: (ticker: string, query: string) => void;
+export function StressLab({ c, meta, preset: initialPreset, query, setPreset: syncUrl, names, onCompany }: {
+  c: Company; meta: Meta; preset: string; query: string; setPreset: (p: string, q: string) => void;
+  names: Record<string, string>; onCompany: (ticker: string, query: string) => void;
 }) {
   // Local state drives the UI; the URL mirrors it so any scenario can be shared as a link.
   const startPreset = meta.presets[initialPreset] || initialPreset === "custom" ? initialPreset : "pandemic";
@@ -85,7 +85,7 @@ export function StressLab({ c, meta, preset: initialPreset, query = "", setPrese
   const applyAsk = (sc: Scenario) => {
     const lv = { ...meta.levers, ...sc.levers };
     // never navigate away silently: a company name found in the text may be a false positive
-    if (sc.ticker && sc.ticker !== c.ticker && onCompany && window.confirm(`Open ${names[sc.ticker] ?? sc.ticker} (${sc.ticker}) with this scenario? Cancel keeps ${c.ticker} and applies the scenario here.`)) {
+    if (sc.ticker && sc.ticker !== c.ticker && window.confirm(`Open ${names[sc.ticker] ?? sc.ticker} (${sc.ticker}) with this scenario? Cancel keeps ${c.ticker} and applies the scenario here.`)) {
       onCompany(sc.ticker, encode(sc.knobs as Knobs, lv, meta, "custom")); return;
     }
     setPreset("custom");
@@ -145,11 +145,17 @@ export function StressLab({ c, meta, preset: initialPreset, query = "", setPrese
           </span>
         </div>
         <button className="btn" style={{ width: "100%", marginTop: 10 }} onClick={copyLink}>{copied ? "Link copied" : "Copy link to this scenario"}</button>
+        {s && (
+          <div className="lab-mini only-narrow">
+            <span><b className="num">{s.healthScore.toFixed(0)}</b>/100 health · <b className="num">{pct(s.pBreach, s.pBreach > 0 && s.pBreach < 0.1 ? 1 : 0)}</b> run out of cash{stress.busy ? " · simulating" : ""}</span>
+            <a className="btn-link" href="#lab-results" onClick={(e) => { e.preventDefault(); document.getElementById("lab-results")?.scrollIntoView({ behavior: "smooth" }); }}>See charts ↑</a>
+          </div>
+        )}
       </aside>
 
       <div>
         <AskTwin names={names} onApply={applyAsk} />
-        <div style={{ marginBottom: 22 }}>
+        <div style={{ marginBottom: 22 }} id="lab-results">
           <div className="eyebrow">{c.ticker} · stress lab</div>
           <h1 className="display h-l" style={{ margin: "8px 0 6px" }}>{title}</h1>
           <p className="sub">{desc}</p>
@@ -157,6 +163,9 @@ export function StressLab({ c, meta, preset: initialPreset, query = "", setPrese
             onClick={(e) => { e.preventDefault(); document.getElementById("scenario-controls")?.scrollIntoView({ behavior: "smooth" }); }}>Adjust scenario ↓</a>
         </div>
 
+        <p className="sr-only" aria-live="polite">
+          {s && !stress.busy ? `${title}: health ${s.healthScore.toFixed(0)} of 100, ${pct(s.pBreach, 1)} chance of running out of cash within three years.` : ""}
+        </p>
         {!s || !b ? <Skeleton h={560} /> : (
           <>
             <div className="metrics" style={{ ["--n" as string]: 4 }}>
