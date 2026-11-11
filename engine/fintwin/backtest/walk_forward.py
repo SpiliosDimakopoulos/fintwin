@@ -33,7 +33,7 @@ BANDS = [5, 25, 50, 75, 95]
 
 def _realized(full: pd.DataFrame, after: pd.Timestamp, horizon: int) -> pd.DataFrame:
     r = full[full.index > after + pd.Timedelta(days=20)].head(horizon).copy()
-    if not data_legacy():  # SW-4 / D1: keep the longest gap-free run of quarters, never a window across a hole
+    if not data_legacy():  # keep the longest gap-free run of quarters, never a window across a hole
         r = r.iloc[: usable_prefix(r, after)]  # the run `following` accepts, found in one pass
     r["cash_like"] = r["cash"] + r["short_investments"]
     r["ebitda"] = r["operating_income"] + r["da"]
@@ -92,6 +92,8 @@ def forecast_backtest(ticker: str, cutoff_key: str, horizon: int = 8, n_paths: i
             if not np.isfinite(y[h]):
                 continue
             mu_b, sd_b = _baseline(hist.quarters, var, h + 1)
+            if not (np.isfinite(mu_b) and np.isfinite(sd_b)):
+                continue  # a NaN baseline would drop out of the crps_baseline mean but not out of the crps mean
             rows.append(
                 {
                     "h": h + 1,
@@ -165,7 +167,7 @@ def structural_backtest(p: dict, real: pd.DataFrame, eps: np.ndarray) -> dict:
     out = simulate(p, scn, eps, DEFAULT_LEVERS)
     actual = real["fcf"].values[:H]
     ok = np.isfinite(actual)
-    if not data_legacy() and not ok.all():  # D4: cumulate only up to the first missing quarter, never through it
+    if not data_legacy() and not ok.all():  # cumulate only up to the first missing quarter, never through it
         H = int(np.argmin(ok))
         actual, ok = actual[:H], ok[:H]
     if ok.sum() == 0:
@@ -217,7 +219,10 @@ UNIVERSE = [
 
 
 def cross_section(tickers: list[str] = UNIVERSE, n_paths: int = 2000) -> dict:
-    """Pre-COVID twin vulnerability vs realized 2020-21 liquidity stress, across a universe."""
+    """Pre-COVID twin vulnerability vs realized 2020-21 liquidity stress, across a universe.
+
+    The universe is hand-picked (with hindsight about which sectors 2020 hit), so the rank correlation is an
+    illustration, not the census result."""
     cutoff = CUTOFFS["pre_covid"]["date"]
     macro = macro_quarterly(cutoff)
     rows, failed = [], {}
@@ -233,7 +238,7 @@ def cross_section(tickers: list[str] = UNIVERSE, n_paths: int = 2000) -> dict:
             win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
             fcf = win["cfo"] - win["capex"]
             if not data_legacy() and not np.isfinite(fcf.to_numpy(float)).all():
-                failed[t] = "missing cash-flow quarter in 2020-21"  # D4 / D1: unknown, not zero burn
+                failed[t] = "missing cash-flow quarter in 2020-21"  # unknown, not zero burn
                 continue
             p = calibrate(hist, macro, 8)
             eps = draw_shocks(p, n_paths, 8, seed=7)
@@ -257,11 +262,16 @@ def cross_section(tickers: list[str] = UNIVERSE, n_paths: int = 2000) -> dict:
             )
         except Exception as e:  # keep the study going; report what failed and why
             failed[t] = f"{type(e).__name__}: {e}"
+    if not rows:
+        raise RuntimeError(f"cross_section: no ticker produced a row; failures: {failed}")
     df = pd.DataFrame(rows)
     stats = {}
     for x in ["health_stress", "p_breach_stress"]:
         for y in ["realized_min_cum_fcf_pct_rev", "realized_debt_raise_pct_rev"]:
             d = df[[x, y]].dropna()
+            if len(d) < 3:  # Spearman is undefined below three pairs
+                stats[f"{x}__{y}"] = {"spearman": None, "p_value": None, "n": len(d)}
+                continue
             rho, pval = spearmanr(d[x], d[y])
             stats[f"{x}__{y}"] = {"spearman": float(rho), "p_value": float(pval), "n": len(d)}
     return {"cutoff": cutoff, "rows": rows, "stats": stats, "failed": failed}

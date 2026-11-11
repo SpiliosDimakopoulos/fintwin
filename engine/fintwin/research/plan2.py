@@ -14,11 +14,17 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from ..stochastic.calibrate import SPECIFIED_FIXED_SHARE_PRIOR
 from . import stats as S
 from . import transmission as T
 
+B_CASH = 300  # firm bootstrap draws for the cash-hybrid skill interval
+# a large departure from the 16-quarter margin: more than 8 pp, at a firm with revenue above 2 bn
+LARGE_DEPARTURE_PP = 8
+LARGE_REVENUE = 2e9
+
 PRIORS = {
-    "baseline": 0.35,
+    "baseline": SPECIFIED_FIXED_SHARE_PRIOR,
     "fixed_prior_low": 0.20,
     "fixed_prior_high": 0.50,
     "prior_share_05": 0.05,
@@ -66,7 +72,7 @@ def frame(panel: pd.DataFrame) -> pd.DataFrame:
         ):
             v = st.get(key)
             rec[k] = float(np.sum(np.asarray(v, float))) if v is not None else np.nan
-        # E1: the twin's totals are the specification's point forecast (transmission.point); v2 sums kept as *_sm
+        # the twin's totals are the specification's point forecast (transmission.point); v2 sums kept as *_sm
         for v in ("cfo", "fcf", "ebitda", "capex"):
             rec[f"twin_{v}_sm"] = rec[f"twin_{v}"]
             if st.get(f"twin_{v}") is not None:
@@ -217,7 +223,7 @@ def cash_hybrid(fc: pd.DataFrame) -> dict:
     crps_tw = g["crps_twin"].to_numpy(float)[m]
     firms = g["ticker"].to_numpy()[m]
     s_ = sc[m]
-    d = S.boot(lambda a, b_: 1 - np.mean(a) / np.mean(b_), [crps_h / s_, crps_rw / s_], firms, b=300)
+    d = S.boot(lambda a, b_: 1 - np.mean(a) / np.mean(b_), [crps_h / s_, crps_rw / s_], firms, b=B_CASH)
     out = {
         "n": int(m.sum()),
         "lambda": lams,
@@ -253,7 +259,7 @@ def _crps_sorted(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def density_combos(g: pd.DataFrame, oy: np.ndarray, m: int = 50, b: int = 300) -> dict:
-    """E11: density combinations of the random walk (Gaussian) and the twin, with lambda chosen on mean scaled CRPS
+    """Density combinations of the random walk (Gaussian) and the twin, with lambda chosen on mean scaled CRPS
     of forecasts already reported (the same rule as the location hybrid, which shifts the mean only).
 
     linear_pool: F = (1 - lambda) F_rw + lambda F_twin. quantile_avg: Q = (1 - lambda) Q_rw + lambda Q_twin
@@ -354,7 +360,7 @@ def calibration(fc: pd.DataFrame, panel: pd.DataFrame) -> dict:
                 pool = pg if len(pg) >= 100 else past
                 c90[idx] = float(np.quantile(pool["s90"], 0.9))
         d["cond_hit"] = d["s90"] <= c90
-        # (b) adaptive conformal: alpha_t updated after each reported error (gamma = 0.005), quantile of past scores
+        # (b) adaptive conformal: alpha_t moves with the miscoverage of newly reported errors; quantile of past scores
         # forecasts are issued in yearly batches, so alpha is updated once per batch of newly reported errors with
         # their average miscoverage (Gibbs and Candes 2021, eq. 2, with the batch error rate), gamma = 0.05
         alpha, gamma, hits, widths = 0.10, 0.05, np.full(len(d), np.nan), np.full(len(d), np.nan)
@@ -429,7 +435,7 @@ def timing(df: pd.DataFrame, firms: np.ndarray, b: int) -> dict:
             "static": (-1 if static == "st_cash_min" else 1) * df[static].to_numpy(float),
         }
         res: dict = {k: harrell_c(v, time, event) for k, v in risks.items()}
-        # SW-12: the paired difference on the firm-years where both risks exist, point estimate and bootstrap alike
+        # the paired difference on the firm-years where both risks exist, point estimate and bootstrap alike
         # (revision 2 compared C-indices of different samples and bootstrapped a random 6000-row subsample)
         both = np.isfinite(risks["twin"]) & np.isfinite(risks["no_loops"])
         cols = [risks["twin"][both], risks["no_loops"][both], time[both], event[both].astype(float)]
@@ -543,7 +549,7 @@ def _combo(
     """Walk-forward combination base + lambda * (adjuster - base), lambda chosen on earlier years.
 
     `lo`, `hi`: winsorization limits of the training loss; None takes each year's limits from its training years
-    only (E6, transmission.train_bounds)."""
+    only (transmission.train_bounds)."""
     pr = np.full(len(b_), np.nan)
     bnd = T.train_bounds(real, yrs, "train") if lo is None else None
     for y in sorted(set(yrs)):
@@ -581,7 +587,7 @@ def fcf_mechanism(df: pd.DataFrame) -> dict:
         e_t = np.mean(np.abs(np.clip(pt[m], lo, hi) - np.clip(real[m], lo, hi)))
         e_n = np.mean(np.abs(np.clip(pn[m], lo, hi) - np.clip(real[m], lo, hi)))
         out[var] = {"mae_twin_combo": float(e_t), "mae_null_combo": float(e_n), "gain": float(e_n - e_t)}
-        # E6: limits from training years only, for the weight and for the evaluation of each test year
+        # limits from training years only, for the weight and for the evaluation of each test year
         bnd = T.train_bounds(real, yrs, "train")
         LO = np.array([bnd.get(int(y), (np.nan, np.nan))[0] for y in yrs])
         HI = np.array([bnd.get(int(y), (np.nan, np.nan))[1] for y in yrs])
@@ -690,7 +696,7 @@ def examples(panel: pd.DataFrame) -> dict:
     df = frame(panel)
     df["cik"] = panel.set_index("ticker")["cik"].groupby(level=0).first().reindex(df["ticker"]).to_numpy()
     dep, miss = df["twin_cfo"] - df["N3_cfo"], df["real_cfo"] - df["N3_cfo"]
-    big = (dep.abs() > 8) & (np.exp(df["log_rev"]) > 2e9)
+    big = (dep.abs() > LARGE_DEPARTURE_PP) & (np.exp(df["log_rev"]) > LARGE_REVENUE)
     out: dict = {
         "large_departures": int(big.sum()),
         "share_right_sign": float((np.sign(dep[big]) == np.sign(miss[big])).mean()) if big.any() else None,
@@ -763,12 +769,7 @@ def attrition(panel: pd.DataFrame) -> dict:
     return out
 
 
-def _safe(fn, *args) -> dict:
-    """Run one analysis; a failure (e.g. outcomes missing in an older run) is recorded instead of stopping the rest."""
-    try:
-        return fn(*args)
-    except Exception as e:  # noqa: BLE001
-        return {"error": f"{type(e).__name__}: {e}"}
+_safe = S._safe  # a failure (e.g. outcomes missing in an older run) is recorded instead of stopping the rest
 
 
 def section(panel_all: pd.DataFrame, panel: pd.DataFrame, fc: pd.DataFrame, b: int) -> dict:

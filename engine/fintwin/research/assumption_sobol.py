@@ -33,14 +33,13 @@ FACTORS_V2 = [
     ("cut_speed", 0.0, 0.10, "p", "Restructuring speed"),
     ("cut_floor", 0.70, 1.00, "p", "Restructuring floor"),
 ]
-# under MM-F1 the weight is no longer a free constant: the data weight follows from n var(rev) / sigma^2, and the prior
-# enters through its s.d. tau (B1's `prior_tau`, a multiple of the cost ratio)
+# with F1 on the weight is no longer a free constant: the data weight follows from n var(rev) / sigma^2, and the prior
+# enters through its s.d. tau (`prior_tau`, a multiple of the cost ratio)
 TAU_FACTOR = ("prior_tau", 0.02, 0.60, "calib", "Prior s.d. (tau)")
 N_BASE = 256  # a power of two, as the Sobol sequence requires for its balance properties
 N_SAMPLE = 320
 SEED = 41
 CACHE_ROOT = Path(__file__).resolve().parents[2] / ".cache" / "sobol"
-CACHE = CACHE_ROOT  # legacy name
 OUT = Path(__file__).resolve().parents[3] / "docs" / "paper" / "sobol_assumptions.json"
 # the specification of the paper's main results, evaluated on the same firm-years as a reference point
 SPECIFIED_V2 = [0.35, 2.0, 0.08, 0.5, 0.5, 1.5, 0.04, 0.85]
@@ -51,9 +50,6 @@ def factors() -> list[tuple]:
     from .experiments import fix_active
 
     return [TAU_FACTOR if f[0] == "prior_weight" else f for f in FACTORS_V2] if fix_active("F1") else list(FACTORS_V2)
-
-
-FACTORS = FACTORS_V2  # module-level view for callers that import it; `factors()` follows the specification
 
 
 def specified() -> list[float]:
@@ -121,7 +117,7 @@ def eligible() -> tuple[list[tuple[str, int]], dict, dict]:
             break
         try:
             r = _one(key, year, None)
-        except Exception as e:  # a firm that cannot be loaded is skipped, and counted by type (SW-3)
+        except Exception as e:  # a firm that cannot be loaded is skipped, and counted by type
             failed[type(e).__name__] = failed.get(type(e).__name__, 0) + 1
             print(f"  {key} {year}: {type(e).__name__}: {e}", flush=True)
             continue
@@ -152,7 +148,7 @@ def _one(key: str, year: int, X: np.ndarray | None) -> dict | str:
         return "not_usable"
     full = load_company(key).quarters
     pre = hist.quarters
-    nxt, why = following(full, pre.index[-1], 8)  # empty if unreported ("short") or holding a gap row (D1)
+    nxt, why = following(full, pre.index[-1], 8)  # empty if unreported ("short") or holding a gap row
     if why:
         return f"outcome_{why}"
     if nxt["revenue"].isna().any() or nxt["cfo"].isna().any():
@@ -217,7 +213,7 @@ def shard(i: int, n: int) -> None:
             continue
         try:
             r = _one(key, year, X)
-        except Exception as e:  # a firm that cannot be loaded is skipped, and counted by type (SW-3)
+        except Exception as e:  # a firm that cannot be loaded is skipped, and counted by type
             failed[type(e).__name__] = failed.get(type(e).__name__, 0) + 1
             print(f"  {key} {year}: {type(e).__name__}: {e}", flush=True)
             continue
