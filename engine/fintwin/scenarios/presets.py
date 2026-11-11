@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -9,7 +10,7 @@ import numpy as np
 KNOBS = {
     # name: (default, description)
     "sales_depth": (0.0, "Peak revenue drop vs. baseline (0.2 = -20%)"),
-    "sales_duration": (2, "Quarters at the trough"),
+    "sales_duration": (2, "Quarters before recovery starts; with 2 or more the first takes half the drop"),
     "sales_recovery": (6, "Quarters to recover to baseline"),
     "rate_bp": (0, "Parallel shift in the short rate, basis points (persistent)"),
     "spread_bp": (0, "Credit-spread widening, basis points"),
@@ -25,7 +26,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     "rates_200": {"label": "Rates +200bp", "desc": "Persistent 2pp rise in short rates.", "knobs": {"rate_bp": 200}},
     "sales_20": {
         "label": "Sales -20%",
-        "desc": "Revenue falls 20%, holds 2 quarters, recovers over 6.",
+        "desc": "Revenue falls 10%, then 20%, then recovers over 6 quarters.",
         "knobs": {"sales_depth": 0.2},
     },
     "recession": {
@@ -188,6 +189,7 @@ def sector_shock_table(drops, sectors, min_n: int = 6) -> dict[str, float]:
     return out
 
 
+@lru_cache(maxsize=1)
 def load_sector_shocks() -> dict[str, float]:
     import json
     from pathlib import Path
@@ -241,9 +243,10 @@ def build_scenario(knobs: dict, horizon: int) -> dict:
             sales[i] = -depth
         elif i < hold + rec:
             sales[i] = -depth * (1 - (i - hold + 1) / (rec + 1))
-    # The demand shock hits revenue gradually: the first quarter takes half the blow.
-    if T and hold > 0:
-        sales[0] = -depth * 0.5 if hold > 1 else sales[0]
+    # The demand shock hits revenue gradually: the first quarter takes half the blow (unless the shock lasts one
+    # quarter), so `sales_duration` quarters hold `sales_duration` - 1 at full depth.
+    if T and hold > 1:
+        sales[0] = -depth * 0.5
 
     ramp = np.minimum((t + 1) / 2.0, 1.0)
     return {
