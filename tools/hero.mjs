@@ -1,6 +1,6 @@
-import puppeteer from "puppeteer-core";
+import { launch } from "./lib.mjs";
 const [url = "http://localhost:4173/#overview", out = "hero.png", theme = "light", w = "1400", h = "900"] = process.argv.slice(2);
-const b = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+const b = await launch();
 const p = await b.newPage();
 const errs = []; p.on("pageerror", (e) => errs.push(e.message)); p.on("console", (m) => m.type() === "error" && errs.push(m.text()));
 await p.emulateMediaFeatures([{ name: "prefers-color-scheme", value: theme }]);

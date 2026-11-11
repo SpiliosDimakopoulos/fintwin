@@ -1,5 +1,5 @@
-import puppeteer from "puppeteer-core";
-const b = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+import { launch } from "./lib.mjs";
+const b = await launch();
 const p = await b.newPage();
 await p.setViewport({ width: 390, height: 800 });
 for (const r of ["method/CCL", "twin/CCL", "stress/CCL"]) {

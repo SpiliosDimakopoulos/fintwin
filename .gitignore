@@ -11,6 +11,10 @@ web/dist/
 tools/node_modules/
 tools/frames/
 tools/*.png
+tools/shots/
+*.tsbuildinfo
+engine/out/
+engine/*.log
 docs/paper/*.aux
 docs/paper/*.log
 docs/paper/*.out
