@@ -2,6 +2,7 @@
  * Seeded shock generator for the browser engine. Same distributional recipe as
  * engine/fintwin/stochastic/shocks.py (correlated demand/margin shocks, shared Student-t mixing,
  * unit variance), but its own PRNG, so draws are reproducible per seed without matching numpy bit-for-bit.
+ * The uniforms have 32-bit resolution, so Box-Muller normals stop near 6.66 sigma; the bands use the 5-95% range.
  */
 import type { Params } from "./types";
 
@@ -51,6 +52,9 @@ export function drawShocks(p: Params, N: number, T: number, seed = 7): Float64Ar
   const eps = new Float64Array(N * T * 5);
   // F7: p.t_scale makes the MAD s.d. 1; F8: p.t_mix_indep gives demand and margin their own mixing variable
   const rho = p.rho_gm, df = p.t_df, tScale = p.t_scale ?? Math.sqrt((df - 2) / df), indep = !!p.t_mix_indep;
+  // calibration clips t_df to [3, 30]; at df <= 2 the t variance is infinite and the scale is 0 or NaN
+  if (!(df > 2)) throw new Error(`${p.ticker}: t_df must exceed 2, got ${df}`);
+  if (!(Math.abs(rho) <= 1)) throw new Error(`${p.ticker}: rho_gm must lie in [-1, 1], got ${rho}`);
   for (let i = 0; i < N * T; i++) {
     const z0 = rng.normal(), z1 = rng.normal(), z2 = rng.normal(), z3 = rng.normal();
     let g = z0, m = rho * z0 + Math.sqrt(1 - rho * rho) * z1;
