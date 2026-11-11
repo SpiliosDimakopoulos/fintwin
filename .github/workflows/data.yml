@@ -27,6 +27,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: { ref: main }
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
       - id: week
         run: echo "week=$(date +%G-%V)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -53,6 +54,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: { ref: main }
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with: { path: engine/.cache/edgar, key: "edgar-${{ needs.norms.outputs.week }}", restore-keys: "edgar-" }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -83,6 +85,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: { ref: main }
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with: { path: engine/.cache/edgar, key: "edgar-${{ needs.norms.outputs.week }}", restore-keys: "edgar-" }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -99,6 +102,8 @@ jobs:
           n=$(find web/public/data/companies -name '*.json' | wc -l)
           echo "$n company files"
           test "$n" -ge "$MIN_COMPANIES"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
       - name: Parity check against the fresh goldens
         working-directory: web
         run: npm ci && npm test
@@ -116,8 +121,16 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add web/public/data/build_report.json web/public/data/calibration.json web/public/data/index.json
           for f in changes.json feed.xml; do [ -f "web/public/data/$f" ] && git add "web/public/data/$f"; done
-          git diff --cached --quiet || git commit -m "data: weekly refresh $(date -u +%Y-%m-%d) (run ${{ github.run_id }})"
-          git push origin HEAD:main
+          git diff --cached --quiet && exit 0
+          git commit -m "data: weekly refresh $(date -u +%Y-%m-%d) (run ${{ github.run_id }})"
+          # The site data was already uploaded as artifacts, so the rest of the working tree is not needed:
+          # drop it so the rebase can run. main may have moved during the run; retry if someone pushes meanwhile.
+          git restore .
+          for attempt in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1
 
   deploy:
     needs: aggregate

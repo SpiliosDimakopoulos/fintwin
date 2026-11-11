@@ -21,19 +21,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
       - run: uv sync --locked
       - if: ${{ inputs.snapshot_release != '' }}
         uses: ./.github/actions/snapshot
         with: { release: "${{ inputs.snapshot_release }}" }
       - name: Download the shard outputs
-        env: { GH_TOKEN: "${{ github.token }}" }
+        env: { GH_TOKEN: "${{ github.token }}", RUN_ID: "${{ inputs.run_id }}" }
         # the merged outputs if that run's stats job finished, otherwise the 16 shard artifacts
         run: |
+          [[ $RUN_ID =~ ^[0-9]+$ ]] || { echo "run_id must be a number"; exit 2; }
           mkdir -p .cache/research
-          if gh run download "${{ inputs.run_id }}" -R "$GITHUB_REPOSITORY" -n research-results -D /tmp/rr; then
+          if gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" -n research-results -D /tmp/rr; then
             cp -r /tmp/rr/engine/.cache/research/. .cache/research/
           else
-            gh run download "${{ inputs.run_id }}" -R "$GITHUB_REPOSITORY" -p "research-[0-9]*" -D /tmp/shards
+            gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" -p "research-[0-9]*" -D /tmp/shards
             find /tmp/shards -name "*.json" -exec cp {} .cache/research/ \;
           fi
           ls .cache/research | wc -l
