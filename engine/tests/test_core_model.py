@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from conftest import make_params
-from test_B1_parity import macro, synthetic_company  # noqa: F401  (fixture)
+from test_B1_parity import synthetic_company
 
 from fintwin import changes
 from fintwin.model.constants import HEALTH_WEIGHTS
