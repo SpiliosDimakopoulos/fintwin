@@ -10,12 +10,14 @@ SHARDS ?= 16
 JOBS   ?= 8
 SNAPSHOT ?=
 
-# Same numbers whatever the thread count or scheduling: one BLAS thread per process (R9), frozen inputs only.
+# Same numbers whatever the thread count or scheduling: one BLAS thread per process (R9).
 export OPENBLAS_NUM_THREADS := 1
 export OMP_NUM_THREADS := 1
 export MKL_NUM_THREADS := 1
 export PYTHONWARNINGS := ignore
-export FINTWIN_FROZEN := 1
+
+# Frozen inputs only for the recipes that read the snapshot; `make test` runs as CI does, without it.
+snapshot-restore snapshot-verify research: export FINTWIN_FROZEN := 1
 
 .PHONY: sync test snapshot-restore snapshot-verify research paper paper-assets paper-pdf
 
