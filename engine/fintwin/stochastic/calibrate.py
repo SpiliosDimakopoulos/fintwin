@@ -18,9 +18,9 @@ from scipy import stats
 
 from ..data.facts import CompanyData, contiguous
 from ..data.fred import recession_regime
+from ..model.constants import CASH_YIELD_SHARE, DAYS_Q, EPS, INFL_Q
 from . import spec as S
 
-DAYS_Q = 91.25
 LONG_RUN_GROWTH_Q = 0.012  # ~5% nominal p.a., the anchor that trend growth is shrunk toward
 
 
@@ -215,12 +215,12 @@ def _fixed_variable_split(
     """
     ratio = float(np.median(costs / rev))
     v_prior = ratio * (1 - prior_share)
-    scale = float(np.var(costs)) * len(costs) + 1e-9
+    scale = float(np.var(costs)) * len(costs) + EPS
     best = (np.inf, 0.0, v_prior)
     for v in np.arange(0.1, 1.051, 0.005) if grid is None else grid:
         F = max(float(np.mean(costs - v * rev)), 0.0)
         sse = float(np.sum((costs - F - v * rev) ** 2)) / scale
-        obj = sse + prior_weight * ((v - v_prior) / max(ratio, 1e-9)) ** 2
+        obj = sse + prior_weight * ((v - v_prior) / max(ratio, EPS)) ** 2
         if obj < best[0]:
             best = (obj, F, float(v))
     return best[1], best[2]
@@ -273,7 +273,7 @@ def _posterior_split(
     resid = c - cbar - v_ols * (r - rbar)
     s2 = max(float(np.sum(resid**2)) / max(n - 2, 1), (1e-3 * abs(cbar)) ** 2, 1e-12)
     prec = 1.0 / (s2 * overlap)
-    tau_v = tau * max(abs(ratio), 1e-9)
+    tau_v = tau * max(abs(ratio), EPS)
     pp = 1.0 / tau_v**2 if np.isfinite(tau_v) and tau_v > 0 else 0.0
     lo, hi = bounds
 
@@ -378,7 +378,7 @@ def _anchor_ocf(
     interest = h["interest_expense"].fillna(h["total_debt"] * k["coupon"] / 4.0).fillna(0.0)
     cash = (q["cash"].ffill() + q["short_investments"].fillna(0)).loc[h.index]
     r = short_rate.dropna().sort_index().asof(h.index).to_numpy(float)
-    ebt = ebitda - da - interest + np.maximum(cash, 0.0) * np.nan_to_num(r) * 0.9 / 4.0
+    ebt = ebitda - da - interest + np.maximum(cash, 0.0) * np.nan_to_num(r) * CASH_YIELD_SHARE / 4.0
     ni = ebt - k["tax_rate"] * np.maximum(ebt, 0.0)
     comp = {c: q[c].ffill().fillna(0.0) for c in ("receivables", "inventory", "payables", "deferred_revenue")}
     nwc = comp["receivables"] + comp["inventory"] - comp["payables"] - comp["deferred_revenue"]
@@ -419,7 +419,7 @@ def _param_draws(
     w_g = a["growth_shrink"]
     offset = 0.0
     if S.active("F14"):
-        offset = -reg["hazard"] / max(reg["hazard"] + reg["exit"], 1e-9) * p["rec_drift"]
+        offset = -reg["hazard"] / max(reg["hazard"] + reg["exit"], EPS) * p["rec_drift"]
     cw = pd.DataFrame({"rev": rev, "costs": costs}).dropna().tail(19)
     F_nom = p["F"] / (1.0 + anchor_k["infl"]) ** _quarters_before_last(cw.index) if anchor_k["f10"] else p["F"]
     fitted = F_nom + p["v"] * cw["rev"]
@@ -543,7 +543,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     f7 = S.active("F7")
     if len(resid_g) >= 12:
         try:
-            z = resid_g / max(sigma_g, 1e-9)
+            z = resid_g / max(sigma_g, EPS)
             # MM-F7: with the scale fixed at 1 on MAD-standardized data the t fit is misspecified; fit df and scale
             df = _clip(stats.t.fit(z, floc=0)[0] if f7 else stats.t.fit(z, floc=0, fscale=1)[0], 3.0, 30.0, 30.0)
         except Exception:
@@ -583,7 +583,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     if S.active("F14"):
         # MM-F14: mu is a median of mostly-expansion growth; offset the regime drift so the regime-weighted mean
         # growth equals the estimated trend instead of falling below it
-        pi_rec = reg["hazard"] / max(reg["hazard"] + reg["exit"], 1e-9)
+        pi_rec = reg["hazard"] / max(reg["hazard"] + reg["exit"], EPS)
         mu = _clip(w_g * mu_hist + (1 - w_g) * LONG_RUN_GROWTH_Q - pi_rec * rec_drift, -0.04, 0.06, LONG_RUN_GROWTH_Q)
         src["mu"] += f", plus the expected recession drift ({pi_rec:.0%} of quarters in recession)"
 
@@ -623,11 +623,11 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     # ---- cost structure: operating leverage ----
     ebitda = q["operating_income"] + da_used.fillna(0)
     costs = rev - ebitda
-    fit = _fit_costs(rev, costs, a, 0.006)
+    fit = _fit_costs(rev, costs, a, INFL_Q)
     F, v, win = fit["F"], fit["v"], fit["win"]
     src["F,v"] = f"constrained regression of cash operating costs on revenue, {len(win)} quarters"
     if S.active("F1"):
-        fs = 1 - v * float(win["rev"].mean()) / max(float(win["costs"].mean()), 1e-9) if len(win) else np.nan
+        fs = 1 - v * float(win["rev"].mean()) / max(float(win["costs"].mean()), EPS) if len(win) else np.nan
         src["F,v"] = (
             f"Bayesian regression of {fit['basis']} cash operating costs on revenue ({fit['n']} obs): prior fixed share "
             f"{a['fixed_share_prior']:.0%} (s.d. {fit['tau']:.2f}), data weight {fit['data_weight']:.0%}, "
@@ -668,7 +668,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
             )
             if k4 < 4:
                 src["trailing"] += f"; TTM revenue (x 4/{k4}), 4-quarter ratios and covenant history from {k4} quarters"
-    cost_t4 = (F + v * t4["revenue"]).clip(lower=1e-9)
+    cost_t4 = (F + v * t4["revenue"]).clip(lower=EPS)
     dso = _clip((t4["receivables"] / t4["revenue"]).mean() * DAYS_Q, 0, 200, 30)
     dio = _clip((t4["inventory"] / cost_t4).mean() * DAYS_Q, 0, 600, 0)
     dpo = _clip((t4["payables"] / cost_t4).mean() * DAYS_Q, 0, 365, 45)
@@ -795,7 +795,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
         src["maturities"] = "assumption: uniform amortization, 6-year average life (ladder missing/stale)"
     ladder_q = np.minimum(ladder_q, debt0)
 
-    floating = 0.1
+    floating = FLOATING_DEFAULT
     if S.active("M2"):
         tagged = q["floating_debt"].dropna() if "floating_debt" in q else pd.Series(dtype=float)
         st_share = float(np.nan_to_num(last["short_borrowings"]) + np.nan_to_num(last["commercial_paper"]))
@@ -819,7 +819,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     term_premium = _clip(float((m["long_rate"] - m["short_rate"]).tail(40).median()), 0.0, 0.03, 0.012)
 
     anchor_k = {
-        "infl": 0.006,
+        "infl": INFL_Q,
         "f10": S.active("F10"),
         "dep_rate": dep_rate,
         "coupon": coupon,
@@ -886,7 +886,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
         "v": v,
         "rho_m": rho_m,
         "sigma_m": sigma_m,
-        "infl": 0.006,
+        "infl": INFL_Q,
         "target_margin": target_margin,
         "cut_delay": 2,
         "cut_speed": 0.04,

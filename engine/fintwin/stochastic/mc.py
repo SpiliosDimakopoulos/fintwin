@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..model.ratings import RATINGS
+from ..model.ratings import INVESTMENT_GRADE_MIN_RANK, RATINGS
 from ..model.sd_model import simulate
 from ..scenarios.presets import DEFAULT_LEVERS, build_scenario
 from .shocks import draw_shocks
@@ -51,13 +51,14 @@ def summarize(out: dict) -> dict:
     rating_dist = np.bincount(final_rating, minlength=len(RATINGS)) / len(final_rating)
     health_path_mean = out["health"].mean(1)
     min_liq = out["liquidity"].min(1)
+    # quarter index of the first breach: 0 is the first simulated quarter (as runway and first_covenant_breach)
     first_breach = np.where(out["breach"].any(1), out["breach"].argmax(1), -1)
     return {
         "bands": bands,
         "p_breach_by_q": breach_by_q.round(4).tolist(),
         "p_breach": float(breach_by_q[-1]),
         "p_icr_below_1_5": float((out["icr"].min(1) < 1.5).mean()),
-        "p_downgrade_below_ig": float((out["rating"][:, -1] < 9).mean()),
+        "p_downgrade_below_ig": float((out["rating"][:, -1] < INVESTMENT_GRADE_MIN_RANK).mean()),
         "rating_dist": rating_dist.round(4).tolist(),
         "health_score": float(np.median(health_path_mean)),
         "health_p10": float(np.percentile(health_path_mean, 10)),

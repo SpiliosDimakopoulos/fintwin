@@ -12,11 +12,11 @@ from datetime import UTC, date, datetime
 from email.utils import format_datetime
 from xml.sax.saxutils import escape
 
+from .model.constants import HEALTH_WEIGHTS as WEIGHTS
+
 THRESHOLD = 5.0  # health points on the 0-100 scale
 HISTORY_WEEKS = 26
 SITE = "https://spiliosdimakopoulos.github.io/fintwin/"
-# weights of the health score's components (model.sd_model): runway, coverage rating, leverage, Altman Z''
-WEIGHTS = {"liq": 0.3, "cov": 0.3, "lev": 0.2, "solv": 0.2}
 LABELS = {"liq": "liquidity runway", "cov": "interest coverage", "lev": "leverage", "solv": "solvency (Altman Z'')"}
 
 
