@@ -33,7 +33,12 @@ export function CommandPalette({ index, open, onClose, onPick, liveEnabled }: {
   const flat = results.flatMap((g) => g.items);
   const canLive = liveEnabled && /^[A-Za-z.\-]{1,6}$/.test(q.trim()) && !index.companies[q.trim().toUpperCase()];
 
-  useEffect(() => { if (open) { setQ(""); setSel(0); setTimeout(() => inputRef.current?.focus(), 0); } }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const opener = document.activeElement as HTMLElement | null;
+    setQ(""); setSel(0); setTimeout(() => inputRef.current?.focus(), 0);
+    return () => opener?.focus();
+  }, [open]);
   useEffect(() => setSel(0), [q]);
   useEffect(() => {
     listRef.current?.querySelector<HTMLElement>(`[data-i="${sel}"]`)?.scrollIntoView({ block: "nearest" });
@@ -54,22 +59,23 @@ export function CommandPalette({ index, open, onClose, onPick, liveEnabled }: {
   let k = -1;
   return (
     <div className="palette-backdrop" onMouseDown={onClose}>
-      <div className="palette fade-in" role="dialog" aria-label="Find a company" onMouseDown={(e) => e.stopPropagation()} onKeyDown={onKey}>
+      <div className="palette fade-in" role="dialog" aria-modal="true" aria-label="Find a company" onMouseDown={(e) => e.stopPropagation()} onKeyDown={onKey}>
         <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${all.length} companies by ticker, name or sector…`}
-          aria-label="Search companies" role="combobox" aria-expanded aria-controls="palette-list" />
+          aria-label="Search companies" role="combobox" aria-expanded aria-controls="palette-list" aria-autocomplete="list"
+          aria-activedescendant={flat[sel] ? `palette-opt-${sel}` : undefined} />
         <div className="palette-list" id="palette-list" role="listbox" ref={listRef}>
           {results.map((g) => (
             <div key={g.group}>
-              {g.items.length > 0 && <div className="palette-group">{g.group}</div>}
+              {g.items.length > 0 && <div className="palette-group" role="presentation">{g.group}</div>}
               {g.items.map((i) => {
                 k++;
                 const idx = k;
                 return (
-                  <div key={i.ticker} data-i={idx} className="palette-item" role="option" aria-selected={idx === sel}
+                  <div key={i.ticker} id={`palette-opt-${idx}`} data-i={idx} className="palette-item" role="option" aria-selected={idx === sel}
                     onMouseEnter={() => setSel(idx)} onClick={() => choose(i.ticker)}>
                     <span className="tk-cell">{i.ticker}</span>
                     <span className="p-name">{i.name} <span className="p-sector">· {i.sector}</span></span>
-                    <span style={{ display: "grid", gridTemplateColumns: "1fr 26px", gap: 8, alignItems: "center" }}>
+                    <span className="meter-cell" style={{ gridTemplateColumns: "1fr 26px", gap: 8 }}>
                       <Meter value={i.health} /><span className="num muted" style={{ textAlign: "right" }}>{i.health.toFixed(0)}</span>
                     </span>
                   </div>

@@ -1,10 +1,8 @@
-import { useMemo, useState } from "react";
-import type { Index } from "../data";
-import { pct } from "../format";
+import { useEffect, useMemo, useState } from "react";
 import { StripPlot } from "../charts/StripPlot";
-import { useEffect } from "react";
-import { loadBuildReport, type BuildReport } from "../data";
-import { ModelNote, rowActions, Section } from "../ui";
+import { loadBuildReport, type BuildReport, type Index } from "../data";
+import { pct } from "../format";
+import { ModelNote, rowClick, Section } from "../ui";
 
 type Metric = "health" | "p_breach";
 type Mode = "level" | "change";
@@ -49,6 +47,14 @@ export function CompareView({ index, onOpen }: { index: Index; onOpen: (t: strin
 
   const ariaSort = (k: string): "ascending" | "descending" | "none" => (k === sortKey ? (desc ? "descending" : "ascending") : "none");
   const sortBy = (k: string) => { if (k === sortKey) setDesc(!desc); else { setSortKey(k); setDesc(false); } };
+  const arrow = (k: string) => (sortKey === k ? <span aria-hidden="true">{desc ? "↓" : "↑"}</span> : null);
+  const clearFilter = () => { setQ(""); setSector("all"); };
+  const noMatch = rows.length === 0 && (
+    <p className="callout" role="status" style={{ margin: "8px 0 16px" }}>
+      No company matches {q.trim() ? <>“{q.trim()}”</> : "this filter"}{sector !== "all" ? ` in ${sector}` : ""}.{" "}
+      <button className="btn-link" onClick={clearFilter}>Clear filter</button>
+    </p>
+  );
   const cell = (t: string, k: string) => {
     const v = value(t, k);
     const isChange = mode === "change" && k !== "base";
@@ -79,7 +85,7 @@ export function CompareView({ index, onOpen }: { index: Index; onOpen: (t: strin
           <button aria-pressed={view === "table"} onClick={() => setView("table")}>Table</button>
         </div>
         <input type="search" placeholder="Filter by ticker or name" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter companies" style={{ width: 220 }} />
-        <select value={sector} onChange={(e) => setSector(e.target.value)} aria-label="Sector">
+        <select value={sector} onChange={(e) => setSector(e.target.value)} aria-label="Sector filter">
           <option value="all">All sectors</option>
           {sectors.map((s) => <option key={s}>{s}</option>)}
         </select>
@@ -94,7 +100,8 @@ export function CompareView({ index, onOpen }: { index: Index; onOpen: (t: strin
         <span className="muted" style={{ marginLeft: "auto" }}>{rows.length} shown</span>
       </div>
 
-      {view === "dist" && (
+      {noMatch}
+      {view === "dist" && rows.length > 0 && (
         <div className="panel" style={{ padding: "20px 20px 12px" }}>
           <StripPlot rows={presets.map(([k, v]) => ({ key: k, label: v.label }))}
             items={rows.map(([t, e]) => ({ id: t, name: e.name, group: groupOf(e),
@@ -104,26 +111,26 @@ export function CompareView({ index, onOpen }: { index: Index; onOpen: (t: strin
             {sector !== "all" ? ` · ${sector} highlighted` : ""}. Filter by name to pin a company.</p>
         </div>
       )}
-      {view === "table" && <><div className="table-wrap" style={{ maxHeight: "72vh", overflowY: "auto", border: "1px solid var(--rule)", borderRadius: 10, background: "var(--paper)" }}>
+      {view === "table" && rows.length > 0 && <><div className="table-wrap" style={{ maxHeight: "72vh", overflowY: "auto", border: "1px solid var(--rule)", borderRadius: 10, background: "var(--paper)" }}>
         <table style={{ borderCollapse: "separate", borderSpacing: 0 }}>
           <thead>
             <tr>
               <th aria-sort={ariaSort("name")} style={{ position: "sticky", top: 0, left: 0, zIndex: 3, background: "var(--paper)", paddingLeft: 14, minWidth: 220 }}>
-                <button type="button" className="th-sort" onClick={() => sortBy("name")}>Company {sortKey === "name" ? (desc ? "↓" : "↑") : ""}</button>
+                <button type="button" className="th-sort" onClick={() => sortBy("name")}>Company {arrow("name")}</button>
               </th>
               {presets.map(([k, v]) => (
                 <th key={k} className="r" aria-sort={ariaSort(k)} title={v.desc}
                   style={{ position: "sticky", top: 0, zIndex: 2, background: "var(--paper)", minWidth: 92, color: sortKey === k ? "var(--ink)" : undefined }}>
-                  <button type="button" className="th-sort" onClick={() => sortBy(k)}>{v.label} {sortKey === k ? (desc ? "↓" : "↑") : ""}</button>
+                  <button type="button" className="th-sort" onClick={() => sortBy(k)}>{v.label} {arrow(k)}</button>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {rows.map(([t, e]) => (
-              <tr key={t} className="clickable" aria-label={`Open ${t}`} {...rowActions(() => onOpen(t))}>
+              <tr key={t} className="clickable" {...rowClick(() => onOpen(t))}>
                 <td style={{ position: "sticky", left: 0, background: "var(--paper)", zIndex: 1, paddingLeft: 14, whiteSpace: "nowrap" }}>
-                  <span className="tk-cell" style={{ display: "inline-block", width: 52 }}>{t}</span>
+                  <a className="row-link tk-cell" href={`#twin/${t}`} style={{ display: "inline-block", width: 52 }}>{t}</a>
                   <span className="muted" style={{ fontSize: 12 }}>{e.sector}</span>
                 </td>
                 {presets.map(([k]) => {
