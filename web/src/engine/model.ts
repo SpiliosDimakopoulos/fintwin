@@ -4,13 +4,26 @@
  * golden runs exported from Python with identical shocks.
  */
 import { effectiveIcr, ICR_MATERIALITY, ratingRank, SPREADS } from "./ratings";
-import { M1_OUTPUT_KEYS, OUTPUT_KEYS, type Levers, type Outputs, type Params, type Scenario } from "./types";
+import { HEALTH_WEIGHTS, M1_OUTPUT_KEYS, OUTPUT_KEYS, type Levers, type OutputKey, type Outputs, type Params, type Scenario } from "./types";
 
 const DAYS_Q = 91.25;
 const clip = (x: number, lo: number, hi: number) => Math.min(Math.max(x, lo), hi);
 const sum4 = (a: number[]) => a[0] + a[1] + a[2] + a[3];
 
 export const SHOCK_COLS = 5;
+
+// Fixed model constants, the same values as in sd_model.py (METHODOLOGY explains each one).
+const REVOLVER_SPREAD = 0.015; // revolver margin over the term rate
+const CASH_INTEREST_SHARE = 0.9; // share of the short rate earned on cash
+const STRESS_CASH_MULT = 1.5, STRESS_ICR = 2.5; // B1 triggers: cash below 1.5x floor, or coverage below 2.5
+const ACCESS_ICR = [1.5, 0.8] as const, ACCESS_LEVELS = [0.6, 0.3] as const; // R2 defaults of access_icr / access_levels
+const LEV_CAP = 6; // net debt / EBITDA that scores zero leverage health
+
+function allocOutputs(N: number, T: number, withM1: boolean): Outputs {
+  const arrays = Object.fromEntries(OUTPUT_KEYS.map((k) => [k, new Float64Array(N * T)])) as Record<OutputKey, Float64Array>;
+  if (!withM1) return { ...arrays, N, T };
+  return { ...arrays, N, T, cov_breach: new Float64Array(N * T), revolver_avail: new Float64Array(N * T) };
+}
 
 /** M1 defaults (sd_model.COVENANT_DEFAULTS) and M5 defaults (PAYOUT_DEFAULTS). */
 const COV_DEFAULTS = { maxNd: 4.0, minIcr: 2.5, cure: 1, avail: 0.0 };
@@ -24,10 +37,9 @@ const nz = (v: number | null | undefined, d: number): number | null => (v === un
 /** eps is a flat [N * T * 5] array (path-major, then quarter, then shock column). */
 export function simulate(p: Params, scn: Scenario, eps: Float64Array, N: number, levers: Levers): Outputs {
   const T = p.horizon;
-  const out = Object.fromEntries(OUTPUT_KEYS.map((k) => [k, new Float64Array(N * T)])) as unknown as Outputs;
-  out.N = N;
-  out.T = T;
   const ladder = p.maturities_q;
+  if (ladder.length < T) throw new Error(`${p.ticker}: maturities_q has ${ladder.length} quarters, horizon is ${T}`);
+  if (eps.length < N * T * SHOCK_COLS) throw new Error(`shocks hold ${eps.length} values, need ${N * T * SHOCK_COLS}`);
   const floor = p.cash_floor;
 
   // revision-3 switches: every branch below is skipped when off, so v2 outputs are unchanged
@@ -46,7 +58,8 @@ export function simulate(p: Params, scn: Scenario, eps: Float64Array, N: number,
   const revMatQ = p.revolver_maturity_q ?? null;
   const pdef = PAYOUT_DEFAULTS[p.payout_class ?? ""] ?? { floorNi: 0, keepDiv: 0 };
   const floorNi = p.payout_floor_ni ?? pdef.floorNi, keepDiv = p.payout_keep_div ?? pdef.keepDiv;
-  if (onM1) for (const k of M1_OUTPUT_KEYS) out[k] = new Float64Array(N * T);
+  const out = allocOutputs(N, T, onM1);
+  const { cov_breach: covOut, revolver_avail: availOut } = out;
 
   for (let n = 0; n < N; n++) {
     let cash = p.cash0, ar = p.ar0, inv = p.inv0, ap = p.ap0, deferred = p.def0, ppe = p.ppe0, debt = p.debt0;
@@ -100,8 +113,8 @@ export function simulate(p: Params, scn: Scenario, eps: Float64Array, N: number,
       const mktRate = rEff + p.term_premium + spread;
 
       const effRate = (1 - p.floating) * coupon + p.floating * (rEff + spread);
-      const interest = (debt * effRate) / 4 + (revolver * (rEff + spread + 0.015)) / 4;
-      const intIncome = (Math.max(cash, 0) * rEff * 0.9) / 4;
+      const interest = (debt * effRate) / 4 + (revolver * (rEff + spread + REVOLVER_SPREAD)) / 4;
+      const intIncome = (Math.max(cash, 0) * rEff * CASH_INTEREST_SHARE) / 4;
       const ebt = ebit - interest + intIncome;
       const tax = p.tax_rate * Math.max(ebt, 0);
       const ni = ebt - tax;
@@ -121,7 +134,7 @@ export function simulate(p: Params, scn: Scenario, eps: Float64Array, N: number,
       otherNet = otherNet - otherCfo;
 
       // B1: stress triggers management responses
-      const stressed = cash < 1.5 * p.cash_floor || icrPrev < 2.5;
+      const stressed = cash < STRESS_CASH_MULT * p.cash_floor || icrPrev < STRESS_ICR;
       let capex = p.capex_ratio * rev;
       if (levers.cut_capex && stressed) capex = Math.min(capex, p.maint_capex * da);
       ppe = ppe + capex - da;
@@ -136,7 +149,7 @@ export function simulate(p: Params, scn: Scenario, eps: Float64Array, N: number,
 
       // debt: maturities, rollover, new issuance (R2: access shrinks with coverage)
       const maturing = Math.min(ladder[t], debt);
-      const access = (icrPrev >= 1.5 ? 1 : icrPrev >= 0.8 ? 0.6 : 0.3) * scn.refi_access[t];
+      const access = (icrPrev >= ACCESS_ICR[0] ? 1 : icrPrev >= ACCESS_ICR[1] ? ACCESS_LEVELS[0] : ACCESS_LEVELS[1]) * scn.refi_access[t];
       const refi = maturing * p.refi_ratio * access;
       cash = cash + cfo - capex - div - bb - maturing + refi;
       let issuedDebt = 0;
@@ -232,10 +245,10 @@ export function simulate(p: Params, scn: Scenario, eps: Float64Array, N: number,
       // sector tolerance: score leverage-heavy sectors against their own norms (dynamics use raw coverage)
       const tol = p.sector_tol ?? 1;
       const sCov = (ratingRank(icr * tol) / 14) * 100;
-      const levCap = 6 * tol;
+      const levCap = LEV_CAP * tol;
       const sLev = (ebitdaTtm > 0 ? clip((levCap - ndEbitda) / levCap, 0, 1) : 0) * 100;
       const sSolv = clip((z - 1.1) / 1.5, 0, 1) * 100;
-      let health = 0.3 * sLiq + 0.3 * sCov + 0.2 * sLev + 0.2 * sSolv;
+      let health = HEALTH_WEIGHTS.liq * sLiq + HEALTH_WEIGHTS.cov * sCov + HEALTH_WEIGHTS.lev * sLev + HEALTH_WEIGHTS.solv * sSolv;
       if (breached) health = Math.min(health, 25);
 
       const i = n * T + t;
@@ -246,7 +259,7 @@ export function simulate(p: Params, scn: Scenario, eps: Float64Array, N: number,
       out.breach[i] = breached ? 1 : 0; out.equity[i] = equity; out.issued[i] = issued;
       out.fixed_cost_mult[i] = cutMult; out.debt_issued[i] = issuedDebt; out.recession[i] = regime;
       out.dividends[i] = div; out.buybacks[i] = bb;
-      if (onM1) { out.cov_breach![i] = covBreached ? 1 : 0; out.revolver_avail![i] = undrawn; }
+      if (covOut && availOut) { covOut[i] = covBreached ? 1 : 0; availOut[i] = undrawn; }
       out.h_liq[i] = sLiq; out.h_cov[i] = sCov; out.h_lev[i] = sLev; out.h_solv[i] = sSolv;
     }
   }
@@ -262,9 +275,7 @@ export function simulateBlocks(p: Params, scn: Scenario, eps: Float64Array, N: n
   const draws = p._param_draws;
   if (!draws || draws.length === 0) return simulate(p, scn, eps, N, levers);
   const T = p.horizon, K = Math.min(draws.length, N);
-  const out = Object.fromEntries(OUTPUT_KEYS.map((k) => [k, new Float64Array(N * T)])) as unknown as Outputs;
-  out.N = N;
-  out.T = T;
+  const out = allocOutputs(N, T, !!levers.M1);
   const q = Math.floor(N / K), r = N % K;
   let start = 0;
   for (let i = 0; i < K; i++) {
@@ -272,10 +283,8 @@ export function simulateBlocks(p: Params, scn: Scenario, eps: Float64Array, N: n
     const block = simulate({ ...p, ...draws[i], _param_draws: undefined }, scn,
       eps.subarray(start * T * SHOCK_COLS, (start + n) * T * SHOCK_COLS), n, levers);
     for (const k of [...OUTPUT_KEYS, ...M1_OUTPUT_KEYS] as const) {
-      const src = block[k];
-      if (!src) continue;
-      if (!out[k]) out[k] = new Float64Array(N * T);
-      out[k]!.set(src, start * T);
+      const src = block[k], dst = out[k];
+      if (src && dst) dst.set(src, start * T);
     }
     start += n;
   }

@@ -1,13 +1,14 @@
 import { scaleLinear } from "d3-scale";
 import { useState } from "react";
+import { HEALTH_WEIGHTS as W } from "../engine/types";
 import { useSize } from "../hooks";
 
 type Comp = { liq: number; cov: number; lev: number; solv: number };
-const PARTS: [keyof Comp, string, number, string][] = [
-  ["liq", "Liquidity runway", 0.3, "Cash plus undrawn credit facility against fixed costs, interest and maturities that cannot be refinanced."],
-  ["cov", "Interest coverage", 0.3, "Synthetic rating from trailing EBIT ÷ interest, scored against the sector's leverage norm."],
-  ["lev", "Leverage", 0.2, "Net debt ÷ EBITDA, scored against the sector's norm."],
-  ["solv", "Solvency (Altman Z″)", 0.2, "Book-value Altman Z″: working capital, retained earnings, EBIT and equity relative to assets."],
+const PARTS: [keyof Comp, string, string][] = [
+  ["liq", "Liquidity runway", "Cash plus undrawn credit facility against fixed costs, interest and maturities that cannot be refinanced."],
+  ["cov", "Interest coverage", "Synthetic rating from trailing EBIT ÷ interest, scored against the sector's leverage norm."],
+  ["lev", "Leverage", "Net debt ÷ EBITDA, scored against the sector's norm."],
+  ["solv", "Solvency (Altman Z″)", "Book-value Altman Z″: working capital, retained earnings, EBIT and equity relative to assets."],
 ];
 
 /**
@@ -19,10 +20,11 @@ export function Waterfall({ base, scen, baseMean, scenMean, baseLabel = "Baselin
 }) {
   const [ref, width] = useSize<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
-  const capBase = 0.3 * base.liq + 0.3 * base.cov + 0.2 * base.lev + 0.2 * base.solv - baseMean;
-  const capScen = 0.3 * scen.liq + 0.3 * scen.cov + 0.2 * scen.lev + 0.2 * scen.solv - scenMean;
+  const weighted = (c: Comp) => W.liq * c.liq + W.cov * c.cov + W.lev * c.lev + W.solv * c.solv;
+  const capBase = weighted(base) - baseMean;
+  const capScen = weighted(scen) - scenMean;
   const steps = [
-    ...PARTS.map(([k, label, w, desc]) => ({ label, delta: w * (scen[k] - base[k]), desc: `${desc} Weight ${w * 100}%: ${base[k].toFixed(0)} → ${scen[k].toFixed(0)}.` })),
+    ...PARTS.map(([k, label, desc]) => ({ label, delta: W[k] * (scen[k] - base[k]), desc: `${desc} Weight ${W[k] * 100}%: ${base[k].toFixed(0)} → ${scen[k].toFixed(0)}.` })),
     { label: "Ran out of cash", delta: -(capScen - capBase), desc: "Paths that run out of cash are capped at 25, whatever their other scores." },
   ];
   const bars: { label: string; y0: number; y1: number; kind: "total" | "up" | "down"; desc: string; delta?: number }[] = [];
@@ -36,7 +38,7 @@ export function Waterfall({ base, scen, baseMean, scenMean, baseLabel = "Baselin
 
   const H = 250, M = { t: 18, b: 46, l: 30, r: 8 };
   const y = scaleLinear().domain([0, Math.max(100, ...bars.map((b) => Math.max(b.y0, b.y1)))]).range([H - M.b, M.t]);
-  const slot = (Math.max(width, 300) - M.l - M.r) / bars.length;
+  const slot = (width - M.l - M.r) / bars.length;
   const bw = Math.min(42, slot * 0.62);
   return (
     <div className="chart" ref={ref}>
@@ -58,7 +60,7 @@ export function Waterfall({ base, scen, baseMean, scenMean, baseLabel = "Baselin
                 <rect x={M.l + slot * i} y={M.t} width={slot} height={H - M.t - M.b} fill={hover === i ? "var(--wash)" : "transparent"} />
                 <rect x={cx - bw / 2} y={top} width={bw} height={Math.max(bot - top, 1)} rx={2} fill={fill} opacity={b.kind === "total" ? 0.9 : 0.85} />
                 {next && next.kind !== "total" && (
-                  <line x1={cx + bw / 2} x2={cx + slot - bw / 2} y1={y(b.kind === "total" ? b.y1 : b.y1)} y2={y(b.kind === "total" ? b.y1 : b.y1)} stroke="var(--rule-2)" strokeDasharray="2 2" />
+                  <line x1={cx + bw / 2} x2={cx + slot - bw / 2} y1={y(b.y1)} y2={y(b.y1)} stroke="var(--rule-2)" strokeDasharray="2 2" />
                 )}
                 <text x={cx} y={top - 5} textAnchor="middle" fontSize={11} fontFamily="var(--font-mono)" fill="var(--ink)">
                   {b.kind === "total" ? b.y1.toFixed(0) : `${(b.delta ?? 0) >= 0 ? "+" : "−"}${Math.abs(b.delta ?? 0).toFixed(1)}`}
