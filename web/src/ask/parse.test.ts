@@ -53,6 +53,18 @@ describe("clampScenario (guardrail for model output)", () => {
     expect(out.knobs).toEqual({ sales_depth: 0.95, refi_freeze: 3 });
     expect(out.levers).toEqual({ issue_equity: true });
   });
+
+  it("ignores keys inherited from Object.prototype", () => {
+    expect(clampScenario({ knobs: { toString: 1, constructor: 2 } as never, levers: {} }).knobs).toEqual({});
+  });
+});
+
+describe("named scenarios", () => {
+  it("matches stagflation as a word prefix and 1970s only as a whole word", () => {
+    expect(parseScenario("a stagflationary decade").knobs.rate_bp).toBe(300);
+    expect(parseScenario("back to the 1970s").knobs.rate_bp).toBe(300);
+    expect(parseScenario("model x1970s").matched).toBe(false);
+  });
 });
 
 describe("model output mapping", () => {
@@ -61,6 +73,20 @@ describe("model output mapping", () => {
     const sc = toScenario({ revenue_drop_pct: 70, quarters_at_bottom: 3, debt_markets_closed_quarters: 20, interest_rate_change_bp: -150, keep_paying_dividends: true });
     expect(sc.knobs).toEqual({ sales_depth: 0.7, sales_duration: 3, refi_freeze: 8, rate_bp: -150 });
     expect(sc.levers).toEqual({ cut_payouts: false });
+  });
+
+  it("converts percent to a fraction and clamps it to the slider range", async () => {
+    const { toScenario } = await import("./llm");
+    expect(toScenario({ revenue_drop_pct: 40 }).knobs).toEqual({ sales_depth: 0.4 });
+    expect(toScenario({ revenue_drop_pct: 140 }).knobs).toEqual({ sales_depth: 0.95 });
+  });
+
+  it("sets a lever only when the model asks for the non-default", async () => {
+    const { toScenario } = await import("./llm");
+    expect(toScenario({}).knobs).toEqual({});
+    expect(toScenario({}).levers).toEqual({});
+    expect(toScenario({ keep_paying_dividends: false, allow_emergency_equity_raise: false }).levers).toEqual({});
+    expect(toScenario({ allow_emergency_equity_raise: true }).levers).toEqual({ issue_equity: true });
   });
 });
 

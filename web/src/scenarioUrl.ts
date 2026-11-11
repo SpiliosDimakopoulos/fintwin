@@ -1,4 +1,4 @@
-import { RANGES, clampScenario, type KnobKey } from "./ask/parse";
+import { clampScenario, type KnobKey } from "./ask/parse";
 import type { Meta } from "./data";
 import { KNOB_DEFAULTS } from "./engine/scenario";
 import type { Knobs, Levers } from "./engine/types";
@@ -12,7 +12,7 @@ export function decode(query: string, meta: Meta, preset: string): { knobs: Knob
   for (const pair of (q.get("k") ?? "").split(";").filter(Boolean)) {
     const [name, v] = pair.split(":");
     // own keys only ("constructor", "toString" are `in` every object); values are clamped like the Ask path
-    if (own(KNOB_DEFAULTS, name) && own(RANGES, name) && v !== undefined && v.trim() !== "" && Number.isFinite(+v)) raw[name as KnobKey] = +v;
+    if (own(KNOB_DEFAULTS, name) && v !== undefined && v.trim() !== "" && Number.isFinite(+v)) raw[name as KnobKey] = +v;
   }
   const knobs: Knobs = { ...(meta.presets[preset]?.knobs ?? {}), ...clampScenario({ knobs: raw, levers: {} }).knobs };
   const levers = { ...meta.levers };

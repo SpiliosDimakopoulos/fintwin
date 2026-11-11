@@ -32,7 +32,7 @@ export const COST_SHARE_OF_REVENUE = 0.6;
 const NAMED: [RegExp, Partial<Record<KnobKey, number>>, string][] = [
   [PANDEMIC, { sales_depth: 0.7, sales_duration: 3, sales_recovery: 8, spread_bp: 400, spread_duration: 6, refi_freeze: 2, rate_bp: -150 }, "a 2020-style demand freeze"],
   [/\b(2008|financial crisis|great recession|lehman)\b/, { sales_depth: 0.15, sales_duration: 3, sales_recovery: 8, spread_bp: 500, spread_duration: 6, refi_freeze: 4, rate_bp: -200, cost_pp: 1, cost_duration: 4 }, "a 2008-style recession with a credit crunch"],
-  [/\bstagflation|1970s\b/, { rate_bp: 300, cost_pp: 3, cost_duration: 6, sales_depth: 0.05, sales_duration: 2, sales_recovery: 4 }, "stagflation"],
+  [/\b(?:stagflation|1970s\b)/, { rate_bp: 300, cost_pp: 3, cost_duration: 6, sales_depth: 0.05, sales_duration: 2, sales_recovery: 4 }, "stagflation"],
   [/\bcredit crunch\b/, { refi_freeze: 4, spread_bp: 500, spread_duration: 4 }, "a credit crunch"],
   [/\bsupply[- ]chain\b/, { dio_days: 30, cost_pp: 3, cost_duration: 4, sales_depth: 0.05 }, "a supply-chain shock"],
   [/\brecession\b/, { sales_depth: 0.12, sales_duration: 3, sales_recovery: 6, rate_bp: -150, spread_bp: 250, spread_duration: 6, cost_pp: 2, cost_duration: 4 }, "a recession"],
@@ -80,7 +80,7 @@ export function parseScenario(text: string, names: Record<string, string> = {}, 
 
   for (const [re, preset, label] of NAMED) {
     if (re.test(s)) {
-      Object.assign(knobs, preset, knobs); // earlier (more specific) matches win
+      Object.assign(knobs, preset); // NAMED is ordered most specific first; only the first match applies
       understood.push(`starting from ${label}`);
       break;
     }
@@ -171,7 +171,7 @@ export function findCompany(text: string, names: Record<string, string>): string
 export function clampScenario(sc: Scenario): Scenario {
   const knobs: Partial<Record<KnobKey, number>> = {};
   for (const [k, v] of Object.entries(sc.knobs ?? {})) {
-    if (k in RANGES && typeof v === "number" && Number.isFinite(v)) {
+    if (Object.prototype.hasOwnProperty.call(RANGES, k) && typeof v === "number" && Number.isFinite(v)) {
       const key = k as KnobKey;
       const val = clamp(key, v);
       knobs[key] = key.endsWith("_duration") || key === "sales_recovery" || key === "refi_freeze" || key === "dio_days" ? Math.round(val) : val;
