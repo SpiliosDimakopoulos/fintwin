@@ -13,11 +13,15 @@
 
 **[Live dashboard](https://spiliosdimakopoulos.github.io/fintwin/)** · **[Paper (PDF)](docs/paper/fintwin.pdf)** · [Methodology](docs/METHODOLOGY.md) · [Backtest report](docs/BACKTEST.md) · [Carnival case study](docs/CASE_STUDY_CCL.md)
 
-**FinTwin turns a company's SEC filings into a living model of its finances, then stress-tests it thousands of times.** It doesn't predict a stock price. It simulates how cash, debt, margins and credit quality respond to a pandemic, a rate shock or a closed bond market, and it reports a *distribution* of outcomes rather than a single number.
+**FinTwin builds a quarterly cash-and-debt model of each of 390+ US public companies from its SEC filings and runs Monte Carlo stress tests on it, in your browser.** It doesn't predict a stock price. It simulates how cash, debt, margins and credit quality respond to a pandemic, a rate shock or a closed bond market, and it reports a *distribution* of outcomes rather than a single number.
 
 ![Stress lab demo](docs/demo.gif)
 
-> **30-second pitch.** A flight simulator for corporate finance. It reads 15 years of a company's official filings and learns how its finances behave: fixed vs variable costs, how fast customers pay, when its debt matures. Then it replays the future 5,000 times under any crisis you pick, live in the browser. Then I tested it the hard way, on every US non-financial SEC filer with $50M+ revenue, including the ones that went bust, against simple rules that see the same data. Most of what it seemed to know was persistence: a 16-quarter cash-flow margin predicts cash better than the twin, and the twin's score predicts bankruptcy no better than its own formula without simulation. It also over-reacted to revenue because it assumed too much fixed cost; a prior selected walk-forward fixes much of that. What survives is small and specific: given the revenue that happened, the direction of the twin's departures from that margin is informative, and for free cash flow, blending in about 15% of them lowers the error out of sample by more than any simple rule does. It covers 390+ companies on the dashboard and rebuilds itself from the latest filings every week.
+**Try it:** [Carnival under a pandemic](https://spiliosdimakopoulos.github.io/fintwin/#stress/CCL/pandemic) · [Carnival vs Royal Caribbean](https://spiliosdimakopoulos.github.io/fintwin/#versus/CCL/RCL) · [rewind Carnival to past years](https://spiliosdimakopoulos.github.io/fintwin/#time/CCL) · [all 390+ companies](https://spiliosdimakopoulos.github.io/fintwin/c/)
+
+**Who it is for:** analysts and students who want to see how a company's cash and debt react to a shock, researchers who need a point-in-time, survivorship-free SEC panel with a look-ahead-safe backtest harness, and anyone who wants the numbers as plain JSON.
+
+**What the evidence says.** The model reads 15 years of a company's filings and learns how its finances behave: fixed vs variable costs, how fast customers pay, when its debt matures. I tested it on every US non-financial SEC filer with $50M+ revenue, including the ones that went bust, against simple rules that see the same data. Most of what it seemed to know was persistence: a 16-quarter cash-flow margin predicts cash better than the twin, and the twin's score predicts bankruptcy no better than its own formula without simulation. It also over-reacted to revenue because it assumed too much fixed cost; a prior selected walk-forward fixes much of that. What survives is small and specific: given the revenue that happened, the direction of the twin's departures from that margin is informative, and for free cash flow, blending in about 15% of them lowers the error out of sample by more than any simple rule does. It covers 390+ companies on the dashboard and rebuilds itself from the latest filings every week.
 
 ## Results
 
@@ -50,19 +54,39 @@ Where it fails, in the paper's own words ([docs/paper/fintwin.pdf](docs/paper/fi
 | **System-dynamics model** | 9 balance-sheet stocks, quarterly flows, first-order delays and 4 feedback loops: a leverage–spread spiral, a market-access cliff, cash conservation and delayed restructuring. |
 | **Calibrated Monte Carlo** | Robust (MAD) volatilities, Student-t tails, demand–margin correlation, a Vasicek short rate, and a Markov recession regime with NBER base rates and company-specific GDP sensitivity. |
 | **Stress tools** | 9 crisis presets, free sliders and 6 CFO levers. Reverse stress testing answers "how big a shock breaks it?". Tornado charts and Sobol global sensitivity (with bootstrap CIs) show what matters. |
-| **Analyst notes** | A rule-based analyst turns each company's simulation into a credit-memo-style note: verdict, evidenced risks, buffers, scenario commentary, watch list. It is deterministic, so every figure is correct by construction. An optional LLM module writes freer prose from the same fact sheet and machine-checks its figures, if you supply your own key. |
+| **Analyst notes** | A rule-based analyst turns each company's simulation into a credit-memo-style note: verdict, evidenced risks, buffers, scenario commentary, watch list. Every figure is taken from the simulation output, not generated as text. An optional LLM module writes freer prose from the same fact sheet and machine-checks its figures, if you supply your own key. |
 | **Sector-adjusted health** | Leverage that would alarm a software company is normal for a utility. Coverage and leverage are scored against each GICS sector's own norms, which are estimated from the data, and a waterfall shows how each component moves the score. |
 | **Time machine** | Rewind any company to what its twin said at every February since 2013, using only the filings that existed then, and see what actually happened next (`#time/CCL`). |
 | **Compare** | Put two companies side by side (`#versus/CCL/RCL`), or scan the whole universe × 8 crises, filtered by sector. |
-| **Dashboard** | Editorial research-terminal design, light and dark. The landing page runs a live Monte Carlo you can steer. There is a Ctrl K / ⌘K company switcher, a stress lab whose scenarios are shareable as links, peer context on every company, and keyboard shortcuts (press `?`). Everything runs client-side in a Web Worker, so no server is needed. |
+| **Dashboard** | Light and dark themes. The landing page runs a live Monte Carlo you can steer. There is a Ctrl K / ⌘K company switcher, a stress lab whose scenarios are shareable as links, peer context on every company, and keyboard shortcuts (press `?`). Everything runs client-side in a Web Worker, so no server is needed. |
 | **Ask the twin** | Describe a crisis in plain English ("revenue falls 40% for a year and banks stop lending", "another 2008 for Carnival") and the stress lab sets it up and simulates it. Built-in rules work everywhere; an optional on-device language model (Qwen2.5 1.5B via WebLLM, no API key, nothing leaves the browser) handles free-form text. Language only chooses the scenario: model output is validated and clamped, and every number comes from the simulation. |
 | **What changed this week** | Each Monday's rebuild is compared with the previous one: which companies' health moved by 5+ points, after which filing, and which part of the score (runway, coverage, leverage, solvency) drove it. Also as an RSS feed. |
-| **Always current, at zero cost** | Every Monday a GitHub Actions workflow pulls the newest SEC filings and FRED data, rebuilds all twins across 16 parallel runners, re-runs the validation and the time machine, checks Python–TypeScript parity, and redeploys. |
+| **Weekly rebuild** | Every Monday a GitHub Actions workflow pulls the newest SEC filings and FRED data, rebuilds all twins across 16 parallel runners, re-runs the validation and the time machine, checks Python–TypeScript parity, and redeploys. |
 
 | | |
 |---|---|
 | ![Overview](docs/screenshots/overview-light-1400.png) | ![Company twin](docs/screenshots/twin-light-1400.png) |
 | ![Stress matrix, dark theme](docs/screenshots/compare-dark-1400.png) | ![Evidence](docs/screenshots/backtest-light-1400.png) |
+
+## Use the data
+
+Every number on the site is a static JSON file, free to fetch with no key and refreshed every Monday:
+
+| URL | Content |
+|---|---|
+| [`data/index.json`](https://spiliosdimakopoulos.github.io/fintwin/data/index.json) | every company: name, sector, latest quarter, health and breach probability under each scenario, plus the model's scenario and rating tables |
+| `data/companies/<TICKER>.json`, e.g. [`CCL.json`](https://spiliosdimakopoulos.github.io/fintwin/data/companies/CCL.json) | quarterly history from the filings, calibrated parameters, scenario bands, reverse stress, tornado and Sobol results, data-quality report |
+| [`data/changes.json`](https://spiliosdimakopoulos.github.io/fintwin/data/changes.json), [`feed.xml`](https://spiliosdimakopoulos.github.io/fintwin/data/feed.xml) | what moved this week, as JSON and RSS |
+
+```python
+import json, urllib.request
+base = "https://spiliosdimakopoulos.github.io/fintwin/data/"
+idx = json.load(urllib.request.urlopen(base + "index.json"))["companies"]
+worst = sorted(idx.items(), key=lambda kv: kv[1]["matrix"]["base"]["health"])[:5]
+print([(t, round(c["matrix"]["base"]["health"])) for t, c in worst])
+```
+
+The engine also installs straight from git: `pip install "git+https://github.com/SpiliosDimakopoulos/fintwin#subdirectory=engine"`.
 
 ## Run it
 
@@ -90,13 +114,11 @@ docs/             paper/ (LaTeX + figures, numbers generated from data) · METHO
 
 ## Contributing
 
-Contributions are welcome, from a typo fix to a new stress scenario or a better test of the method.
-
 - Start with an issue labelled [`good first issue`](https://github.com/SpiliosDimakopoulos/fintwin/labels/good%20first%20issue) or [`help wanted`](https://github.com/SpiliosDimakopoulos/fintwin/labels/help%20wanted).
 - See [ROADMAP.md](ROADMAP.md) for the open research questions and [CONTRIBUTING.md](CONTRIBUTING.md) for setup and PR guidelines.
 - One-click dev environment: [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/SpiliosDimakopoulos/fintwin)
 - Questions and ideas: [Discussions](https://github.com/SpiliosDimakopoulos/fintwin/discussions).
 
-If you find FinTwin useful, a ⭐ helps others find it. To cite it, use [CITATION.cff](CITATION.cff) or the [Zenodo DOI](https://doi.org/10.5281/zenodo.23434606).
+To cite FinTwin, use [CITATION.cff](CITATION.cff) or the [Zenodo DOI](https://doi.org/10.5281/zenodo.23434606).
 
 *Data: SEC EDGAR XBRL, FRED. Rating table: A. Damodaran (Jan 2026). MIT licence. Not investment advice.*
