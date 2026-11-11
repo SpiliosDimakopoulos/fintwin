@@ -27,9 +27,6 @@ from .notes import fact_sheet
 if TYPE_CHECKING:
     import anthropic
 
-# A key in the project's git-ignored .env wins over a stale shell variable.
-load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
-
 DATA = Path(__file__).resolve().parents[2] / "web" / "public" / "data"
 MODEL = "claude-opus-5-5"
 
@@ -79,7 +76,9 @@ Rules:
 - Plain, precise English. No hype, no investment advice."""
 
 
-NUM = re.compile(r"-?\$?\d+(?:,\d{3})*(?:\.\d+)?")
+# A hyphen right after a digit, letter or point joins a range or a date ("2024-25", "Q3-2026", "2025-03-31"), so it
+# is read as a minus sign only after a space, punctuation or the start of the text.
+NUM = re.compile(r"(?:(?<![\w.])-)?\$?\d+(?:,\d{3})*(?:\.\d+)?")
 
 
 def _numbers(text: str) -> list[float]:
@@ -153,6 +152,9 @@ def write_memo(client: anthropic.Anthropic, sheet: dict, feedback: str | None = 
 def main(tickers: list[str]) -> None:
     import anthropic
 
+    # A key in the project's git-ignored .env wins over a stale shell variable.
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
+
     client = anthropic.Anthropic()
     index = json.loads((DATA / "index.json").read_text(encoding="utf-8"))
     out_dir = DATA / "memos"
@@ -189,9 +191,6 @@ def main(tickers: list[str]) -> None:
             encoding="utf-8",
         )
         print(f"{t}: {r['memo']['verdict']} | attempts={attempts} unverified={bad} tokens={r['usage']}")
-
-
-build = main
 
 
 if __name__ == "__main__":
