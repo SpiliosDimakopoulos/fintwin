@@ -181,7 +181,11 @@ def test_stress_tools_and_notes(offline):
     p = block["params"]
     rs = reverse_stress(p, n_paths=300)
     assert set(rs) == {"sales_depth", "rate_bp", "cost_pp"}
-    assert len(tornado(p, n_paths=300)) == 6
+    rows = tornado(p, n_paths=300)
+    assert len(rows) == 6
+    assert [r["d_health"] for r in rows] == sorted(r["d_health"] for r in rows)  # the UI draws them in this order
+    assert rows[0]["d_health"] < 0  # the worst knob lowers health
+    assert {r["knob"] for r in rows} == {"sales_depth", "rate_bp", "spread_bp", "cost_pp", "refi_freeze", "dio_days"}
     note = write_note(block, meta_block())
     assert note["verdict"] in {"Healthy", "Watch", "Strained", "Distressed"}
     assert note["key_risks"] and note["watch_list"]

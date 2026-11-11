@@ -202,4 +202,4 @@ def test_health_at_open_is_a_valid_score_near_the_first_simulated_quarter(params
         np.zeros((1, 4, 5)) + [0, 0, 0, 0, 0.99],
         DEFAULT_LEVERS,
     )
-    assert abs(out["health"][0, 0] - h0) < 25  # one quarter of steady-state dynamics moves the score only a little
+    assert abs(out["health"][0, 0] - h0) < 6  # one quarter of steady-state dynamics: 4.5 points for this company
