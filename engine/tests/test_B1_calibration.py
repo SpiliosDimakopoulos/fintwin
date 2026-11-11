@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from scipy import stats
-from test_B1_parity import macro, synthetic_company  # noqa: F401  (fixture)
+from test_B1_parity import synthetic_company
 
 from fintwin.model.sd_model import simulate
 from fintwin.scenarios.presets import DEFAULT_LEVERS, build_scenario
@@ -16,7 +16,7 @@ from fintwin.stochastic.mc import simulate_paths
 from fintwin.stochastic.shocks import draw_shocks
 
 
-def cal(c, macro, spec_name="v3", fixes=None, **a):  # noqa: F811
+def cal(c, macro, spec_name="v3", fixes=None, **a):
     with spec.using(spec_name, fixes):
         return C.calibrate(c, macro, 8, a or None)
 
@@ -59,7 +59,7 @@ def test_spec_parsing(monkeypatch):
 
 # ---------------------------------------------------------------- MM-F1
 @pytest.mark.parametrize("prior", [0.05, 0.35, 0.60])
-def test_F1_fully_variable_firm_recovers_zero_fixed_share_whatever_the_prior(macro, prior):  # noqa: F811
+def test_F1_fully_variable_firm_recovers_zero_fixed_share_whatever_the_prior(macro, prior):
     c = synthetic_company(fixed=0.0, v=0.85, noise=0.002, trend=0.03, season_amp=0.0)
     assert fixed_share(cal(c, macro, "v3", "F1", fixed_share_prior=prior), c) < 0.05
     if prior == 0.35:  # revision 2: about 2/3 prior, whatever the data say
@@ -67,7 +67,7 @@ def test_F1_fully_variable_firm_recovers_zero_fixed_share_whatever_the_prior(mac
 
 
 @pytest.mark.parametrize("prior", [0.05, 0.35])
-def test_F1_recovers_a_40pct_fixed_share_when_revenue_varies(macro, prior):  # noqa: F811
+def test_F1_recovers_a_40pct_fixed_share_when_revenue_varies(macro, prior):
     c = synthetic_company(fixed=600.0, v=0.4, trend=0.05, season_amp=0.0, noise=0.005)
     q = c.quarters.tail(16)
     truth = 600.0 / (600.0 + 0.4 * q["revenue"].mean())
@@ -78,7 +78,7 @@ def test_F1_recovers_a_40pct_fixed_share_when_revenue_varies(macro, prior):  # n
     assert p["fixed_share_data_weight"] > 0.9 and 0 < p["fixed_share_sd"] < 0.1
 
 
-def test_F1_flat_revenue_falls_back_on_the_prior(macro):  # noqa: F811
+def test_F1_flat_revenue_falls_back_on_the_prior(macro):
     c = synthetic_company(fixed=0.0, v=0.85, trend=0.0, season_amp=0.0, noise=0.02)
     q = c.quarters.tail(16)
     q_mean = q["revenue"].mean()
@@ -112,7 +112,7 @@ def test_F1_walk_forward_selection_uses_earlier_years_only():
 
 
 # ---------------------------------------------------------------- MM-F2
-def test_F2_seasonal_firm_is_not_read_as_fixed(macro):  # noqa: F811
+def test_F2_seasonal_firm_is_not_read_as_fixed(macro):
     # costs track the trend fully but only 10% of a +-25% seasonal swing (budgeted annually); no fixed costs at all
     c = synthetic_company(fixed=0.0, v=0.8, season_amp=0.25, cost_season=0.1, trend=0.02)
     assert fixed_share(cal(c, macro, "v3", "F1,F2"), c) < 0.1
@@ -126,7 +126,7 @@ def test_F2_ttm_requires_consecutive_quarters():
 
 
 # ---------------------------------------------------------------- MM-F3
-def test_F3_partial_adjustment_keys_and_acquirer_flag(macro):  # noqa: F811
+def test_F3_partial_adjustment_keys_and_acquirer_flag(macro):
     c = synthetic_company()
     c.quarters["acquisitions"] = 0.0
     c.quarters.loc[c.quarters.index[-3], "acquisitions"] = 0.2 * float(c.quarters["revenue"].tail(8).sum())
@@ -138,7 +138,7 @@ def test_F3_partial_adjustment_keys_and_acquirer_flag(macro):  # noqa: F811
 
 
 # ---------------------------------------------------------------- MM-F4
-def test_F4_missing_da_no_longer_double_counts(macro):  # noqa: F811
+def test_F4_missing_da_no_longer_double_counts(macro):
     full = synthetic_company(fixed_infl=0.006, seed=4)
     miss = synthetic_company(fixed_infl=0.006, seed=4, da_missing=True)
     lvl = float(full.quarters["revenue"].tail(16).mean())
@@ -152,7 +152,7 @@ def test_F4_missing_da_no_longer_double_counts(macro):  # noqa: F811
     assert np.all(np.asarray(p["ebitda_ttm0"]) > oi)
 
 
-def test_F4_zero_filled_or_flagged_da_counts_as_missing(macro):  # noqa: F811
+def test_F4_zero_filled_or_flagged_da_counts_as_missing(macro):
     zero = synthetic_company(seed=5)
     zero.quarters["da"] = 0.0  # a data layer that zero-fills a never-reported tag
     flagged = synthetic_company(seed=5)
@@ -163,7 +163,7 @@ def test_F4_zero_filled_or_flagged_da_counts_as_missing(macro):  # noqa: F811
 
 
 # ---------------------------------------------------------------- MM-F5
-def test_F5_non_cash_tax_one_off_does_not_move_twin_cfo(macro):  # noqa: F811
+def test_F5_non_cash_tax_one_off_does_not_move_twin_cfo(macro):
     base = synthetic_company(fixed_infl=0.006, seed=3)
     shock = synthetic_company(fixed_infl=0.006, seed=3)
     i = shock.quarters.index[-5]
@@ -175,7 +175,7 @@ def test_F5_non_cash_tax_one_off_does_not_move_twin_cfo(macro):  # noqa: F811
     assert abs(d3) < 0.001 and d2 < -0.008
 
 
-def test_F5_twin_nests_the_16_quarter_cfo_margin_at_constant_revenue(macro):  # noqa: F811
+def test_F5_twin_nests_the_16_quarter_cfo_margin_at_constant_revenue(macro):
     c = synthetic_company(trend=0.0, season_amp=0.0, noise=0.002, fixed_infl=0.0)
     # lumpy unmodelled operating cash (e.g. annual dividends from affiliates): 2% of revenue on average, which a
     # median of quarterly residuals ignores
@@ -191,7 +191,7 @@ def test_F5_twin_nests_the_16_quarter_cfo_margin_at_constant_revenue(macro):  # 
 
 
 # ---------------------------------------------------------------- MM-F6
-def test_F6_margin_residuals_and_current_deviation(macro):  # noqa: F811
+def test_F6_margin_residuals_and_current_deviation(macro):
     c = synthetic_company(seed=6)
     c.quarters.loc[c.quarters.index[-2:], "operating_income"] -= 0.03 * c.quarters["revenue"].iloc[-2:]
     p = cal(c, macro, "v3", "F6")
@@ -215,7 +215,7 @@ def test_F7_t_draws_match_the_mad_sd():
     assert _mad_sd(z_new) == pytest.approx(1.0, abs=0.03)
 
 
-def test_F7_calibration_emits_scale(macro):  # noqa: F811
+def test_F7_calibration_emits_scale(macro):
     p = cal(synthetic_company(), macro, "v3", "F7")
     want = 1 / (1.4826 * stats.t.ppf(0.75, p["t_df"])) if p["t_df"] < 30 else 1.0
     assert p["t_scale"] == pytest.approx(want)
@@ -236,7 +236,7 @@ def test_F8_independent_mixing_removes_tail_dependence():
 
 
 # ---------------------------------------------------------------- MM-F9
-def test_F9_parameter_draws_widen_the_distribution(macro):  # noqa: F811
+def test_F9_parameter_draws_widen_the_distribution(macro):
     c = synthetic_company(seed=7)
     p = cal(c, macro, "v3", "+F9", n_param_draws=20)
     assert (
@@ -257,7 +257,7 @@ def test_F9_parameter_draws_widen_the_distribution(macro):  # noqa: F811
 
 
 # ---------------------------------------------------------------- MM-F10
-def test_F10_fixed_costs_rebased_to_the_cutoff(macro):  # noqa: F811
+def test_F10_fixed_costs_rebased_to_the_cutoff(macro):
     c = synthetic_company(fixed=400.0, v=0.5, fixed_infl=0.006, season_amp=0.0, noise=0.002, trend=0.03)
     truth = 400.0 * 1.006 ** (len(c.quarters) - 1)
     assert cal(c, macro, "v3", "F1,F10")["F"] == pytest.approx(truth, rel=0.05)
@@ -265,7 +265,7 @@ def test_F10_fixed_costs_rebased_to_the_cutoff(macro):  # noqa: F811
 
 
 # ---------------------------------------------------------------- MM-F12
-def test_F12_asset_light_and_loss_making_firms(macro):  # noqa: F811
+def test_F12_asset_light_and_loss_making_firms(macro):
     light = synthetic_company(fixed=0.0, v=0.06, trend=0.03, season_amp=0.0)
     p = cal(light, macro, "v3", "F1,F12")
     assert p["v"] < 0.1 and fixed_share(p, light) < 0.1  # revision-2 grid forced v >= 0.10
@@ -279,7 +279,7 @@ def test_F12_asset_light_and_loss_making_firms(macro):  # noqa: F811
 
 
 # ---------------------------------------------------------------- MM-F13
-def test_F13_receivables_delay_is_estimated(macro):  # noqa: F811
+def test_F13_receivables_delay_is_estimated(macro):
     c = synthetic_company(seed=9)
     q = c.quarters
     target = 0.4 * q["revenue"].to_numpy()
@@ -292,7 +292,7 @@ def test_F13_receivables_delay_is_estimated(macro):  # noqa: F811
 
 
 # ---------------------------------------------------------------- MM-F14
-def test_F14_recession_drift_is_offset_in_mu(macro):  # noqa: F811
+def test_F14_recession_drift_is_offset_in_mu(macro):
     c = synthetic_company(seed=10)
     p3, p2 = cal(c, macro, "v3", "F14"), cal(c, macro, "v2-rev")
     pi = 0.045 / (0.045 + 0.24)
@@ -300,7 +300,7 @@ def test_F14_recession_drift_is_offset_in_mu(macro):  # noqa: F811
 
 
 # ---------------------------------------------------------------- M2, M3
-def test_M2_floating_share(macro, monkeypatch):  # noqa: F811
+def test_M2_floating_share(macro, monkeypatch):
     import fintwin.universe as U
 
     monkeypatch.setattr(U, "classify", lambda t: ("Real Estate", ""))
@@ -313,7 +313,7 @@ def test_M2_floating_share(macro, monkeypatch):  # noqa: F811
     assert cal(c, macro, "v3")["floating"] == 0.1  # extension: off in v3
 
 
-def test_M3_unknown_ladder_is_flagged_with_bullets(macro):  # noqa: F811
+def test_M3_unknown_ladder_is_flagged_with_bullets(macro):
     c = synthetic_company(stale_ladder=True)
     p = cal(c, macro, "v3", "M3")
     lad = np.asarray(p["maturities_q"])
@@ -327,7 +327,7 @@ def test_M3_unknown_ladder_is_flagged_with_bullets(macro):  # noqa: F811
     assert cal(synthetic_company(), macro, "v3", "M3")["ladder_unknown"] == 0.0
 
 
-def test_v3_full_spec_runs(macro):  # noqa: F811
+def test_v3_full_spec_runs(macro):
     for kw in ({}, {"da_missing": True}, {"stale_ladder": True, "season_amp": 0.3}):
         p = cal(synthetic_company(**kw), macro, "v3", "+F9,+M2", n_param_draws=5)
         assert np.isfinite(p["F"]) and p["F"] >= 0 and 0 <= p["v"]
@@ -352,7 +352,7 @@ def _new_layer(c):
 
 
 @pytest.mark.parametrize("spec_name", ["v2-pre", "v3"])
-def test_data_layer_gaps_and_missing_last_values_give_finite_params(macro, spec_name):  # noqa: F811
+def test_data_layer_gaps_and_missing_last_values_give_finite_params(macro, spec_name):
     c = _new_layer(synthetic_company(seed=12))
     p = cal(c, macro, spec_name)
     q = c.quarters
@@ -365,7 +365,7 @@ def test_data_layer_gaps_and_missing_last_values_give_finite_params(macro, spec_
     assert "total_debt not reported" in p["_sources"]["stale"]
 
 
-def test_F4_uses_the_fiscal_year_da_when_quarterly_da_is_missing(macro):  # noqa: F811
+def test_F4_uses_the_fiscal_year_da_when_quarterly_da_is_missing(macro):
     c = _new_layer(synthetic_company(seed=13))
     q = c.quarters
     miss = q.index[-8:]

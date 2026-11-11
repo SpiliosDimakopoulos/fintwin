@@ -14,7 +14,6 @@ import pandas as pd
 import pytest
 
 from fintwin.data.facts import CompanyData
-from fintwin.stochastic import calibrate as calibrate_mod
 from fintwin.stochastic.calibrate import calibrate
 from fintwin.stochastic.mc import run, summarize
 
@@ -97,28 +96,6 @@ def synthetic_company(
     mat_date = "2015-12-31" if stale_ladder else str(idx[-1].date())
     return CompanyData(
         ticker, 1, "Synthetic B1", str(idx[-1].date()), q, {}, [200.0, 180.0, 160.0, 150.0, 140.0, 600.0], mat_date
-    )
-
-
-@pytest.fixture
-def macro(monkeypatch):
-    gdp = pd.Series(0.05 + 0.01 * np.sin(np.arange(80) / 3), index=pd.date_range("2005-03-31", periods=80, freq="QE"))
-    monkeypatch.setattr(
-        calibrate_mod,
-        "recession_regime",
-        lambda asof=None: {
-            "hazard": 0.045,
-            "exit": 0.24,
-            "gdp_shortfall_q": 0.01,
-            "in_recession_now": False,
-            "gdp_yoy": gdp,
-            "n_recessions": 12,
-        },
-    )
-    idx = pd.date_range("2000-03-31", "2025-12-31", freq="QE")
-    return pd.DataFrame(
-        {"short_rate": 0.02 + 0.01 * np.sin(np.arange(len(idx)) / 8), "long_rate": 0.035, "credit_spread": 0.02},
-        index=idx,
     )
 
 
