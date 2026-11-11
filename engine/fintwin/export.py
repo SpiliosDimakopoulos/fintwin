@@ -19,7 +19,7 @@ import pandas as pd
 
 from .backtest.batch import UNIVERSE_XL
 from .backtest.walk_forward import CUTOFFS, UNIVERSE, cross_section, forecast_backtest
-from .data.edgar import filing_url
+from .data.edgar import filing_url, write_atomic
 from .data.facts import contiguous_mask, load_company
 from .data.fred import macro_quarterly
 from .data.quality import quality_report
@@ -40,103 +40,6 @@ GOLDEN = ROOT / "web" / "src" / "engine" / "__golden__"
 SHOWCASE = ["AAPL", "TSLA", "CCL", "BA", "INTC", "NFLX"]
 SOBOL_SET = set(SHOWCASE) | set(UNIVERSE)  # the original 30-name universe gets global sensitivity
 HORIZON = 12
-
-SECTORS = {
-    "AAPL": "Technology",
-    "MSFT": "Technology",
-    "GOOGL": "Technology",
-    "INTC": "Semiconductors",
-    "AMZN": "Retail & cloud",
-    "NFLX": "Media",
-    "DIS": "Media",
-    "TSLA": "Automotive",
-    "BA": "Aerospace",
-    "CAT": "Industrials",
-    "CCL": "Cruise",
-    "RCL": "Cruise",
-    "NCLH": "Cruise",
-    "DAL": "Airlines",
-    "UAL": "Airlines",
-    "AAL": "Airlines",
-    "MAR": "Lodging",
-    "HLT": "Lodging",
-    "MGM": "Casinos",
-    "LVS": "Casinos",
-    "EXPE": "Travel",
-    "M": "Department stores",
-    "KSS": "Department stores",
-    "WMT": "Retail",
-    "NKE": "Apparel",
-    "SBUX": "Restaurants",
-    "KO": "Beverages",
-    "PG": "Household products",
-    "JNJ": "Healthcare",
-    "CVX": "Energy",
-    "META": "Technology",
-    "NVDA": "Semiconductors",
-    "AVGO": "Semiconductors",
-    "AMD": "Semiconductors",
-    "QCOM": "Semiconductors",
-    "TXN": "Semiconductors",
-    "ORCL": "Software",
-    "ADBE": "Software",
-    "CRM": "Software",
-    "INTU": "Software",
-    "CSCO": "Technology",
-    "IBM": "Technology",
-    "ACN": "IT services",
-    "CMCSA": "Media & cable",
-    "CHTR": "Media & cable",
-    "T": "Telecom",
-    "VZ": "Telecom",
-    "TMUS": "Telecom",
-    "COST": "Retail",
-    "HD": "Retail",
-    "LOW": "Retail",
-    "TGT": "Retail",
-    "MCD": "Restaurants",
-    "PEP": "Beverages",
-    "CL": "Household products",
-    "MDLZ": "Food",
-    "KHC": "Food",
-    "PM": "Tobacco",
-    "MO": "Tobacco",
-    "PFE": "Pharma",
-    "MRK": "Pharma",
-    "ABBV": "Pharma",
-    "LLY": "Pharma",
-    "BMY": "Pharma",
-    "AMGN": "Biotech",
-    "GILD": "Biotech",
-    "UNH": "Health insurance",
-    "CVS": "Healthcare services",
-    "MDT": "Medical devices",
-    "ABT": "Medical devices",
-    "TMO": "Life sciences tools",
-    "DHR": "Life sciences tools",
-    "LMT": "Defense",
-    "RTX": "Aerospace & defense",
-    "GD": "Defense",
-    "DE": "Industrials",
-    "HON": "Industrials",
-    "MMM": "Industrials",
-    "GE": "Industrials",
-    "EMR": "Industrials",
-    "UPS": "Logistics",
-    "FDX": "Logistics",
-    "UNP": "Railroads",
-    "COP": "Energy",
-    "NEE": "Utilities",
-    "DUK": "Utilities",
-    "SO": "Utilities",
-    "LIN": "Chemicals",
-    "DOW": "Chemicals",
-    "BKNG": "Travel",
-    "LUV": "Airlines",
-    "WYNN": "Casinos",
-    "ABNB": "Travel",
-    "UBER": "Mobility",
-}
 
 
 def _clean(o, sig: int = 10):
@@ -165,7 +68,7 @@ def dumps(obj, sig: int = 10, **kw) -> str:
 def _write(path: Path, obj, sig: int = 10) -> None:
     """Write a JSON-safe object to ``path``, creating parent directories as needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dumps(obj, sig, separators=(",", ":")), encoding="utf-8")
+    write_atomic(path, dumps(obj, sig, separators=(",", ":")).encode("utf-8"))
 
 
 def index_entry(block: dict) -> dict:
@@ -230,6 +133,7 @@ def history_block(c, n: int = 28) -> dict:
 def company_block(ticker: str, macro: pd.DataFrame, n_paths: int = 5000, with_sobol: bool = False) -> dict:
     """Build one company's dashboard payload using macro data and Monte Carlo paths."""
     c = load_company(ticker)
+    gics, sub_industry = classify(c.ticker)
     p = calibrate(c, macro, HORIZON)
     eps = draw_shocks(p, n_paths, HORIZON, seed=7)
     presets = {}
@@ -256,8 +160,8 @@ def company_block(ticker: str, macro: pd.DataFrame, n_paths: int = 5000, with_so
         "ticker": c.ticker,
         "name": c.name,
         "cik": c.cik,
-        "sector": classify(c.ticker)[1] or SECTORS.get(c.ticker, ""),
-        "gics": classify(c.ticker)[0],
+        "sector": sub_industry,
+        "gics": gics,
         "edgar_url": f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={c.cik}&type=10-",
         "quality": quality_report(c),
         "n_paths": n_paths,
@@ -345,15 +249,15 @@ def build(tickers: list[str], with_backtests: bool = True) -> None:
         except Exception as e:
             print(f"  {t}: FAILED {type(e).__name__}: {e}")
             failed.append(t)
+            if t in index["companies"]:  # its old JSON stays; the index must not pass it off as fresh
+                index["companies"][t]["stale"] = True
             continue
         _write(OUT / "companies" / f"{t}.json", block)
         index["companies"][t] = index_entry(block)
         print(f"  {t}: health {block['presets']['base']['health_score']:.0f} ({time.time() - t0:.1f}s)")
     index["meta"] = meta_block()
     _write(index_path, index)
-    if not GOLDEN.exists() or len(tickers) > 1:
-        golden_cases(macro)
-
+    # the parity goldens are rewritten only by `export GOLDEN`: from here they would drift with each day's EDGAR data
     if with_backtests:
         build_backtests()
     if failed:
@@ -362,36 +266,30 @@ def build(tickers: list[str], with_backtests: bool = True) -> None:
 
 def build_backtests() -> None:
     """Run forecast and cross-sectional backtests and write their JSON output under ``web/public``."""
-    if True:
-        bt: dict[str, Any] = {"cutoffs": CUTOFFS, "forecast": {}, "aggregate": {}}
-        for t in SHOWCASE:
-            for ck in CUTOFFS:
-                bt["forecast"][f"{t}:{ck}"] = forecast_backtest(t, ck)
-        rows = [
-            (r["ticker"], ck, var, s)
+    bt: dict[str, Any] = {"cutoffs": CUTOFFS, "forecast": {}, "aggregate": {}}
+    for t in SHOWCASE:
+        for ck in CUTOFFS:
+            bt["forecast"][f"{t}:{ck}"] = forecast_backtest(t, ck)
+    df = pd.DataFrame(
+        [
+            {"var": v, "cov50": s["coverage50"], "cov90": s["coverage90"], "skill": s["crps_skill"], "n": s["n"]}
             for r in bt["forecast"].values()
-            for ck in [r["cutoff"]]
-            for var, s in r["scores"].items()
+            for v, s in r["scores"].items()
         ]
-        df = pd.DataFrame(
-            [
-                {"var": v, "cov50": s["coverage50"], "cov90": s["coverage90"], "skill": s["crps_skill"], "n": s["n"]}
-                for _, _, v, s in rows
-            ]
-        )
-        bt["aggregate"] = {
-            v: {
-                "coverage50": float(np.average(g["cov50"], weights=g["n"])),
-                "coverage90": float(np.average(g["cov90"], weights=g["n"])),
-                "median_crps_skill": float(g["skill"].median()),
-                "share_beating_baseline": float((g["skill"] > 0).mean()),
-                "cases": len(g),
-            }
-            for v, g in df.groupby("var")
+    )
+    bt["aggregate"] = {
+        v: {
+            "coverage50": float(np.average(g["cov50"], weights=g["n"])),
+            "coverage90": float(np.average(g["cov90"], weights=g["n"])),
+            "median_crps_skill": float(g["skill"].median()),
+            "share_beating_baseline": float((g["skill"] > 0).mean()),
+            "cases": len(g),
         }
-        bt["cross_section"] = cross_section()
-        _write(OUT / "backtest.json", bt)
-        print("  backtests written")
+        for v, g in df.groupby("var")
+    }
+    bt["cross_section"] = cross_section()
+    _write(OUT / "backtest.json", bt)
+    print("  backtests written")
 
 
 if __name__ == "__main__":

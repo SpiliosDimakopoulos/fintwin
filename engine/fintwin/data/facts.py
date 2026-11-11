@@ -22,8 +22,8 @@ from functools import lru_cache, partial
 import numpy as np
 import pandas as pd
 
+from .edgar import PERIODIC_FORMS, data_legacy, ticker_to_cik
 from .edgar import company_facts as _company_facts
-from .edgar import data_legacy, ticker_to_cik
 
 
 @lru_cache(maxsize=2)
@@ -37,7 +37,7 @@ def company_facts(cik: int) -> dict:
     return augment(cik, _company_facts(cik), tags)
 
 
-FORMS = {"10-K", "10-Q", "10-K/A", "10-Q/A", "10-KT", "20-F", "40-F"}
+FORMS = PERIODIC_FORMS | {"20-F", "40-F"}
 # A fiscal quarter is 12-14 weeks, but 52/53-week retailers run one 16- or 17-week quarter a year (Kroger's first,
 # Costco's and AutoZone's fourth): anything from 11 to 18 weeks is one quarter.
 QUARTER_DAYS = (75, 126)
@@ -50,6 +50,10 @@ BALANCE_FFILL_LIMIT = 2
 # A fallback tag whose values differ from the higher-priority tags by more than this on shared periods is a level
 # break (D7): median |a - b| / median |a| over the overlap.
 SPLICE_TOLERANCE = 0.10
+# A fiscal year is 52 or 53 weeks (364 or 371 days); the band also takes calendar years and a few days of slack.
+FISCAL_YEAR_DAYS = (350, 380)
+# Total debt above total liabilities means a debt tag is double counted or mis-tagged; 5% leaves room for rounding.
+DEBT_OVER_LIABILITIES = 1.05
 
 # field -> ordered tag fallbacks. Duration concepts are flows over a period, instants are balances.
 DURATION = {
@@ -507,7 +511,7 @@ def _annual_da(gaap: dict, cut, ends: list[pd.Timestamp]) -> dict:
         if df.empty or "start" not in df:
             continue
         df = _latest(df.dropna(subset=["start"]), ["start", "end"])
-        fy = df[((df["end"] - df["start"]).dt.days).between(350, 380)]
+        fy = df[((df["end"] - df["start"]).dt.days).between(*FISCAL_YEAR_DAYS)]
         for r in fy.itertuples():
             years.setdefault((r.start, r.end), float(r.val))
     out = {}
@@ -516,7 +520,7 @@ def _annual_da(gaap: dict, cut, ends: list[pd.Timestamp]) -> dict:
         if cover:
             out[e] = cover[0] / 4
             continue
-        before = [(en, v) for (s, en), v in years.items() if en < e and (e - en).days <= 380]
+        before = [(en, v) for (s, en), v in years.items() if en < e and (e - en).days <= FISCAL_YEAR_DAYS[1]]
         if before:
             out[e] = max(before)[1] / 4
     return out
@@ -531,6 +535,8 @@ def load_company(ticker: str, asof: str | None = None, min_year: int = 2010) -> 
     cut = pd.Timestamp(asof) if asof else None
     diag: dict = {}
     notes: list[str] = []
+    if raw.get("_fallback_errors"):
+        notes.append(f"xbrl fallback incomplete, {len(raw['_fallback_errors'])} error(s): {raw['_fallback_errors'][0]}")
 
     dur = {}
     for k, tags in DURATION.items():
@@ -615,7 +621,7 @@ def load_company(ticker: str, asof: str | None = None, min_year: int = 2010) -> 
         if q["liabilities"].isna().all():
             notes.append("liabilities derived as assets - equity")
         q["liabilities"] = q["liabilities"].fillna(derived)
-    over = q["total_debt"] > 1.05 * q["liabilities"]
+    over = q["total_debt"] > DEBT_OVER_LIABILITIES * q["liabilities"]
     if over.any():
         notes.append(f"total_debt exceeds total liabilities in {int(over.sum())} quarters (check the debt tags)")
         diag["debt_over_liabilities"] = int(over.sum())
