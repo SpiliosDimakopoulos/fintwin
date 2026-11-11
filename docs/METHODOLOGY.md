@@ -4,7 +4,7 @@
 
 **Source.** The SEC EDGAR XBRL `companyfacts` endpoint provides every number a company has tagged in its 10-K/10-Q filings. Requests carry a declared User-Agent, stay under 10 requests/s and are cached on disk. Interest rates come from FRED's public CSV endpoint (DGS3MO, DGS10, BAA10Y).
 
-**Four problems, four fixes.**
+**Four data problems and how each is handled.**
 
 1. **Tag drift.** Companies switch tags over time (e.g. `SalesRevenueNet` became `RevenueFromContractWithCustomerExcludingAssessedTax` after ASC 606). Each field has an ordered list of fallback tags, merged period by period. Debt is assembled from current, noncurrent, commercial-paper and short-term components. Operating income is rebuilt as pre-tax income + interest for filers that never tag it.
 2. **Year-to-date reporting.** 10-Q cash-flow facts are cumulative, and Q4 exists only inside the 10-K annual figure. Facts that share a start date are differenced (H1 − Q1, 9M − H1, FY − 9M) to recover discrete quarters. 52/53-week fiscal calendars are snapped onto a common quarter spine within ±12 days.
@@ -63,7 +63,7 @@ Every parameter's provenance is exported and shown in the dashboard. Assumptions
 
 ## 4. Monte Carlo and outputs
 
-Shocks are drawn as [N, T, 4] standardized arrays (demand, margin, rate, financing). Demand and margin are correlated and share a chi-square mixing variable (Student-t), rescaled to unit variance. The core model is deterministic given the shocks, which is what makes cross-language parity testable.
+Shocks are drawn as [N, T, 5] standardized arrays (demand, margin, rate, financing, and a regime uniform). Demand and margin are correlated and share a chi-square mixing variable (Student-t), rescaled to unit variance. The core model is deterministic given the shocks, which is what makes cross-language parity testable.
 
 **Health score (0–100)** is a weighted composite:
 
@@ -82,4 +82,4 @@ A path that has breached is capped at 25. The headline score is the median over 
 
 ## 5. Two engines
 
-The Python engine runs calibration, backtests and exports. `web/src/engine/model.ts` is a line-for-line port running in a Web Worker. `web/src/engine/model.test.ts` loads golden runs exported from Python (parameters, scenario, levers and the exact shocks) and requires ≤ 1e-6 relative agreement on 11 output series across 4 companies and scenarios.
+The Python engine runs calibration, backtests and exports. `web/src/engine/model.ts` is a port that follows the Python step by step, running in a Web Worker. `web/src/engine/model.test.ts` loads golden runs exported from Python (parameters, scenario, levers and the exact shocks) and requires ≤ 1e-6 relative agreement on 11 output series across 4 companies and scenarios.

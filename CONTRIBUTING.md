@@ -14,11 +14,13 @@ The quickest start is [GitHub Codespaces](https://codespaces.new/SpiliosDimakopo
 
 ```bash
 cp .env.example .env                       # set SEC_USER_AGENT (required by the SEC)
-cd engine && uv sync && uv run pytest -q   # Python engine and tests
+cd engine && uv sync --locked && uv run pytest -q   # Python engine and tests
 cd ../web && npm ci && npm test && npm run dev
 ```
 
-The full research pipeline (`scripts/full_pipeline.sh`) takes hours; you don't need it for most changes.
+`scripts/dev.sh` starts the live-ticker API and the dashboard together.
+
+The full research pipeline (`engine/scripts/full_pipeline.sh`) takes hours; you don't need it for most changes.
 
 ## Pull requests
 
