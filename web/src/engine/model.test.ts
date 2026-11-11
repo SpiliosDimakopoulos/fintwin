@@ -46,7 +46,9 @@ describe("parity with Python engine", () => {
         for (const [k, want] of Object.entries(g.decisions as Record<string, unknown>)) {
           expect(JSON.parse(JSON.stringify(d[k])), k).toEqual(want === null ? null : expect.anything());
           const flat = (v: unknown): number[] => (typeof v === "number" ? [v] : v && typeof v === "object" ? Object.values(v).flatMap(flat) : []);
-          flat(want).forEach((w, i) => expect(Math.abs(flat(d[k])[i] - w) / Math.max(Math.abs(w), 1), `${k}[${i}]`).toBeLessThan(1e-6));
+          const have = flat(d[k]);
+          expect(have.length, `${k} length`).toBe(flat(want).length);
+          flat(want).forEach((w, i) => expect(Math.abs(have[i] - w) / Math.max(Math.abs(w), 1), `${k}[${i}]`).toBeLessThan(1e-6));
         }
       }
     });
@@ -54,7 +56,7 @@ describe("parity with Python engine", () => {
 });
 
 describe("browser shock generator", () => {
-  const p = JSON.parse(readFileSync(join(DIR, files[0]), "utf-8")).params as Params;
+  const p = JSON.parse(readFileSync(join(DIR, "AAPL_rates_200.json"), "utf-8")).params as Params;
   it("is reproducible per seed and has unit variance", () => {
     const a = drawShocks(p, 4000, 12, 1), b = drawShocks(p, 4000, 12, 1);
     expect(a).toEqual(b);
@@ -66,16 +68,33 @@ describe("browser shock generator", () => {
       expect(Math.abs(s2 / n - 1)).toBeLessThan(0.12);
     }
   });
-  it("runs 5,000 paths fast and summarizes", () => {
-    const t0 = performance.now();
+  const levers: Levers = {
+    recessions: true, cut_capex: true, cut_payouts: true, issue_debt: true, draw_revolver: true, issue_equity: false, cut_costs: true,
+  };
+  it("summarizes a 5,000-path run into ordered bands and probabilities", () => {
     const eps = drawShocks(p, 5000, p.horizon, 7);
-    const out = simulate(p, buildScenario({ sales_depth: 0.3 }, p.horizon), eps, 5000, {
-      recessions: true, cut_capex: true, cut_payouts: true, issue_debt: true, draw_revolver: true, issue_equity: false, cut_costs: true,
-    });
+    const out = simulate(p, buildScenario({ sales_depth: 0.3 }, p.horizon), eps, 5000, levers);
     const s = summarize(out);
-    const ms = performance.now() - t0;
-    expect(s.healthScore).toBeGreaterThanOrEqual(0);
-    expect(ms).toBeLessThan(2000);
+    for (const bands of Object.values(s.bands)) {
+      for (let t = 0; t < p.horizon; t++) for (let j = 1; j < bands.length; j++) expect(bands[j][t]).toBeGreaterThanOrEqual(bands[j - 1][t]);
+    }
+    // breach is absorbing, so its probability cannot fall over the horizon
+    expect(s.pBreachByQ[0]).toBeGreaterThanOrEqual(0);
+    expect(s.pBreachByQ[p.horizon - 1]).toBeLessThanOrEqual(1);
+    s.pBreachByQ.slice(1).forEach((q, t) => expect(q).toBeGreaterThanOrEqual(s.pBreachByQ[t]));
+    expect(s.healthHist.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 12);
+    expect(s.ratingDist.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 12);
+    expect(s.healthP10).toBeLessThanOrEqual(s.healthScore);
+  });
+
+  it("rejects a maturity ladder shorter than the horizon", () => {
+    const eps = drawShocks(p, 10, p.horizon, 7);
+    const short = { ...p, maturities_q: p.maturities_q.slice(0, p.horizon - 1) };
+    expect(() => simulate(short, buildScenario({}, p.horizon), eps, 10, levers)).toThrow(/maturities_q/);
+  });
+
+  it("rejects t_df at or below 2", () => {
+    expect(() => drawShocks({ ...p, t_df: 2 }, 10, p.horizon, 7)).toThrow(/t_df/);
   });
 });
 

@@ -1,12 +1,11 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { drawShocks, makeRng } from "./shocks";
 import type { Params } from "./types";
 
 const DIR = join(__dirname, "__golden__");
-const goldenFiles = readdirSync(DIR).filter((file) => file.endsWith(".json"));
-const baseParams = JSON.parse(readFileSync(join(DIR, goldenFiles[0]), "utf-8")).params as Params;
+const baseParams = JSON.parse(readFileSync(join(DIR, "AAPL_rates_200.json"), "utf-8")).params as Params;
 const N = 20_000;
 
 function channel(values: Float64Array, index: number, size: number): number[] {
