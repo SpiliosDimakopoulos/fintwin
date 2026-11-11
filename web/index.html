@@ -20,10 +20,28 @@
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" />
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%2316150f'/><path d='M7 20.5c3-0.2 4.6-7 8-7s4.6 4.2 10 3.5' stroke='%23f6f4ef' stroke-width='2.6' fill='none' stroke-linecap='round'/></svg>" />
-    <title>FinTwin</title>
+    <title>FinTwin: open stress tests of 390+ US companies from SEC filings</title>
+    <link rel="canonical" href="https://spiliosdimakopoulos.github.io/fintwin/" />
+    <link rel="sitemap" type="application/xml" href="sitemap.xml" />
+    <meta property="og:site_name" content="FinTwin" />
+    <script type="application/ld+json">
+      {"@context":"https://schema.org","@type":"SoftwareApplication","name":"FinTwin","applicationCategory":"FinanceApplication","operatingSystem":"Any (web browser)",
+       "url":"https://spiliosdimakopoulos.github.io/fintwin/","codeRepository":"https://github.com/SpiliosDimakopoulos/fintwin",
+       "description":"Open stock-and-flow model of the cash, debt and margins of 390+ US public companies, built from SEC XBRL filings, rebuilt weekly and stress-tested with Monte Carlo simulation in the browser.",
+       "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://opensource.org/licenses/MIT",
+       "author":{"@type":"Person","name":"Spilios Dimakopoulos"},"citation":"https://doi.org/10.5281/zenodo.23434606"}
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <h1>FinTwin: what happens to a company's cash when the world breaks?</h1>
+      <p>An open stock-and-flow model of the cash, debt and margins of 390+ US public companies, built from SEC filings and
+        rebuilt every week. The interactive dashboard needs JavaScript. Without it you can read
+        <a href="c/">the stress-test results for every company</a>, the
+        <a href="https://github.com/SpiliosDimakopoulos/fintwin">source code and paper</a>, or the raw data in
+        <a href="data/index.json">data/index.json</a>.</p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
