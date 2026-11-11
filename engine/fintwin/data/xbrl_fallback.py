@@ -16,16 +16,17 @@ from __future__ import annotations
 
 import gzip
 import io
+import logging
 import os
 import re
 import xml.etree.ElementTree as ET
 
 import numpy as np
-import requests
 
 from . import edgar as E
 
-PERIODIC = {"10-K", "10-Q", "10-K/A", "10-Q/A", "10-KT"}
+log = logging.getLogger(__name__)
+
 XBRLI = "{http://www.xbrl.org/2003/instance}"
 XBRLDI = "http://xbrl.org/2006/xbrldi"
 GAAP_PREFIX = "http://fasb.org/us-gaap/"
@@ -37,21 +38,15 @@ def enabled() -> bool:
 
 def periodic_filings(cik: int) -> list[dict]:
     """Every XBRL-tagged 10-K / 10-Q (and amendments) in the company's complete filing history."""
-    d = E._get_json(f"https://data.sec.gov/submissions/CIK{cik:010d}.json", f"submissions_{cik:010d}.json", 24)
-    pages = [d["filings"]["recent"]]
-    for f in d["filings"].get("files", []):
-        pages.append(E._get_json(f"https://data.sec.gov/submissions/{f['name']}", f["name"], 24 * 365))
+    _, pages = E.submission_pages(cik, 24)
     out = []
     for p in pages:
-        for i, form in enumerate(p.get("form", [])):
-            if form in PERIODIC and p.get("isXBRL", [0] * (i + 1))[i]:
+        forms = p.get("form", [])
+        xbrl, primary = p.get("isXBRL", [0] * len(forms)), p.get("primaryDocument", [""] * len(forms))
+        for i, form in enumerate(forms):
+            if form in E.PERIODIC_FORMS and xbrl[i]:
                 out.append(
-                    {
-                        "accn": p["accessionNumber"][i],
-                        "form": form,
-                        "filed": p["filingDate"][i],
-                        "primary": p.get("primaryDocument", [""] * (i + 1))[i],
-                    }
+                    {"accn": p["accessionNumber"][i], "form": form, "filed": p["filingDate"][i], "primary": primary[i]}
                 )
     return out
 
@@ -117,18 +112,12 @@ def _download(cik: int, accn: str, name: str) -> bytes:
     if E.frozen():
         raise E.FrozenMiss(f"not in the frozen snapshot: {path.name}")
     url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn.replace('-', '')}/{name}"
-    last = None
-    for _ in range(3):
-        try:
-            E.throttle()  # the same monotonic clock as edgar._get_json: mixing time.time() in stalls every request
-            r = requests.get(url, headers={"User-Agent": E._user_agent()}, timeout=60)
-            r.raise_for_status()
-            E.CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(gzip.compress(r.content))
-            return r.content
-        except requests.RequestException as e:
-            last = e
-    raise RuntimeError(f"could not download {url}: {last}")
+    content = E.fetch(url).content
+    if content[:64].lstrip().lower().startswith((b"<!doctype html", b"<html")):  # SEC's block page, never cache it
+        raise RuntimeError(f"HTML page instead of XBRL from {url}; check SEC_USER_AGENT and the request rate")
+    E.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    E.write_atomic(path, gzip.compress(content))
+    return content
 
 
 def parse_instance(content: bytes, tags: set[str], accn: str, form: str, filed: str) -> dict[str, list[dict]]:
@@ -205,7 +194,8 @@ def _filing_facts(cik: int, f: dict, tags: set[str]) -> dict | None:
     for name in instance_candidates(_index_names(cik, f["accn"]), f["primary"]):
         try:
             content = _download(cik, f["accn"], name)
-        except Exception:
+        except Exception as e:
+            log.warning("xbrl fallback: CIK %s %s/%s skipped: %s: %s", cik, f["accn"], name, type(e).__name__, e)
             continue
         if is_instance(content):
             return parse_instance(content, tags, f["accn"], f["form"], f["filed"])
@@ -213,9 +203,11 @@ def _filing_facts(cik: int, f: dict, tags: set[str]) -> dict | None:
 
 
 def augment(cik: int, raw: dict, tags: set[str]) -> dict:
-    """Append facts from periodic filings that `companyfacts` lacks. Never fails: on any error, returns `raw`."""
+    """Append facts from periodic filings that `companyfacts` lacks. Never fails: on any error it returns `raw` with
+    what was added so far, logs the error and lists it in `raw["_fallback_errors"]`."""
     if not enabled():
         return raw
+    errors: list[str] = []
     try:
         gaap = raw.setdefault("facts", {}).setdefault("us-gaap", {})
         known = {r["accn"] for t in gaap.values() for rows in t.get("units", {}).values() for r in rows}
@@ -224,7 +216,9 @@ def augment(cik: int, raw: dict, tags: set[str]) -> dict:
         for f in missing:
             try:
                 facts = _filing_facts(cik, f, tags)
-            except Exception:  # one unreadable filing must not drop the others
+            except Exception as e:  # one unreadable filing must not drop the others
+                errors.append(f"{f['accn']}: {type(e).__name__}: {e}")
+                log.warning("xbrl fallback: CIK %s filing skipped: %s", cik, errors[-1])
                 continue
             if facts is None:
                 continue
@@ -233,6 +227,9 @@ def augment(cik: int, raw: dict, tags: set[str]) -> dict:
             if facts:
                 added.append(f["accn"])
         raw.setdefault("_fallback", []).extend(added)
-    except Exception:
-        return raw
+    except Exception as e:
+        errors.append(f"{type(e).__name__}: {e}")
+        log.warning("xbrl fallback: CIK %s abandoned: %s", cik, errors[-1])
+    if errors:
+        raw["_fallback_errors"] = errors
     return raw

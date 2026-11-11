@@ -26,7 +26,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from .edgar import _get_json, data_legacy
+from .edgar import _get_json, data_legacy, submission_pages
 from .facts import DURATION
 
 HERE = Path(__file__).resolve().parent
@@ -114,17 +114,16 @@ def frame(tag: str, year: int) -> list[dict]:
         d = _get_json(
             f"https://data.sec.gov/api/xbrl/frames/us-gaap/{tag}/USD/CY{year}.json", f"frames_{tag}_CY{year}.json", 1e6
         )
-    except requests.HTTPError:  # tag not used in that year
-        return []
+    except requests.HTTPError as e:
+        if e.response is None or e.response.status_code != 404:  # a rate limit must not empty the year
+            raise
+        return []  # tag not used in that year
     return d.get("data", [])
 
 
 def submissions(cik: int) -> dict:
     """Company metadata plus every filing (the API pages older filings into separate files)."""
-    d = _get_json(f"https://data.sec.gov/submissions/CIK{cik:010d}.json", f"submissions_{cik:010d}.json", 24 * 30)
-    pages = [d["filings"]["recent"]]
-    for f in d["filings"].get("files", []):
-        pages.append(_get_json(f"https://data.sec.gov/submissions/{f['name']}", f["name"], 24 * 365))
+    d, pages = submission_pages(cik, 24 * 30)
     filings = pd.concat([pd.DataFrame(p) for p in pages if p], ignore_index=True)
     return {"meta": d, "filings": filings}
 
@@ -159,12 +158,13 @@ def build() -> pd.DataFrame:
     extra = sorted(forced - set(cand["cik"]))
     cand = pd.concat([cand, pd.DataFrame({"cik": extra, "first_year": None, "last_year": None, "name": ""})])
     print(f"{len(cand)} companies with >= $50M revenue in some year {YEARS.start}-{YEARS.stop - 1}", flush=True)
-    out = []
+    out, failed = [], []
     for i, r in enumerate(cand.itertuples()):
         try:
             s = submissions(r.cik)
         except Exception as e:  # keep going; the company is reported as missing
             print(f"  {r.cik}: {type(e).__name__}: {e}", flush=True)
+            failed.append(r.cik)
             continue
         meta, f = s["meta"], s["filings"]
         sic = int(meta["sic"]) if str(meta.get("sic") or "").isdigit() else None
@@ -193,6 +193,7 @@ def build() -> pd.DataFrame:
             print(f"  {i}/{len(cand)}", flush=True)
     u = pd.DataFrame(out).sort_values("key")
     u.to_csv(UNIVERSE_CSV, index=False)
+    u.attrs["failed"] = failed
     return u
 
 
@@ -210,14 +211,16 @@ def sp500_on(date: str) -> pd.DataFrame:
         "rvprop": "ids|timestamp",
         "format": "json",
     }
-    rev = next(iter(requests.get(api, params=q, headers=ua, timeout=60).json()["query"]["pages"].values()))
-    rev = rev["revisions"][0]
+    page = next(iter(requests.get(api, params=q, headers=ua, timeout=60).json()["query"]["pages"].values()))
+    if "revisions" not in page:
+        raise ValueError(f"no revision of {q['titles']!r} on or before {date}")
+    rev = page["revisions"][0]
     text = requests.get(
         "https://en.wikipedia.org/w/index.php", params={"oldid": rev["revid"], "action": "raw"}, headers=ua, timeout=60
     ).text
     table = text[text.index('id="constituents"') :]
     table = table[: table.index("|}")]
-    rows = []
+    rows, skipped = [], []
     for block in table.split("\n|-")[1:]:
         tick = re.search(
             r"\{\{\s*(?:NyseSymbol|NasdaqSymbol|nyse|nasdaq|BZX link|NYSE American)\s*\|\s*([A-Z.]+)", block, re.I
@@ -226,7 +229,10 @@ def sp500_on(date: str) -> pd.DataFrame:
         cells = [c.strip() for c in re.split(r"\|\|", body)]
         cik = re.search(r"\b(\d{10})\b", block)
         if not tick or not cik:
+            skipped.append(block.strip()[:80])
             continue
+        if len(cells) < 4:
+            raise ValueError(f"{tick.group(1)}: expected at least 4 cells, got {len(cells)}: {block[:200]!r}")
         name = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", cells[0].lstrip("|")).strip()
         rows.append(
             {
@@ -238,6 +244,10 @@ def sp500_on(date: str) -> pd.DataFrame:
             }
         )
     df = pd.DataFrame(rows).drop_duplicates("ticker")
+    for row in skipped:
+        print(f"  skipped, no ticker template or CIK: {row!r}", file=sys.stderr)
+    if not 480 <= len(df) <= 520:  # 500 companies, a few with a second share class
+        print(f"  warning: {len(df)} constituents parsed; the table layout may have changed", file=sys.stderr)
     df.attrs["revision"] = rev
     return df
 
@@ -251,3 +261,5 @@ if __name__ == "__main__":
     else:
         u = build()
         print(len(u), "non-financial companies;", int((u["bankruptcy_8k"] != "").sum()), "with an Item 1.03 8-K")
+        if u.attrs["failed"]:  # a partial universe must not be committed by accident
+            sys.exit(f"{len(u.attrs['failed'])} companies failed and are missing from {UNIVERSE_CSV.name}; rerun")
