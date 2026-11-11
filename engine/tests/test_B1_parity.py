@@ -117,8 +117,9 @@ def _outputs(macro) -> dict:
     return json.loads(json.dumps(res, default=float))
 
 
-def _golden(macro) -> None:  # pragma: no cover - run once on the pre-change code
-    GOLDEN.write_text(json.dumps(_outputs(macro), indent=1, sort_keys=True))
+def _golden(macro, generated_by: str) -> None:  # pragma: no cover - run once on the pre-change code
+    """`generated_by` is "<commit> <date>" of the code that ran; a regeneration shows up as a one-line change to it."""
+    GOLDEN.write_text(json.dumps({"_generated_by": generated_by, **_outputs(macro)}, indent=1, sort_keys=True))
 
 
 @pytest.mark.parametrize("spec", ["", "v2-pre", "v2-rev"])
@@ -129,6 +130,7 @@ def test_v2_specs_reproduce_revision2_code_exactly(macro, monkeypatch, spec):
         monkeypatch.delenv("FINTWIN_SPEC", raising=False)
     monkeypatch.delenv("FINTWIN_FIXES", raising=False)
     gold = json.loads(GOLDEN.read_text())
+    assert gold.pop("_generated_by").startswith("20b2610"), "the golden must come from the pre-change code"
     got = _outputs(macro)
     assert got.keys() == gold.keys()
     for k in gold:
