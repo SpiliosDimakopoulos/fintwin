@@ -16,7 +16,14 @@ os.environ.setdefault("FINTWIN_B_LAD", "20")
 settings.register_profile("ci", derandomize=True)
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
 
-_SWITCHES = ("FINTWIN_SPEC", "FINTWIN_FIXES", "FINTWIN_SELECTION", "FINTWIN_DATA_LEGACY")
+_SWITCHES = (
+    "FINTWIN_SPEC",
+    "FINTWIN_FIXES",
+    "FINTWIN_SELECTION",
+    "FINTWIN_DATA_LEGACY",
+    "FINTWIN_FROZEN",
+    "FINTWIN_FILL_ONLY",
+)
 _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
