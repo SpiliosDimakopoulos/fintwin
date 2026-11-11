@@ -541,14 +541,15 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     # Student-t tail thickness on standardized growth residuals
     df = 30.0
     f7 = S.active("F7")
+    src["t_df"] = f"assumption: normal tails ({len(resid_g)} growth residuals, 12 needed for a Student-t fit)"
     if len(resid_g) >= 12:
         try:
             z = resid_g / max(sigma_g, EPS)
             # MM-F7: with the scale fixed at 1 on MAD-standardized data the t fit is misspecified; fit df and scale
             df = _clip(stats.t.fit(z, floc=0)[0] if f7 else stats.t.fit(z, floc=0, fscale=1)[0], 3.0, 30.0, 30.0)
-        except Exception:
-            pass
-    src["t_df"] = "MLE Student-t fit on standardized growth residuals"
+            src["t_df"] = "MLE Student-t fit on standardized growth residuals"
+        except (RuntimeError, FloatingPointError, ValueError) as e:  # scipy fit errors on degenerate residuals
+            src["t_df"] = f"assumption: normal tails (Student-t fit failed: {type(e).__name__})"
     if f7 and a.get("t_df_pooled"):  # per-firm df is noise (weakly identified): shrink toward the panel in 1/df
         w = float(a["t_df_pool_weight"])
         df = _clip(1.0 / (w / float(a["t_df_pooled"]) + (1 - w) / df), 3.0, 30.0, 30.0)
@@ -706,7 +707,9 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
         if okr.sum() >= 8 and float((gap[okr] ** 2).sum()) > 0:
             k = float((gap[okr] * step[okr]).sum() / (gap[okr] ** 2).sum())
             tau_ar = _clip(1.0 / k if k > 0 else np.nan, 1.0, 4.0, 1.0)
-        src["tau_ar"] = f"receivables adjustment delay estimated from {int(okr.sum())} quarters"
+            src["tau_ar"] = f"receivables adjustment delay estimated from {int(okr.sum())} quarters"
+        else:
+            src["tau_ar"] = f"assumption: no receivables delay ({int(okr.sum())} usable quarters, 8 needed)"
 
     # ---- financing ----
     debt0 = float(last["total_debt"])
@@ -772,6 +775,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
 
     # maturity ladder (annual -> quarterly). Stale or missing ladders fall back to a 6-year average life.
     ladder_q = np.zeros(horizon)
+    ladder_known = False
     fresh = c.maturities_date and (q.index[-1] - pd.Timestamp(c.maturities_date)).days <= 450
     if fresh and sum(c.maturities) > 0:
         elapsed_q = int(round((q.index[-1] - pd.Timestamp(c.maturities_date)).days / DAYS_Q))
@@ -782,6 +786,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
         st = float(last["short_borrowings"] + last["commercial_paper"])
         ladder_q[:4] += st / 4.0
         src["maturities"] = f"XBRL maturity schedule as of {c.maturities_date}"
+        ladder_known = True
     elif S.active("M3"):
         # M3: the ladder is unknown, so say so and assume bullets: short-term borrowings roll within the year, the
         # rest matures in equal annual bullets over a 6-year average life (lumpier, and earlier, than amortization)
@@ -959,7 +964,7 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
             acq = float(q["acquisitions"].tail(8).fillna(0).clip(lower=0).sum())
             p["ma_flag"] = 1.0 if acq > MA_THRESHOLD * float(rev.tail(8).sum()) else 0.0
     if S.active("M3"):
-        p["ladder_unknown"] = 0.0 if src["maturities"].startswith("XBRL") else 1.0
+        p["ladder_unknown"] = 0.0 if ladder_known else 1.0
     bad = [k for k, val in p.items() if isinstance(val, (float, np.floating)) and not np.isfinite(val)]
     bad += [k for k, val in p.items() if isinstance(val, list) and not np.all(np.isfinite(np.asarray(val, float)))]
     if bad:
