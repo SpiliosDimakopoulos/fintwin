@@ -97,7 +97,9 @@ def test_gdp_vintage_is_used_from_the_20th_of_the_quarters_second_month(tmp_path
 
 def test_committed_gdp_vintages_respect_the_publication_date():
     before, after = fred.gdp_vintage("2020-08-19"), fred.gdp_vintage("2020-08-20")
-    assert before.index[-1] == pd.Timestamp("2020-03-31")  # the 2020Q3 vintage (first to hold 2020Q2) is dated 2020-08-20
+    assert before.index[-1] == pd.Timestamp(
+        "2020-03-31"
+    )  # the 2020Q3 vintage (first to hold 2020Q2) is dated 2020-08-20
     assert after.index[-1] == pd.Timestamp("2020-06-30")
     assert fred.gdp_vintage("2009-12-31") is None
 
