@@ -5,6 +5,7 @@ import { prettyName, shortcutLabel } from "./format";
 import { useHashState } from "./hooks";
 import { IconChevron, IconMoon, IconSun, Skeleton, Wordmark } from "./ui";
 import { OverviewView } from "./views/OverviewView";
+import { TwinView } from "./views/TwinView";
 
 // Secondary views load on demand so the landing page ships less JavaScript.
 const StressLab = lazy(() => import("./views/StressLab").then((m) => ({ default: m.StressLab })));
@@ -15,7 +16,6 @@ const BacktestView = lazy(() => import("./views/BacktestView").then((m) => ({ de
 const MachineView = lazy(() => import("./views/MachineView").then((m) => ({ default: m.MachineView })));
 const MethodView = lazy(() => import("./views/MethodView").then((m) => ({ default: m.MethodView })));
 const ChangesView = lazy(() => import("./views/ChangesView").then((m) => ({ default: m.ChangesView })));
-import { TwinView } from "./views/TwinView";
 
 const NAV = [
   ["overview", "Overview"], ["changes", "This week"], ["twin", "Company"], ["stress", "Stress lab"], ["time", "Time machine"],
@@ -57,9 +57,15 @@ export default function App() {
     if (!COMPANY_VIEWS.has(view)) return;
     setError(null);
     setLastTicker(ticker);
-    loadCompany(ticker).then(setCompany).catch((e) => setError(String(e.message ?? e)));
+    // a slower load for the previous ticker must not overwrite the current one
+    let live = true;
+    loadCompany(ticker).then((c) => { if (live) setCompany(c); }, (e) => { if (live) setError(String(e.message ?? e)); });
+    return () => { live = false; };
   }, [ticker, view]);
   useEffect(() => { window.scrollTo({ top: 0 }); }, [view]);
+  // the key handler is attached once and reads these refs, which every render points at the current closures
+  const navRef = useRef<(v: string) => void>(() => {});
+  const toggleThemeRef = useRef<() => void>(() => {});
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement)?.matches?.("input, textarea, select");
@@ -78,8 +84,6 @@ export default function App() {
     document.title = `${name}FinTwin`;
   }, [company, view]);
 
-  const navRef = useRef<(v: string) => void>(() => {});
-  const toggleThemeRef = useRef<() => void>(() => {});
   const go = (v: string, t?: string, p?: string) => setRoute([v, COMPANY_VIEWS.has(v) ? (t ?? ticker) : undefined, p].filter(Boolean).join("/"));
   navRef.current = (v: string) => go(v);
   toggleThemeRef.current = toggleTheme;
