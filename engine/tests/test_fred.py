@@ -12,6 +12,14 @@ from fintwin.data import fred
 CSV = "DATE,X\n2020-01-01,150\n2020-02-01,250\n"
 
 
+@pytest.fixture(autouse=True)
+def _fresh_vintages():
+    """The vintage table is read once per process; a test that swaps in a toy table must not leak it."""
+    fred._vintages.cache_clear()
+    yield
+    fred._vintages.cache_clear()
+
+
 @pytest.fixture
 def served(monkeypatch, tmp_path):
     monkeypatch.setattr(fred, "CACHE_DIR", tmp_path)
@@ -23,7 +31,7 @@ def served(monkeypatch, tmp_path):
         def raise_for_status(self):
             pass
 
-    monkeypatch.setattr(fred.requests, "get", lambda url, **k: calls.append(url) or Resp())
+    monkeypatch.setattr(fred, "fetch", lambda url, **k: calls.append(url) or Resp())
     return calls
 
 

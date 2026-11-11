@@ -29,6 +29,7 @@ class FakeClock:
 class FakeResponse:
     def __init__(self, status_code=200, payload=None):
         self.status_code = status_code
+        self.headers = {}
         self._payload = {"ok": True} if payload is None else payload
 
     def raise_for_status(self):
