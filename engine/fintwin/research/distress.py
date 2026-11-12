@@ -249,6 +249,9 @@ def _bss(p: np.ndarray, q: np.ndarray, y: np.ndarray) -> float:
     return float(1 - brier(p[m], y[m]) / bq) if bq and np.isfinite(bq) else np.nan
 
 
+MIN_BLOCKS = 5  # fewest resampling blocks for a year-block percentile interval to mean anything
+
+
 def block_ci(stat, cols: list[np.ndarray], blocks: np.ndarray, b: int, seed: int = 15) -> dict:
     """Percentile CI of `stat` resampling whole blocks (cutoff years, or firms) with replacement; own RNG."""
     rng = np.random.default_rng(seed)
@@ -376,10 +379,19 @@ def shortfall_label(ce: float, cash_min: float | None, raise_: float | None) -> 
 def liquidity_frame(cache: Path, min_log_rev: float = S.MIN_LOG_REV) -> pd.DataFrame:
     """One row per firm-year from the shards' `liquidity`, `outcome`, `features` and `credit_events` blocks."""
     rows = []
+    # D8 as in `stats.main`: a firm-year whose cutoff falls inside a running Chapter 11 case is neither a survivor
+    # nor a new filer (12-11-2026 review, S3: B2 / B3 used to keep them)
+    bkd, raw = S.bankruptcy_dates(), S.bankruptcy_filings()
+    excluded = 0
     for f in sorted(Path(cache).glob("*.json")):
         r = json.loads(f.read_text(encoding="utf-8"))
         ind = (r.get("covid") or {}).get("sector")
+        dates = bkd.get(r.get("cik"), []) if r.get("cik") is not None else []
+        spans = S._spans(dates, raw.get(r.get("cik"))) if dates else []
         for pr in r.get("panel", []):
+            if spans and not S._data_legacy() and S.in_bankruptcy(spans, pr["origin"]):
+                excluded += 1
+                continue
             liq, oc, ft = pr.get("liquidity") or {}, pr.get("outcome") or {}, pr.get("features") or {}
             if not liq:
                 continue
@@ -405,6 +417,7 @@ def liquidity_frame(cache: Path, min_log_rev: float = S.MIN_LOG_REV) -> pd.DataF
                 )
             rows.append(row)
     df = pd.DataFrame(rows)
+    df.attrs["in_bankruptcy_excluded"] = excluded
     if df.empty:
         return df
     if df["industry"].isna().any():
@@ -414,6 +427,7 @@ def liquidity_frame(cache: Path, min_log_rev: float = S.MIN_LOG_REV) -> pd.DataF
     df = df[df["log_rev"].astype(float) >= min_log_rev].reset_index(drop=True)
     num = [c for c in df if c not in ("ticker", "origin", "industry", "outcome_filed", "outcome_filed4")]
     df[num] = df[num].apply(pd.to_numeric, errors="coerce")
+    df.attrs["in_bankruptcy_excluded"] = excluded
     return df
 
 
@@ -473,9 +487,16 @@ def _versus(df: pd.DataFrame, p: np.ndarray, y: np.ndarray, k: int, years: list[
         }
         for t in sorted(set(yr[test].tolist()))
     }
-    # success rule of REVISION_PLAN_3 §2.2 B2: Brier skill > 0 against the logit, year-block CI excluding 0
-    lo = out["bss_vs_logit"]["year_block"]["ci"][0]
-    out["success"] = bool(out["bss_vs_logit"]["bss"] > 0 and lo is not None and lo > 0)
+    # success rule of REVISION_PLAN_3 §2.2 B2: Brier skill > 0 against the logit, year-block CI excluding 0. With
+    # fewer than MIN_BLOCKS cutoff years the percentile "CI" is the min / max of the yearly skills (12-11-2026 review,
+    # S2), so no verdict is given
+    yb = out["bss_vs_logit"]["year_block"]
+    lo = yb["ci"][0]
+    if yb["blocks"] < MIN_BLOCKS:
+        out["success"] = None
+        out["success_undefined"] = f"year-block CI from {yb['blocks']} cutoff years (< {MIN_BLOCKS})"
+    else:
+        out["success"] = bool(out["bss_vs_logit"]["bss"] > 0 and lo is not None and lo > 0)
     return out
 
 
@@ -486,13 +507,14 @@ def liquidity_section(df: pd.DataFrame, b: int = 2000) -> dict:
     if df.empty:
         return {}
     out: dict = {
+        "in_bankruptcy_excluded": int(df.attrs.get("in_bankruptcy_excluded", 0)),  # D8 (S3)
         "definition": {
             "forecast": "share of paths with cash + undrawn revolver < 0 in some quarter within k",
             "realized": f"credit event (8-K 1.03/2.04/3.01) within k quarters, or cash-like < {SHORT_CASH:.0%} of "
             f"opening with total debt up > {SHORT_DEBT:.0%} of trailing revenue",
             "benchmarks": {"logit": list(LOGIT_COLS), "altman_z2": list(Z_COLS)},
             "training": "firm-years whose label was observable at the test cutoff (actual filing dates)",
-        }
+        },
     }
     all_years = sorted(set(df["year"].astype(int).tolist()))
     for label, ycol in (("shortfall", "y_short"), ("credit_event", "ce")):
@@ -504,6 +526,12 @@ def liquidity_section(df: pd.DataFrame, b: int = 2000) -> dict:
                 "recession": _versus(df, df[f"rec{k}"].to_numpy(float), y, k, all_years, b),
             }
         out[label] = res
+    # The single B2 test (§2.2), named before any rerun-5 result (12-11-2026, S2): the B2 label (shortfall), 8
+    # quarters (the panel's outcome horizon), and the Recession version, the only one whose year-block CI has enough
+    # cutoff years; the other seven cells are descriptive.
+    cell = out.get("shortfall", {}).get("8", {}).get("recession", {})
+    out["primary"] = {"cell": "shortfall / 8 / recession", "success": cell.get("success"),
+                      "blocks": (cell.get("bss_vs_logit") or {}).get("year_block", {}).get("blocks")}  # fmt: skip
     return out
 
 

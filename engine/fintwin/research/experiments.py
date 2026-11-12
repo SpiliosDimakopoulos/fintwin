@@ -268,21 +268,19 @@ def walk_forward_select(
     """
     years = np.asarray(years)
     real = np.asarray(real, float)
+    X = {name: np.asarray(x, float) for name, x in preds.items()}
     out: dict[int, dict] = {}
     for y in sorted(set(years.tolist())):
-        past = years <= y - lag
-        err: dict[str, float] = {}
-        n = 0
-        for name, x in preds.items():
-            x = np.asarray(x, float)
-            m = past & np.isfinite(x) & np.isfinite(real)
-            n = max(n, int(m.sum()))
-            if m.sum() >= min_past:
-                err[name] = float(np.median(np.abs(x[m] - real[m])))
-        if not err:
+        past = (years <= y - lag) & np.isfinite(real)
+        # one common set of firm-years for every value (12-11-2026 review, S5): a value that fails on the hard
+        # firm-years must not be scored on the easy ones only
+        m = past & np.all([np.isfinite(x) for x in X.values()], axis=0)
+        if m.sum() < min_past:
             continue
+        err = {name: float(np.median(np.abs(x[m] - real[m]))) for name, x in X.items()}
         best = min(err, key=lambda k: (err[k], list(preds).index(k)))
-        out[int(y)] = {"choice": best, "n_past": n, "median_ae": err}
+        excluded = {name: int((past & ~np.isfinite(x)).sum()) for name, x in X.items()}
+        out[int(y)] = {"choice": best, "n_past": int(m.sum()), "n_excluded": excluded, "median_ae": err}
     return out
 
 

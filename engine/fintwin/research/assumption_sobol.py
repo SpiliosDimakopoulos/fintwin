@@ -207,8 +207,9 @@ def shard(i: int, n: int) -> None:
     X = points()
     st = stamp()
     keys, failed0, excluded0 = eligible()
-    # the selection step's counts are reported once (by shard 0), the design-point failures by every shard
-    failed, excluded = (dict(failed0), dict(excluded0)) if i == 0 else ({}, {})
+    # the selection step's counts are reported once (by shard 0); the design-point failures by every shard, apart
+    # from them, with the firm-years they concern (`stats` checks every eligible firm-year is a row or one of these)
+    failed, excluded, lost = {}, {}, []
     done = 0
     for k, (key, year) in enumerate(keys):
         if k % n != i:
@@ -221,16 +222,21 @@ def shard(i: int, n: int) -> None:
             r = _one(key, year, X)
         except Exception as e:  # a firm that cannot be loaded is skipped, and counted by type (SW-3)
             failed[type(e).__name__] = failed.get(type(e).__name__, 0) + 1
+            lost.append(f"{key}_{year}")
             print(f"  {key} {year}: {type(e).__name__}: {e}", flush=True)
             continue
         if isinstance(r, str):  # a data exclusion (not usable, outcome window short or with a gap, ...), not an error
             excluded[r] = excluded.get(r, 0) + 1
+            lost.append(f"{key}_{year}")
             continue
         r["_stamp"] = st
         out.write_text(json.dumps(_clean(r)), encoding="utf-8")
         done += 1
         print(f"  {key} {year} done ({done})", flush=True)
-    report = {"failed": failed, "excluded": excluded}  # exceptions by type vs data exclusions by reason
+    report = {  # exceptions by type vs data exclusions by reason
+        "selection": {"failed": failed0, "excluded": excluded0} if i == 0 else None,
+        "design": {"failed": failed, "excluded": excluded, "firm_years": lost},
+    }
     (d / f"_failures_{i}_of_{n}.txt").write_text(json.dumps(report), encoding="utf-8")
 
 
@@ -296,6 +302,30 @@ def _outputs(T: np.ndarray, real: np.ndarray, n1: np.ndarray, dx: np.ndarray) ->
     return out
 
 
+def _attrition(d: Path, rows: list[dict]) -> dict:
+    """Every eligible firm-year is a row or a recorded design-point failure, or `stats` stops (12-11-2026 review,
+    P4: a firm-year lost without a trace shrank the sample silently)."""
+    path = d / "_eligible.json"
+    if not path.exists():
+        raise SystemExit(f"no _eligible.json in {d}: run the Sobol shards first")
+    keys = {f"{k}_{y}" for k, y in json.loads(path.read_text(encoding="utf-8"))["keys"]}
+    have = {f"{r['key']}_{r['year']}" for r in rows}
+    reports = [json.loads(f.read_text(encoding="utf-8")) for f in sorted(d.glob("_failures_*.txt"))]
+    design = [r.get("design") or {} for r in reports]
+    lost = {k for r in design for k in r.get("firm_years", [])}
+    extra, unaccounted = sorted(have - keys), sorted(keys - have - lost)
+    if extra or unaccounted:
+        raise SystemExit(f"Sobol rows do not match the eligible set: {len(extra)} extra, {len(unaccounted)} missing "
+                         f"without a recorded failure (e.g. {(extra + unaccounted)[:3]})")  # fmt: skip
+    merge: dict = {"failed": {}, "excluded": {}}
+    for r in design:
+        for kind in merge:
+            for k, v in (r.get(kind) or {}).items():
+                merge[kind][k] = merge[kind].get(k, 0) + v
+    sel = next((r["selection"] for r in reports if r.get("selection")), None)
+    return {"eligible": len(keys), "rows": len(have), "design_point_lost": len(lost), "design": merge, "selection": sel}
+
+
 def stats(n_boot: int = 500, seed: int = 3) -> dict:
     from scipy.stats import spearmanr
 
@@ -305,6 +335,7 @@ def stats(n_boot: int = 500, seed: int = 3) -> dict:
     stamps = {r.get("_stamp") for r in rows}
     if len(stamps) > 1:
         raise SystemExit(f"Sobol shards under {len(stamps)} stamps in {d}: rerun the stale ones")
+    attrition = _attrition(d, rows)
     real = np.array([r["real"] for r in rows])
     n1 = np.array([r["n1"] for r in rows])
     dx = np.array([r.get("rev_change", np.nan) for r in rows], float)
@@ -334,6 +365,7 @@ def stats(n_boot: int = 500, seed: int = 3) -> dict:
         }
         if has_ref
         else None,
+        "attrition": attrition,
     }
     for name, f in outs.items():
         out[name] = {
@@ -342,6 +374,7 @@ def stats(n_boot: int = 500, seed: int = 3) -> dict:
             "max": float(np.nanmax(f)),
             "indices": indices(f, N_BASE, k, rng, n_boot, boots[name] or None),
         }
+    OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(out, indent=1), encoding="utf-8")
     (CACHE_ROOT / f"{d.name}.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
     return out

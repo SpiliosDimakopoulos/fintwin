@@ -26,6 +26,8 @@ def stats(limit: int | None = None, years: set[int] | None = None) -> None:
     copy.parent.mkdir(parents=True, exist_ok=True)
     res = json.loads(Path(OUT).read_text(encoding="utf-8"))
     res["failures"] = summary
+    # which code made the shards (their stamps) and which made these numbers
+    res["provenance_code"] = {"shard_digest": M._code_digest(), "analysis_digest": M.analysis_digest()}
     copy.write_text(json.dumps(res, indent=1), encoding="utf-8")
 
 

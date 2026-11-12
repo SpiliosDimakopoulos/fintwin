@@ -203,7 +203,8 @@ def test_sobol_shard_separates_exclusions_from_exceptions(monkeypatch, tmp_path)
     monkeypatch.setattr(AS, "_one", one)
     AS.shard(0, 1)
     rep = json.loads((tmp_path / "_failures_0_of_1.txt").read_text(encoding="utf-8"))
-    assert rep == {"failed": {"KeyError": 1}, "excluded": {"outcome_gap": 1, "small": 1}}
+    assert rep["selection"] == {"failed": {"KeyError": 1}, "excluded": {"outcome_gap": 1, "small": 1}}
+    assert rep["design"] == {"failed": {}, "excluded": {}, "firm_years": []}
 
 
 def test_sobol_firm_years_do_not_depend_on_the_shard_count(monkeypatch, tmp_path):
@@ -241,3 +242,26 @@ def test_one_legacy_switch(monkeypatch, value, legacy):
     monkeypatch.setenv("FINTWIN_DATA_LEGACY", value)
     assert B.data_legacy() is edgar.data_legacy() is S._data_legacy() is legacy
     assert B.data_legacy is edgar.data_legacy
+
+
+def test_sobol_stats_refuses_a_firm_year_lost_without_a_trace(monkeypatch, tmp_path):
+    # rerun 5, P4: every eligible firm-year is a row or a recorded design-point failure
+    monkeypatch.setattr(AS, "cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(AS, "points", lambda: np.zeros((1, 1)))
+    monkeypatch.setattr(AS, "sample", lambda: [(k, 2018) for k in "ABC"])
+    monkeypatch.setattr(AS, "N_SAMPLE", 3)
+
+    def one(key, year, X):
+        if X is not None and key == "B":
+            raise ValueError("non-finite simulation output ['cfo']")
+        return {"key": key, "year": year}
+
+    monkeypatch.setattr(AS, "_one", one)
+    AS.shard(0, 1)
+    rows = [json.loads(f.read_text(encoding="utf-8")) for f in tmp_path.glob("*.json") if not f.name.startswith("_")]
+    att = AS._attrition(tmp_path, rows)
+    assert att["eligible"] == 3 and att["rows"] == 2 and att["design"]["failed"] == {"ValueError": 1}
+    (tmp_path / "C_2018.json").unlink()  # a row gone with no failure recorded
+    rows = [r for r in rows if r["key"] != "C"]
+    with pytest.raises(SystemExit, match="missing without a recorded failure"):
+        AS._attrition(tmp_path, rows)
