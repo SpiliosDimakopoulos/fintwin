@@ -518,7 +518,7 @@ def load(cache: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
                 "gics": gics,
                 "bankrupt": r.get("bankrupt_2020", False),
                 **flags,
-                "bk_2020": bk_event(dates, "2020-02-20", 680),  # filings to the end of 2021
+                "bk_2020": bk_event(dates, "2020-02-20", 680, spans=spans),  # filings to the end of 2021; D8 (S3)
             }
             row |= {f"grid_{k}": v for k, v in (c.get("depth_grid") or {}).items()}
             row["st"] = c.get("structural") or {}
@@ -580,7 +580,9 @@ def _secondary_pvalues(res: dict) -> dict[str, float]:
     out: dict[str, float] = {}
     tp = res.get("transmission", {}).get("panel", {})
     for var in ("cfo", "fcf"):
-        h = tp.get(var, {}).get("hybrid", {})
+        # pre-spec 2.1: winsorization limits from the training years only (E6); `hybrid` (all-year limits) is the
+        # revision-2 continuity number and never enters the Holm family (12-11-2026 review, S4)
+        h = tp.get(var, {}).get("hybrid_train", {})
         for k in ("N3+T1_vs_N3+N1", "N3+T1_vs_N3+N5", "N3+T1_vs_N3+N6"):
             if k in h:
                 out[f"hybrid_{var}_{k}"] = h[k]["p"]
