@@ -140,3 +140,16 @@ data layer: το paper το γράφει δίπλα στους αριθμούς 
 | Re-review: §3Γ ελλιπές, διακόπτης seed ανύπαρκτος, συμπλήρωμα μετά το dry | Μ-(b), 4, (c) | §3Γ, §3Α, §6 |
 | Re-review: TTL μέσα στο job, `select` σε ελλιπές pass, Sobol `wait`, `out/` που μεγαλώνει | Τ-N1..N4 | keep-alive με όριο, `check_run`, έλεγχος exit, pull/push paths |
 | Re-review: PUT label χωρίς retry, exit 0 με αποτυχημένο pull, grace counter, χειροκίνητο pull, Ctrl-C | Τ-N5..N10 | retry, exit 3, reset στο `extend`, `pull --done`, κρατά τον server αν το job δεν τελείωσε· `do` δοκιμασμένο με mocks (4 σενάρια) |
+
+## 8. Απόκλιση στα stats (12-11-2026, μετά το universe, πριν από κάθε αποτέλεσμα v3)
+**Αντικαταστάθηκε (12-11-2026):** το wrapper `scripts/stats_finite.py` δεν χρησιμοποιείται· η διόρθωση μπήκε στο
+πακέτο και το run επαναλαμβάνεται ολόκληρο (rerun 5): `RERUN5_SUPPLEMENT.md`, `RERUN5_PLAN.md`, `RERUN5_FIXPLAN.md`.
+
+Το `stats` του v3 (grid και wf) σταμάτησε: ValueError στο `calibration.section`. Αιτία: στο universe run μία εταιρεία
+(CIK0000766421, origin 2014-02-15) βγάζει μη πεπερασμένη προσομοίωση μετά το 1ο τρίμηνο, και το v3 γράφει 3 forecasts
+cash_like (h = 2..4) με quantiles `None` αντί για error (το v2-pre την ίδια εταιρεία τη γράφει ως error). Ένα NaN μηδενίζει
+όλα τα conformal quantiles της μεταβλητής. Διόρθωση: `scripts/stats_finite.py` (τρέχει το `stats` αφού αφαιρέσει τις
+γραμμές forecast με μη πεπερασμένα quantiles και τις καταγράφει στα `errors` του research.json). Μπαίνει έξω από το
+`fintwin/`, γιατί κάθε αλλαγή εκεί αλλάζει το code digest και ακυρώνει όλα τα shards. Το ίδιο φίλτρο ισχύει σε όλα τα rungs
+(v2-pre, v2-rev: 0 γραμμές). Εκκρεμεί: η διόρθωση μέσα στο πακέτο (forecast με μη πεπερασμένα quantiles → error, και
+φίλτρο στο `stats`) μετά το rev3, με ρητή σημείωση ότι το digest του run είναι `4f26a88a0bfd`.

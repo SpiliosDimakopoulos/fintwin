@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .hypothesis/
 engine/.cache/
+engine/out/
 node_modules/
 web/dist/
 *.egg-info/
