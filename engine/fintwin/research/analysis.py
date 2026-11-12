@@ -20,11 +20,11 @@ def stats(limit: int | None = None, years: set[int] | None = None) -> None:
     from .units import family_pass
 
     d = M.spec_dir(M.run_tag(limit, years))
-    M.check_run(d, limit, years)
-    summary = M.check_failures(M._shards(d))
     name = d.name + ("_family" if family_pass() else "")  # the family pass (WP6) writes beside the firm pass
     for old in (M.ROOT / "_results" / f"{name}_cfo_errors.csv", M.ROOT / "_results" / f"{name}.json"):
-        old.unlink(missing_ok=True)  # a failed stats must leave no earlier file for cross-spec to compare (round 2)
+        old.unlink(missing_ok=True)  # before any check: a failed stats leaves no earlier file for cross-spec (round 3)
+    M.check_run(d, limit, years)
+    summary = M.check_failures(M._shards(d))
     main(d, cfo_errors=M.ROOT / "_results" / f"{name}_cfo_errors.csv")
     copy = M.ROOT / "_results" / f"{name}.json"  # one result per spec, next to the shared docs/paper/research.json
     copy.parent.mkdir(parents=True, exist_ok=True)

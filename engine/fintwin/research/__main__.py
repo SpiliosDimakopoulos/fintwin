@@ -321,9 +321,10 @@ def select(limit: int | None = None, years: set[int] | None = None) -> Path:
     sel = select_from_shards(d)
     skipped = {k: v for k, v in sel.items() if k.endswith("_skipped") and v}
     if skipped:  # years with enough history but too few firm-years where every grid value is finite
-        raise SystemExit(
-            f"walk-forward selection skipped years {skipped}: see the evidence; a grid value fails too often"
-        )
+        rejected = selection_path(tag=tag).with_suffix(".rejected.json")  # evidence kept; never read as a table
+        rejected.parent.mkdir(parents=True, exist_ok=True)
+        rejected.write_text(json.dumps(sel, indent=1), encoding="utf-8")
+        raise SystemExit(f"walk-forward selection skipped years {skipped}: evidence in {rejected}")
     sel["_grid_stamp"] = grid_stamp()  # the second pass checks that the table comes from this grid pass
     path = selection_path(tag=tag)
     path.parent.mkdir(parents=True, exist_ok=True)

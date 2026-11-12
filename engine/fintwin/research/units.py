@@ -38,8 +38,9 @@ def unit(df: pd.DataFrame) -> pd.Series:
 
 def dedupe_events(df: pd.DataFrame, cols: list[str], when: str | None) -> tuple[pd.DataFrame, dict]:
     """Family pass: one event per family and cutoff (`when`; None: one cutoff). In a family-cutoff where any member
-    has an event in any of `cols`, one member keeps its labels for every column (the largest by log_rev among those
-    with an event, ties by ticker) and every other member's labels become NaN: neither a second event nor a survivor
+    has an event in any of `cols`, one member stands for the family (the largest by log_rev among those with an
+    event, ties by ticker) with the family's labels (the maximum over members per column), and every other member's
+    labels become NaN: neither a second event nor a survivor
     of a group that failed (round 2: per-column choices could keep different members; siblings stayed survivors).
     Returns the frame and the number of labels set to NaN per column."""
     cols = [c for c in cols if c in df]
@@ -55,6 +56,10 @@ def dedupe_events(df: pd.DataFrame, cols: list[str], when: str | None) -> tuple[
             continue
         hit = g[ev[g.index]].assign(_s=size[g.index][ev[g.index]].fillna(-np.inf))
         keep = hit.sort_values(["_s", "ticker"], ascending=[False, True], kind="mergesort").index[0]
+        # the kept row carries the family's labels: an event of any member in any column (round 3: the kept member's
+        # 0 or NaN replaced a sibling's 1, a false survivor)
+        fam = g[cols].apply(pd.to_numeric, errors="coerce").max(axis=0, skipna=True)
+        df.loc[keep, cols] = fam.to_numpy()
         drop += [i for i in g.index if i != keep]
     removed = {c: int(df.loc[drop, c].notna().sum()) for c in cols}
     df.loc[drop, cols] = np.nan

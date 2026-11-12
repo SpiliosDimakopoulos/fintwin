@@ -23,8 +23,9 @@ import pandas as pd
 LINK_FORMS = frozenset({"10-K", "10-Q", "8-K", "10-K/A", "10-Q/A", "8-K/A", "10-KT", "10-KT/A"})
 
 
-def links(filings: dict[int, pd.DataFrame]) -> list[tuple[int, int]]:
-    """Pairs of CIKs that share an accession number on a periodic or current report."""
+def links(filings: dict[int, pd.DataFrame], counts: dict | None = None) -> list[tuple[int, int]]:
+    """Pairs of CIKs that share an accession number on a periodic or current report (`counts`, when given, receives
+    the number of shared filings per pair)."""
     owners: dict[str, set[int]] = {}
     for cik, f in filings.items():
         if f is None or f.empty:
@@ -37,6 +38,9 @@ def links(filings: dict[int, pd.DataFrame]) -> list[tuple[int, int]]:
         if len(ciks) > 1:
             first, *rest = sorted(ciks)
             out |= {(first, c) for c in rest}
+            if counts is not None:
+                for c in rest:
+                    counts[(first, c)] = counts.get((first, c), 0) + 1
     return sorted(out)
 
 
@@ -73,7 +77,10 @@ def build(ciks: list[int], out: Path | None = None) -> dict[int, int]:
     if ciks and missing > len(ciks) / 2:  # no snapshot submissions: every family would be a singleton, silently
         raise SystemExit(f"families: no submissions for {missing} of {len(ciks)} CIKs")
     print(f"families: submissions missing for {missing} of {len(ciks)} CIKs (each its own family)")
-    fam = families(ciks, links(filings))
+    counts: dict = {}
+    fam = families(ciks, links(filings, counts))
+    thin = sum(1 for v in counts.values() if v <= 2)  # links resting on one or two joint filings (a merger 8-K)
+    print(f"families: {len(counts)} links, {thin} of them on <= 2 shared filings")
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps({str(k): v for k, v in fam.items()}), encoding="utf-8")

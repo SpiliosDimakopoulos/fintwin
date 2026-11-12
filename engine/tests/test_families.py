@@ -54,7 +54,9 @@ def test_family_pass_sets_units_and_counts_a_group_bankruptcy_once(tmp_path, mon
     # one member for every label; a sibling without the event leaves the test too (not a survivor of a failed group)
     df2 = df.assign(y_bk8=[1.0, 0.0, 0.0], y_bk4=[0.0, 1.0, 0.0])
     out2, removed2 = U.dedupe_events(df2, ["y_bk8", "y_bk4"], "year")
-    assert out2.loc[0, ["y_bk8", "y_bk4"]].tolist() == [1.0, 0.0] and out2.loc[1, ["y_bk8", "y_bk4"]].isna().all()
+    assert (
+        out2.loc[0, ["y_bk8", "y_bk4"]].tolist() == [1.0, 1.0] and out2.loc[1, ["y_bk8", "y_bk4"]].isna().all()
+    )  # the family had a 4-quarter event (B)
     assert removed2 == {"y_bk8": 1, "y_bk4": 1} and out2.loc[2, "y_bk8"] == 0.0  # another family untouched
 
 
@@ -67,3 +69,21 @@ def test_the_family_switch_does_not_change_the_shard_stamp(monkeypatch):
     for k in ("FINTWIN_FAMILIES", "FINTWIN_REQUIRE_SPEC", "FINTWIN_NEW_RUN"):
         monkeypatch.setenv(k, "1")
     assert M.stamp() == before
+
+
+def test_the_kept_member_carries_the_family_labels(tmp_path, monkeypatch):
+    # round 3: A (larger) has y_short8 = 1, ce8 = 0; B has ce8 = 1 -> the family must keep ce8 = 1
+    import json
+
+    import numpy as np
+
+    from fintwin.research import units as U
+
+    fam = tmp_path / "f.json"
+    fam.write_text(json.dumps({"1": 1, "2": 1}), encoding="utf-8")
+    monkeypatch.setenv("FINTWIN_FAMILIES", str(fam))
+    U._families.cache_clear()
+    df = pd.DataFrame({"ticker": ["A", "B"], "cluster": ["F1", "F1"], "year": [2019, 2019], "log_rev": [22.0, 20.0],
+                       "y_short8": [1.0, 0.0], "ce8": [0.0, 1.0], "ce4": [np.nan, 1.0]})  # fmt: skip
+    out, _ = U.dedupe_events(df, ["y_short8", "ce8", "ce4"], "year")
+    assert out.loc[0, ["y_short8", "ce8", "ce4"]].tolist() == [1.0, 1.0, 1.0] and out.loc[1, ["ce8"]].isna().all()
