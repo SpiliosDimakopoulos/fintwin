@@ -51,6 +51,9 @@ def conformal(d: pd.DataFrame) -> pd.DataFrame:
     filed = d["filed"] if "filed" in d else None
     for o in sorted(d["origin_ts"].unique()):
         past = d[seen_by(d["target_ts"], filed, pd.Timestamp(o), REPORT_LAG.days).to_numpy()]
+        past = past[
+            np.isfinite(past[["s90", "s_lo", "s_hi"]].to_numpy(float)).all(axis=1)
+        ]  # one NaN poisons a quantile
         if len(past) >= 40:
             here = d["origin_ts"] == o
             d.loc[here, "c90"] = float(np.quantile(past["s90"], 0.9))
@@ -124,14 +127,25 @@ def pit_hist(pit: np.ndarray, bins: int = 10) -> dict:
     }
 
 
+def _tertiles(x: pd.Series, labels: list[str]) -> pd.Series:
+    """Tertile labels by rank; all missing where fewer than 3 values are known (pd.qcut would raise)."""
+    r = x.astype(float).rank(method="first")
+    if r.notna().sum() < 3:
+        return pd.Series(np.nan, index=x.index)
+    return pd.qcut(r, 3, labels=labels)
+
+
 def section(fc: pd.DataFrame, panel: pd.DataFrame) -> dict:
     if fc.empty or "q" not in fc:
         return {}
-    fc = fc[fc["q"].notna()]
+    fc = fc[fc["q"].map(lambda q: isinstance(q, (list, tuple)) and bool(np.isfinite(np.asarray(q, float)).all()))]
     feats = panel[["ticker", "year", "log_rev", "nd_ebitda", "rev_vol", "industry"]].drop_duplicates(["ticker", "year"])
     out: dict = {}
     for var, g in fc.groupby("var"):
         d = conformal(_norm(g)).merge(feats, on=["ticker", "year"], how="left")
+        if len(d) < 30:  # no origin had 40 reported past forecasts: nothing to calibrate (qcut needs rows)
+            out[var] = {"n": int(len(d)), "skipped": "fewer than 30 conformal forecasts"}
+            continue
         d["stress"] = d["target_ts"].between("2020-03-01", "2021-03-31")
         d["below_q05"] = d["y"] < d["q05"]
         res: dict = {
@@ -162,9 +176,9 @@ def section(fc: pd.DataFrame, panel: pd.DataFrame) -> dict:
             "year": d["year"],
             "horizon": d["h"],
             "stress_2020": d["stress"].map({True: "2020Q2-2021Q1 targets", False: "other targets"}),
-            "size": pd.qcut(d["log_rev"].rank(method="first"), 3, labels=["small", "mid", "large"]),
-            "leverage": pd.qcut(d["nd_ebitda"].rank(method="first"), 3, labels=["low", "mid", "high"]),
-            "volatility": pd.qcut(d["rev_vol"].rank(method="first"), 3, labels=["low", "mid", "high"]),
+            "size": _tertiles(d["log_rev"], ["small", "mid", "large"]),
+            "leverage": _tertiles(d["nd_ebitda"], ["low", "mid", "high"]),
+            "volatility": _tertiles(d["rev_vol"], ["low", "mid", "high"]),
             "industry": d["industry"],
         }
         res["by"] = {}

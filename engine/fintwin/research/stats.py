@@ -45,6 +45,7 @@ SEEDS = {
     "year_block": (102, "transmission.inference: year-block bootstrap of the combination gains"),
     "lad": (103, "transmission.encompassing: firm bootstrap of the LAD encompassing coefficients"),
     "cash_pool": (104, "plan2.cash_hybrid: firm bootstrap of the density-combination skill"),
+    "cross_spec": (105, "cross_spec.compare: year-block bootstrap of the v3 vs v2-pre test"),
 }
 
 
@@ -553,8 +554,17 @@ def load(cache: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
             row |= pr["features"]
             row |= {f"y_{k}": v for k, v in (pr.get("outcome") or {}).items()}
             panel.append(row)
+        n_bad = 0
         for fr in r.get("forecasts", []):
+            q = fr.get("q")
+            # a quantile list with a non-finite value (a diverged simulation in a shard written before the engine
+            # check of 12-11-2026) would turn every conformal factor of its variable into NaN: an error, not a row
+            if isinstance(q, list) and not np.isfinite(np.asarray(q, float)).all():
+                n_bad += 1
+                continue
             fc.append({"ticker": r["ticker"], **fr})
+        if n_bad:
+            errors.setdefault(r["ticker"], {})["forecasts"] = f"{n_bad} forecasts with non-finite quantiles dropped"
     return pd.DataFrame(xs), pd.DataFrame(panel), pd.DataFrame(fc), errors
 
 
@@ -1036,10 +1046,10 @@ def _safe(fn, *args) -> dict:
         return {"error": f"{type(e).__name__}: {e}"}
 
 
-def main(cache: Path, b_family: int | None = None, out: Path | None = None) -> dict:
+def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_errors: Path | None = None) -> dict:
     """`b_family` (default B_FAMILY, env FINTWIN_B_FAMILY) is the bootstrap size of the pre-specified comparison
     family; a dry run passes a small number. `out`: where to write research.json (default OUT), one file per
-    specification."""
+    specification. `cfo_errors`: where to write the firm-year CFO errors of the twin, read by `cross-spec`."""
     from . import calibration, distress, transmission
 
     b_family = B_FAMILY if b_family is None else int(b_family)
@@ -1063,6 +1073,13 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None) -> d
             "panel_firm_years": int(len(panel)),
             "panel_firms": int(panel["ticker"].nunique()) if len(panel) else 0,
             "panel_in_bankruptcy_excluded": 0 if _data_legacy() else n_in_bk,
+            # units the tests drop silently (non-finite twin health): must be 0 or reported
+            "panel_health_missing": int(pd.to_numeric(panel.get("h_base"), errors="coerce").isna().sum())
+            if len(panel)
+            else 0,
+            "covid_health_missing": int(pd.to_numeric(xs.get("h_pandemic"), errors="coerce").isna().sum())
+            if len(xs)
+            else 0,
         },
         "seeds": seeds_table() | {"B_FAMILY_used": b_family},
         # cumulative FCF over 2020Q1-2021Q2 (raw, and relative to the run-rate); the worst-cumulative versions, which
@@ -1105,8 +1122,12 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None) -> d
     res["plan2"] = plan2.section(panel_all, panel, fc, B_PANEL)
     res["plan2"]["verdicts"] = plan2.verdicts(res)
     res["plan2"]["holm"] = plan2.holm(_secondary_pvalues(res))
-    from ..export import _clean
+    from ..clean import _clean
+    from .cross_spec import cfo_errors_frame
 
+    if cfo_errors is not None:  # the same screened panel the tests used
+        Path(cfo_errors).parent.mkdir(parents=True, exist_ok=True)
+        cfo_errors_frame(transmission.frame(panel)).to_csv(cfo_errors, index=False)
     dest = Path(out) if out is not None else OUT
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(_clean(res), indent=1), encoding="utf-8")

@@ -181,6 +181,8 @@ def _one(key: str, year: int, X: np.ndarray | None) -> dict | str:
         override[:8] = rev
         scn["revenue_override"] = override
         sim = simulate(p, scn, draw_shocks(p, 200, 12, seed=3), DEFAULT_LEVERS)
+        if not np.isfinite(sim["cfo"][:, :8]).all():  # a diverged design point is a failure, never a NaN row
+            raise ValueError("non-finite simulation output ['cfo']")
         twin_sm.append(float(np.median(sim["cfo"][:, :8], axis=0).sum() / rev_ttm * 100))
         twin.append(float(np.median(sim["cfo"][:, :8].sum(1)) / rev_ttm * 100))
     return {
@@ -197,7 +199,7 @@ def _one(key: str, year: int, X: np.ndarray | None) -> dict | str:
 
 
 def shard(i: int, n: int) -> None:
-    from ..export import _clean
+    from ..clean import _clean
     from .__main__ import _stamp_of, stamp
 
     d = cache_dir()

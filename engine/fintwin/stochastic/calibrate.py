@@ -524,7 +524,18 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
             src["stale"] = "; ".join(stale)
 
     # ---- revenue process ----
+    window = rev.tail(32).dropna()
+    # a revenue of exactly 0 between reported quarters is a zero booked for an unreported quarter (12-11-2026 review:
+    # it left a broken revenue base in every spec): an error of the firm-year. A negative quarter stays allowed
+    # (MM-F12 handles it); negative Q4s from mixing vintages are fixed in the data layer (D6).
+    if (window == 0).any() and window.max() > 0:
+        raise ValueError(f"{c.ticker}: zero revenue in the calibration window ({int((window == 0).sum())} quarters)")
     seasonal = _seasonal(rev, q["season"])
+    # A zero seasonal factor comes from quarters booked as 0 revenue between reported ones (12-11-2026: e.g.
+    # CIK0000766421, 2012-2013). It made v3 (MM-F3 divides by it) non-finite and left v2 forecasting zero revenue, so
+    # it is an error of the firm-year in every specification.
+    if not (np.isfinite(seasonal) & (seasonal > 0)).all():
+        raise ValueError(f"{c.ticker}: degenerate seasonal revenue factors {np.round(seasonal, 3).tolist()}")
     deseason = rev / seasonal[q["season"].values]
     g = np.log(deseason).diff().dropna()
     g = g[np.isfinite(g)]

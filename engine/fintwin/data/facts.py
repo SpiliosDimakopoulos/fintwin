@@ -320,16 +320,26 @@ def _duration_table(gaap: dict, tag: str, asof: pd.Timestamp | None = None, diag
             if not (QUARTER_DAYS[0] <= gap <= QUARTER_DAYS[1]) or late.end in out:
                 continue
             vers = versions[(early.start, early.end)]
-            same = vers[vers["accn"] == late.accn]
-            prior = vers[vers["filed"] <= late.filed]
-            leg = same.iloc[-1] if len(same) else prior.iloc[-1] if len(prior) else None
+            lvers = versions[(late.start, late.end)]
+            # One vintage: the earlier leg as last filed and the first later leg filed after it. A later leg restated
+            # in a later 10-K (e.g. a spin-off recast as a comparative) is otherwise differenced against a YTD that
+            # was never restated (12-11-2026: HP FY2014 Q4 came out at -26bn).
+            leg = vers.iloc[-1]
+            after = lvers[lvers["filed"] >= leg["filed"]]
+            if len(after):
+                lv = after.iloc[0]
+            else:  # the earlier leg was restated after every version of the later one: the YTD as known then
+                lv = lvers.iloc[-1]
+                same = vers[vers["accn"] == lv["accn"]]
+                prior = vers[vers["filed"] <= lv["filed"]]
+                leg = same.iloc[-1] if len(same) else prior.iloc[-1] if len(prior) else None
             if leg is None:  # the earlier leg only exists in filings after the later leg: no consistent vintage
                 if diag is not None:
                     diag.setdefault("vintage_mixed", []).append((tag, late.end))
                 continue
-            if diag is not None and float(leg["val"]) != float(early.val):
+            if diag is not None and (float(leg["val"]) != float(early.val) or float(lv["val"]) != float(late.val)):
                 diag.setdefault("vintage_fixed", []).append((tag, late.end))
-            out[late.end] = (float(late.val - leg["val"]), late.accn, early.end + pd.Timedelta(days=1))
+            out[late.end] = (float(lv["val"] - leg["val"]), lv["accn"], early.end + pd.Timedelta(days=1))
     return out
 
 
@@ -360,13 +370,22 @@ def _merge_tags(gaap: dict, tags: list[str], extractor, asof, diag: dict | None 
                 a = np.array([merged[e][0] for e in both])
                 b = np.array([s[e][0] for e in both])
                 level = float(np.median(np.abs(a)))
-                rel = float(np.median(np.abs(a - b)) / level) if level > 0 else 0.0
+                if level > 0:
+                    rel = float(np.median(np.abs(a - b)) / level)
+                else:  # a tag of zeros beside a non-zero one is a break, not a match
+                    rel = float("inf") if float(np.median(np.abs(b))) > 0 else 0.0
                 if rel > SPLICE_TOLERANCE:
                     diag.setdefault("splice", []).append(
                         {"field": name, "tag": tag, "rel_diff": round(rel, 4), "overlap": len(both), "periods": new}
                     )
             else:
                 diag.setdefault("splice_unchecked", []).append({"field": name, "tag": tag, "periods": new})
+        if name == "revenue":  # a revenue booked as exactly 0 yields to a non-zero lower tag (Alaska Air 2012-13)
+            zero = [e for e in s if e in merged and merged[e][0] == 0 and s[e][0] != 0]
+            for e in zero:
+                merged[e] = s[e]
+            if zero and diag is not None:
+                diag.setdefault("zero_override", []).append({"field": name, "tag": tag, "n": len(zero)})
         for e in new:
             merged[e] = s[e]
     return merged

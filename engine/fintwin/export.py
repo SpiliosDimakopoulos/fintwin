@@ -7,7 +7,6 @@ uv run python -m fintwin.export AAPL MSFT       # specific tickers only (index i
 from __future__ import annotations
 
 import json
-import math
 import sys
 import time
 from datetime import date
@@ -19,6 +18,7 @@ import pandas as pd
 
 from .backtest.batch import UNIVERSE_XL
 from .backtest.walk_forward import CUTOFFS, UNIVERSE, cross_section, forecast_backtest
+from .clean import _clean  # noqa: F401  (moved; kept importable here)
 from .data.edgar import filing_url
 from .data.facts import contiguous_mask, load_company
 from .data.fred import macro_quarterly
@@ -137,24 +137,6 @@ SECTORS = {
     "ABNB": "Travel",
     "UBER": "Mobility",
 }
-
-
-def _clean(o, sig: int = 10):
-    """JSON-safe: numpy -> python, NaN/inf -> None, floats rounded to `sig` significant digits."""
-    if isinstance(o, dict):
-        return {str(k): _clean(v, sig) for k, v in o.items()}
-    if isinstance(o, (list, tuple)):
-        return [_clean(v, sig) for v in o]
-    if isinstance(o, np.ndarray):
-        return _clean(o.tolist(), sig)
-    if isinstance(o, (np.floating, float)):
-        x = float(o)
-        return None if not math.isfinite(x) else (x if sig >= 17 else float(f"{x:.{sig}g}"))
-    if isinstance(o, (np.integer,)):
-        return int(o)
-    if isinstance(o, (np.bool_,)):
-        return bool(o)
-    return o
 
 
 def dumps(obj, sig: int = 10, **kw) -> str:
