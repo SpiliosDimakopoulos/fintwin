@@ -74,3 +74,38 @@ clean rerun.
 | WP6 | done: families (82 multi-member, 11 of 488 petitions double counted), family pass, rivals |
 | WP7 | done: `scripts/audit_shards.py`; on the 11/12-11 shards it flags all known faults (30 None panel rows, 3 forecasts, 3 covid, 63 firm-years missing in v2, negative revenue 0.11%) |
 | WP8 | `RERUN5_SUPPLEMENT.md` on the branch; rev3 wrapper edit reverted; `scripts/stats_finite.py` (untracked) to delete |
+
+## Round 2 (12-11-2026)
+### Statistics vs pre-spec
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| N1 | BLOCKER (declaration) | Three cross-spec runs (v3-wf, v3 grid, family) each write `success`; none named as the confirmatory one | supplement line: v3-wf firm pass is confirmatory, the others descriptive; `role` field in the JSON |
+| N2 | MAJOR | Common-set walk-forward: one grid value failing often drops the common set below min_past, the year gets no selection and the defaults run under the `-wf` label, silently | record skipped years with n_past / n_excluded; audit RED when a year has enough past firm-years but no selection |
+| N3 | MAJOR | Supplement: S5 is an analysis choice (E), not a bug fix; D4 changes units kept (not "no number changes"); the "same units" row overstated; missing: B1 one-sided p, S5(b) and its 0.1% audit rule, the `< 30` skips, the common-set rule | rewrite those rows |
+| N4 | MINOR | B2 percentile year-block CI anti-conservative with 5-8 blocks | report t(G-1) on yearly BSS and the firm-block CI beside it (rule unchanged) |
+| N5 | MINOR | D8 count in liquidity_frame counted before the `liq` skip and the size screen | count after both |
+| N6 | MINOR | dedupe: non-filing siblings stay survivors; B2/B3 labels not deduped; unstable tie order | document; stable sort |
+| N7 | MINOR | cross-spec error CSVs carry no stamp and cross-spec runs after a failed stats group | write the run stamp into the CSV and check it; skip cross-spec when its stats failed; n per year in the output |
+### Pipeline, digest, audit
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| R2-B1 | BLOCKER | P1 not fixed: GNU tar exits 1 ("file changed as we read it") while shards are written, so `&& mv` never runs; my bash simulation used static files. `kill $PACKER` leaves an in-flight tar racing the trap's tar on the same `.part` | accept tar exit 0 or 1; per-call part name; kill the packer's children first; test with a concurrent writer |
+| R2-M1 | MAJOR | Audit green on a dead run (errors only WARN; no check on zero panel rows / shard count) | RED above an error share per type, or zero panel rows |
+| R2-M2 | MAJOR | False RED: unit diff a bare 0.1% (one unit in probe/dry/known-bad trips it; recorded panel errors in one spec count as missing); negative-revenue limit 0.1% vs the old 0.106% | exclude units with a recorded panel error (report them); max(0.1%, 3 units); negative revenue WARN until measured after WP1 |
+| R2-M3 | MAJOR | Rerun with FINTWIN_NEW_RUN=1 on a kept server: ladder finds the old `_selection` table, shard exits on the grid-stamp mismatch, every ladder dies | ladder skips the second pass when the table's grid stamp differs |
+| R2-M4 | MAJOR | Lost-server recipe extracts into a `.cache` that still holds old-stamp shards; they are pushed and every worker stops | extract into an empty directory and push that |
+| R2-m1..m6 | MINOR | 0-byte run_meta on a failed check; `out/audit_*.json` pull glob empty at stats/sobol (pull fails, server kept); families swallows all exceptions; dry coverage; untracked audit_draft makes SOURCE dirty, worktree lacks snapshot/manifest.json; probe Sobol `_one` unguarded | temp+mv; pull glob only where audits exist; fail if no submissions at all; delete audit_draft; run from the main checkout after merge; guard |
+### Families, units, rivals
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| R2-F1 | MAJOR | 2020 cross-section (covid_section, bankruptcy_2020, exposure) resamples rows in the family pass | pass unit(xs) at those sites |
+| R2-F2 | MAJOR | B2/B3 labels (ce, y_short) never deduped in the family pass; joint petitions (Hertz Corp / Hertz Global, ...) count per co-registrant | dedupe_events on the liquidity frame |
+| R2-F3..F9 | MINOR | non-filing members stay survivors; per-column dedupe may keep different members; small_firms reads panel_all; missing submissions silent (81 local, server differs); 8 of 82 families rest on <= 2 accessions; family cross-spec changes only dm; rivals miss 8-K/A 4.02, NT .../A, NTN, 10-K405/A, age censored 30%, SIC not point-in-time | members of a family-cutoff with an event: others NaN, one member chosen once for all columns; count misses; require >= 2 shared periodic reports or report the count; add the forms; declare censoring |
+### Data layer and engine
+D1 FIXED, D3 FIXED, D4 FIXED (as decided), D6 FIXED, `_finite` FIXED (unit test), D2 PARTLY.
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| R2-D1 | BLOCKER | D2 pairing takes the first annual-period fact filed after the YTD, whatever the form: 10-Qs carrying a prior FY fact give Church & Dwight Q4 2022 -3,760.6M, CIK808047 Q4 2011 -165.5M (2 of 899 firms) | annual later leg from 10-K / 20-F / 40-F family versions only, fallback to all (reviewer-tested on 899 firms) |
+| R2-D2 | MAJOR | Zero-revenue guard drops genuine pre-revenue / zero-revenue biotech firm-years (36 of 1,471, 2.4%; OptiNose, Coherus, Sage, Adaptimmune) for up to 8 years | trim leading zeros; test the last 8 quarters only |
+| R2-D3 | MAJOR | Annual recast in the next 10-K with the YTD never restated: Q4 from first-filed annual (by design of one vintage); 55 of 899 firms still have negative revenue quarters | document; negative quarters allowed by MM-F12; audit WARN |
+| R2-D4..D9 | MINOR | D2 also changes cfo (289 firms) and capex (205): supplement row must say so; legacy layer gets no zero override; FINITE_KEYS omits debt/revolver/dividends/capex; spec_name ignores spec.using; walk_forward.py fillna (not research path); floor overflows at T=20 (research H <= 12) | supplement; legacy left as revision 2 (declared); add keys; leave |

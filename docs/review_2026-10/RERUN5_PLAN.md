@@ -66,9 +66,11 @@ python $B down && python $B status
 ```
 Μετά από κάθε στάδιο: exit 0, audit πράσινο, `run_meta` με το ίδιο code digest, `machine` x86_64, αρχείο pulled
 (md5 ίδιο με τον server). Διακοπή αν: audit κόκκινο, digest διαφορετικό, errors > όριο, χρόνος > 1,5× του probe.
-Pull κάθε σταδίου (`<s>` = όνομα σταδίου): `--pull "out/results_<s>.tgz" "out/*.log" "out/run_meta_<s>.json"
-"out/audit_*.json" --partial-pull "out/results_<s>.tgz" "out/*.log"`. Το audit γράφει `out/audit_<s>_<run>.json`· κόκκινο
-σημαίνει exit 1 του σταδίου και το archive μένει για το pull.
+Pull κάθε σταδίου (`<s>` = όνομα σταδίου): `--pull "out/results_<s>.tgz" "out/*.log" "out/run_meta_<s>.json"`, και
+**μόνο** στα probe, dry, universe, sample, select επιπλέον `"out/audit_*.json"` (στα stats/sobol το glob δεν βρίσκει τίποτα
+και το pull αποτυγχάνει), με `--partial-pull "out/results_<s>.tgz" "out/*.log"`. Το audit γράφει
+`out/audit_<s>_<run>.json`· κόκκινο σημαίνει exit 1 του σταδίου και το archive μένει για το pull. Χαμένος server:
+βλ. header του `rev3_server.sh` (εξαγωγή σε άδειο κατάλογο, ποτέ στο `.cache`).
 
 ## 5. Ανάθεση
 | Βήμα | Agent | Μοντέλο | Γιατί |
