@@ -241,8 +241,10 @@ def shard(i: int, n: int, limit: int | None = None, years: set[int] | None = Non
     sel = os.environ.get("FINTWIN_SELECTION")
     if sel:
         made_from = json.loads(Path(sel).read_text(encoding="utf-8")).get("_grid_stamp")
-        if made_from != grid_stamp():
-            raise SystemExit(f"selection table {sel} comes from another grid pass ({made_from} != {grid_stamp()})")
+        if made_from != grid_stamp():  # a table from another grid pass (an earlier code, a lost server): this pass
+            # is skipped, not run on it; `select` rebuilds the table and `stats` refuses an incomplete "-wf" run
+            print(f"  skip: selection table {sel} comes from another grid pass ({made_from} != {grid_stamp()})")
+            return out_dir
     new_run = os.environ.get("FINTWIN_NEW_RUN") == "1"
     for k, t in enumerate(keys):
         if k % n != i:
@@ -317,6 +319,11 @@ def select(limit: int | None = None, years: set[int] | None = None) -> Path:
     d = spec_dir(tag)
     check_run(d, limit, years)
     sel = select_from_shards(d)
+    skipped = {k: v for k, v in sel.items() if k.endswith("_skipped") and v}
+    if skipped:  # years with enough history but too few firm-years where every grid value is finite
+        raise SystemExit(
+            f"walk-forward selection skipped years {skipped}: see the evidence; a grid value fails too often"
+        )
     sel["_grid_stamp"] = grid_stamp()  # the second pass checks that the table comes from this grid pass
     path = selection_path(tag=tag)
     path.parent.mkdir(parents=True, exist_ok=True)

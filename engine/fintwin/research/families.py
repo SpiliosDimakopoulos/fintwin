@@ -63,11 +63,16 @@ def build(ciks: list[int], out: Path | None = None) -> dict[int, int]:
     from ..data.edgar_universe import submissions
 
     filings = {}
+    missing = 0
     for c in ciks:
         try:
             filings[c] = submissions(c)["filings"][["accessionNumber", "form"]]
-        except Exception:  # noqa: BLE001 - a CIK without submissions is its own family
+        except Exception:  # noqa: BLE001 - a CIK without submissions is its own family, and counted
             filings[c] = None
+            missing += 1
+    if ciks and missing > len(ciks) / 2:  # no snapshot submissions: every family would be a singleton, silently
+        raise SystemExit(f"families: no submissions for {missing} of {len(ciks)} CIKs")
+    print(f"families: submissions missing for {missing} of {len(ciks)} CIKs (each its own family)")
     fam = families(ciks, links(filings))
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)

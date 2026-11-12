@@ -12,8 +12,10 @@
 # Expects engine/snapshot/<tarball in manifest.json>. Logs and results go to engine/out/.
 # Every stage runs on x86 (cpx42: --x86 --ram 16), the platform of the whole run; shards of another machine are refused.
 # Exact commands per stage (hours, cost caps, pulls): docs/review_2026-10/RERUN5_PLAN.md section 4 (runbook).
-#   lost server:  tar -xzf out/results_<last>.tgz -C .cache (locally), then `python $B up ...`, the first-stage push,
-#                 and `python $B push .cache/research` (lands in /work/research; this script resumes from it)
+#   lost server:  extract the last pulled archive into an EMPTY directory (never into .cache, which may hold shards of
+#                 an earlier code that would be pushed and refused): mkdir R && tar -xzf out/results_<last>.tgz -C R,
+#                 then `python $B up ...`, the first-stage push, and `python $B push R/research` (lands in
+#                 /work/research; this script resumes from it, without its _selection and _results)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 STAGE="${1:?stage: probe|dry|universe|sample|select|stats|sobol}"
@@ -28,20 +30,27 @@ mkdir -p out
 py() { uv run --quiet python "$@"; }
 t0=$(date +%s)
 stamp() { echo "[$STAGE $(( $(date +%s) - t0 ))s] $*" | tee -a out/timeline.log; }
-pack() {  # pack what exists of .cache/{research,sobol} into out/results_<stage>.tgz, atomically (.part + mv)
-  local dirs
-  dirs=$(cd .cache 2>/dev/null && ls -d research sobol 2>/dev/null | tr '\n' ' ')
+pack() {  # pack what exists of .cache/{research,sobol} into out/results_<stage>.tgz, atomically (own .part + mv)
+  local dirs rc=0 part="out/results_${STAGE}.tgz.part.$BASHPID"
+  dirs=$(cd .cache 2>/dev/null && ls -d research sobol 2>/dev/null | tr '
+' ' ')
   [ -n "$dirs" ] || return 0
+  # GNU tar exits 1 when a file changed while it was read (shards keep being written): the archive is still valid,
+  # and a shard caught half-written is recomputed on resume; 2 or more is a real failure
   # shellcheck disable=SC2086
-  tar -czf "out/results_${STAGE}.tgz.part" -C .cache $dirs 2>/dev/null && mv -f "out/results_${STAGE}.tgz.part" "out/results_${STAGE}.tgz"
+  tar -czf "$part" --warning=no-file-changed --warning=no-file-shrank -C .cache $dirs 2>/dev/null || rc=$?
+  if [ "$rc" -le 1 ]; then mv -f "$part" "out/results_${STAGE}.tgz"; else rm -f "$part"; return 1; fi
 }
 # Every 20 minutes too: a job stopped at the cost cap (or a server that dies) still leaves a recent archive for the
 # partial pull; before 12-11-2026 the archive existed only after the EXIT trap, so a capped stage lost everything.
-( while sleep 1200; do pack || true; done ) &
+( while sleep "${PACK_EVERY:-1200}"; do pack || true; done ) &
 PACKER=$!
 pack_results() {  # on every exit, success or not: what exists so far goes back with the pull
+  pkill -P "$PACKER" 2>/dev/null || true  # an in-flight tar of the packer must not overwrite the final archive
   kill "$PACKER" 2>/dev/null || true
+  wait "$PACKER" 2>/dev/null || true
   pack || true
+  rm -f out/results_"${STAGE}".tgz.part.* 2>/dev/null || true
   stamp "exit $1, results packed ($(du -h "out/results_${STAGE}.tgz" 2>/dev/null | cut -f1))"
 }
 trap 'pack_results $?' EXIT
@@ -72,7 +81,7 @@ fi
 
 # What ran: code digest (it enters every stamp), snapshot digest, lock file, platform; and the commit, if the PC
 # wrote SOURCE.json before the push (its digest must match the code on the server).
-py - "$STAGE" <<'EOF' > "out/run_meta_${STAGE}.json"
+py - "$STAGE" <<'EOF' > "out/run_meta_${STAGE}.json.tmp"
 import hashlib, json, os, platform, sys
 from importlib.metadata import version
 from pathlib import Path
@@ -99,6 +108,7 @@ for f in sorted(Path("out").glob("run_meta_*.json")):
         sys.exit(f"{f.name} ran under code {old.get('code_digest', '')[:12]}, this stage {meta['code_digest'][:12]}")
 print(json.dumps(meta, indent=1))
 EOF
+mv -f "out/run_meta_${STAGE}.json.tmp" "out/run_meta_${STAGE}.json"  # a failed check leaves no 0-byte meta
 
 ladder_all() {  # shard the ladder over all cores; waits for its own jobs only (the packer runs in the background)
   local pids=() rc=0
@@ -192,7 +202,11 @@ import time
 from fintwin.research import assumption_sobol as AS
 X = AS.points()
 for key, year in AS.sample():
-    if isinstance(AS._one(key, year, None), dict):
+    try:
+        ok = isinstance(AS._one(key, year, None), dict)
+    except Exception as e:  # a failing candidate is skipped, as the Sobol stage does
+        print({"key": key, "year": year, "error": f"{type(e).__name__}: {e}"}); ok = False
+    if ok:
         t = time.perf_counter(); AS._one(key, year, X)
         print({"key": key, "year": year, "design_points": len(X), "seconds": round(time.perf_counter() - t, 1)})
         break

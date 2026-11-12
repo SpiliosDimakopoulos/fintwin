@@ -23,6 +23,8 @@ def stats(limit: int | None = None, years: set[int] | None = None) -> None:
     M.check_run(d, limit, years)
     summary = M.check_failures(M._shards(d))
     name = d.name + ("_family" if family_pass() else "")  # the family pass (WP6) writes beside the firm pass
+    for old in (M.ROOT / "_results" / f"{name}_cfo_errors.csv", M.ROOT / "_results" / f"{name}.json"):
+        old.unlink(missing_ok=True)  # a failed stats must leave no earlier file for cross-spec to compare (round 2)
     main(d, cfo_errors=M.ROOT / "_results" / f"{name}_cfo_errors.csv")
     copy = M.ROOT / "_results" / f"{name}.json"  # one result per spec, next to the shared docs/paper/research.json
     copy.parent.mkdir(parents=True, exist_ok=True)
@@ -43,9 +45,16 @@ def cross_spec(a: str, b: str) -> dict:
         raise SystemExit(f"cross-spec: run `stats` for both specifications first (missing {missing})")
     frames = [pd.read_csv(f, dtype={"ticker": str}) for f in files]
     res = compare(*frames, names=(a, b))
+    # the one confirmatory test of REVISION_PLAN_3: walk-forward v3 against v2-pre, firm units; every other pairing
+    # (grid v3, the family pass) is descriptive (round 2, N1; RERUN5_SUPPLEMENT)
+    res["role"] = "confirmatory" if (a, b) == ("v3-wf", "v2-pre") else "descriptive"
     dest = M.ROOT / "_results" / f"cross_spec_{a}_vs_{b}.json"
     dest.write_text(json.dumps(res, indent=1, default=str), encoding="utf-8")
-    print(json.dumps({k: res.get(k) for k in ("n_common", "lost", "statistic", "decision", "success")}, default=str))
+    print(
+        json.dumps(
+            {k: res.get(k) for k in ("role", "n_common", "lost", "statistic", "decision", "success")}, default=str
+        )
+    )
     return res
 
 

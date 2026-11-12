@@ -50,9 +50,12 @@ def test_family_pass_sets_units_and_counts_a_group_bankruptcy_once(tmp_path, mon
     df["cluster"] = [U.cluster_of(t, c) for t, c in zip(df["ticker"], df["cik"], strict=True)]
     assert df["cluster"].tolist() == ["F0000000001", "F0000000001", "F0000000003"]
     out, removed = U.dedupe_events(df, ["y_bk8"], "year")
-    assert (
-        removed == {"y_bk8": 1} and np.isnan(out.loc[1, "y_bk8"]) and out.loc[0, "y_bk8"] == 1.0
-    )  # the larger keeps it
+    assert removed == {"y_bk8": 1} and np.isnan(out.loc[1, "y_bk8"]) and out.loc[0, "y_bk8"] == 1.0  # larger keeps it
+    # one member for every label; a sibling without the event leaves the test too (not a survivor of a failed group)
+    df2 = df.assign(y_bk8=[1.0, 0.0, 0.0], y_bk4=[0.0, 1.0, 0.0])
+    out2, removed2 = U.dedupe_events(df2, ["y_bk8", "y_bk4"], "year")
+    assert out2.loc[0, ["y_bk8", "y_bk4"]].tolist() == [1.0, 0.0] and out2.loc[1, ["y_bk8", "y_bk4"]].isna().all()
+    assert removed2 == {"y_bk8": 1, "y_bk4": 1} and out2.loc[2, "y_bk8"] == 0.0  # another family untouched
 
 
 def test_the_family_switch_does_not_change_the_shard_stamp(monkeypatch):

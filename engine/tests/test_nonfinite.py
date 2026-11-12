@@ -144,3 +144,14 @@ def test_research_runs_refuse_an_unset_spec(monkeypatch):
     with spec.using("v2-pre", None):  # an explicit override needs no env
         monkeypatch.delenv("FINTWIN_SPEC")
         assert spec.spec() == "v2-pre"
+
+
+def test_leading_and_old_zero_revenue_quarters_do_not_drop_the_firm(macro):  # noqa: F811
+    # round 2: genuine zero-revenue (pre-revenue biotech) quarters dropped firms for years
+    c = synthetic_company()
+    q = c.quarters
+    q.loc[q.index[:6], "revenue"] = 0.0  # a pre-revenue start
+    q.loc[q.index[-12], "revenue"] = 0.0  # an old zero, outside the last eight quarters
+    with spec.using("v3", None):
+        p = C.calibrate(c, macro, 8)
+    assert np.isfinite(p["base_rev0"]) and p["base_rev0"] > 0

@@ -321,6 +321,9 @@ def _duration_table(gaap: dict, tag: str, asof: pd.Timestamp | None = None, diag
                 continue
             vers = versions[(early.start, early.end)]
             lvers = versions[(late.start, late.end)]
+            if (late.end - late.start).days > 300:  # an annual later leg: from an annual report (10-K family) when
+                annual = lvers[lvers["form"].astype(str).str.startswith(("10-K", "20-F", "40-F"))]  # one exists; a 10-Q
+                lvers = annual if len(annual) else lvers  # may carry an annual fact of another context (round 2)
             # One vintage: the earlier leg as last filed and the first later leg filed after it. A later leg restated
             # in a later 10-K (e.g. a spin-off recast as a comparative) is otherwise differenced against a YTD that
             # was never restated (12-11-2026: HP FY2014 Q4 came out at -26bn).

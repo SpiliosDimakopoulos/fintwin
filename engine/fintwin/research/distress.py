@@ -390,11 +390,13 @@ def liquidity_frame(cache: Path, min_log_rev: float = S.MIN_LOG_REV) -> pd.DataF
         dates = bkd.get(r.get("cik"), []) if r.get("cik") is not None else []
         spans = S._spans(dates, raw.get(r.get("cik"))) if dates else []
         for pr in r.get("panel", []):
-            if spans and not S._data_legacy() and S.in_bankruptcy(spans, pr["origin"]):
-                excluded += 1
-                continue
+            in_case = bool(spans) and not S._data_legacy() and S.in_bankruptcy(spans, pr["origin"])
             liq, oc, ft = pr.get("liquidity") or {}, pr.get("outcome") or {}, pr.get("features") or {}
             if not liq:
+                continue
+            if in_case:  # counted only if the row would otherwise enter the tests (size screen below)
+                lr = ft.get("log_rev")
+                excluded += int(lr is not None and float(lr) >= min_log_rev)
                 continue
             row = {
                 "ticker": r["ticker"],
@@ -532,8 +534,15 @@ def liquidity_section(df: pd.DataFrame, b: int = 2000) -> dict:
     # quarters (the panel's outcome horizon), and the Recession version, the only one whose year-block CI has enough
     # cutoff years; the other seven cells are descriptive.
     cell = out.get("shortfall", {}).get("8", {}).get("recession", {})
-    out["primary"] = {"cell": "shortfall / 8 / recession", "success": cell.get("success"),
-                      "blocks": (cell.get("bss_vs_logit") or {}).get("year_block", {}).get("blocks")}  # fmt: skip
+    lv = cell.get("bss_vs_logit") or {}
+    out["primary"] = {
+        "cell": "shortfall / 8 / recession",
+        "success": cell.get("success"),
+        "blocks": lv.get("year_block", {}).get("blocks"),
+        # the percentile year-block CI is a little narrow with 5-8 blocks (round 2): the firm-block CI beside it
+        "year_block_ci": lv.get("year_block", {}).get("ci"),
+        "firm_block_ci": lv.get("firm_block", {}).get("ci"),
+    }
     return out
 
 

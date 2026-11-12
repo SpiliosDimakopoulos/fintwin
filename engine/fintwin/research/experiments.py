@@ -275,11 +275,14 @@ def walk_forward_select(
         # one common set of firm-years for every value (12-11-2026 review, S5): a value that fails on the hard
         # firm-years must not be scored on the easy ones only
         m = past & np.all([np.isfinite(x) for x in X.values()], axis=0)
+        excluded = {name: int((past & ~np.isfinite(x)).sum()) for name, x in X.items()}
         if m.sum() < min_past:
+            if past.sum() >= min_past:  # enough history, but the grid values fail on too many firm-years: recorded,
+                # and `select` stops (round 2, N2: the defaults ran silently under the "-wf" label)
+                out[int(y)] = {"choice": None, "n_past": int(m.sum()), "n_excluded": excluded, "skipped": True}
             continue
         err = {name: float(np.median(np.abs(x[m] - real[m]))) for name, x in X.items()}
         best = min(err, key=lambda k: (err[k], list(preds).index(k)))
-        excluded = {name: int((past & ~np.isfinite(x)).sum()) for name, x in X.items()}
         out[int(y)] = {"choice": best, "n_past": int(m.sum()), "n_excluded": excluded, "median_ae": err}
     return out
 
@@ -303,7 +306,8 @@ def select_from_panel(rows: list[dict]) -> dict:
             continue
         preds = {k: np.array([(g.get(k) or {}).get("cfo", np.nan) for g in grid], float) for k in names}
         sel = walk_forward_select(np.array(years), np.array(real), preds)
-        out[key] = {str(y): float(s["choice"].split("_")[1]) for y, s in sel.items()}
+        out[key] = {str(y): float(s["choice"].split("_")[1]) for y, s in sel.items() if s["choice"]}
+        out[f"{key}_skipped"] = sorted(str(y) for y, s in sel.items() if s.get("skipped"))
         out[f"{key}_evidence"] = {str(y): s for y, s in sel.items()}
     return out
 
@@ -509,7 +513,7 @@ def shortfall(sim: dict, p: dict, k: int) -> float:
     return float(np.mean((sim["cash"][:, :k] + undrawn < 0).any(1)))
 
 
-FINITE_KEYS = ("revenue", "cash", "cfo", "fcf", "health")
+FINITE_KEYS = ("revenue", "cash", "cfo", "fcf", "health", "debt", "revolver", "capex")  # what shards and _probs read
 
 
 def _finite(sim: dict, keys: tuple[str, ...] = FINITE_KEYS) -> dict:

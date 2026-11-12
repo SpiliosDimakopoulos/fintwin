@@ -37,23 +37,25 @@ def unit(df: pd.DataFrame) -> pd.Series:
 
 
 def dedupe_events(df: pd.DataFrame, cols: list[str], when: str | None) -> tuple[pd.DataFrame, dict]:
-    """Family pass: one event per family and cutoff. Where several members of a family have the event at the same
-    `when` (or at all, when None: a single cutoff), the largest (log_rev) keeps it and the others' labels become NaN (they leave that test, neither event
-    nor survivor). Returns the frame and the number of labels removed per column."""
-    if not family_pass() or df.empty or "cluster" not in df:
+    """Family pass: one event per family and cutoff (`when`; None: one cutoff). In a family-cutoff where any member
+    has an event in any of `cols`, one member keeps its labels for every column (the largest by log_rev among those
+    with an event, ties by ticker) and every other member's labels become NaN: neither a second event nor a survivor
+    of a group that failed (round 2: per-column choices could keep different members; siblings stayed survivors).
+    Returns the frame and the number of labels set to NaN per column."""
+    cols = [c for c in cols if c in df]
+    if not family_pass() or df.empty or "cluster" not in df or not cols:
         return df, {}
     df = df.copy()
+    ev = df[cols].apply(pd.to_numeric, errors="coerce").eq(1).any(axis=1)
     size = pd.to_numeric(df["log_rev"], errors="coerce") if "log_rev" in df else pd.Series(0.0, index=df.index)
-    removed = {}
-    for c in cols:
-        if c not in df:
+    keys = ["cluster", when] if when else ["cluster"]
+    drop: list = []
+    for _, g in df.groupby(keys, sort=True):
+        if len(g) < 2 or not ev[g.index].any():
             continue
-        y = pd.to_numeric(df[c], errors="coerce")
-        hit = df[y == 1].assign(_size=size[y == 1])
-        drop = []
-        for _, g in hit.groupby(["cluster", when] if when else ["cluster"]):
-            if len(g) > 1:
-                drop += g.sort_values("_size", ascending=False).index[1:].tolist()
-        df.loc[drop, c] = np.nan
-        removed[c] = len(drop)
+        hit = g[ev[g.index]].assign(_s=size[g.index][ev[g.index]].fillna(-np.inf))
+        keep = hit.sort_values(["_s", "ticker"], ascending=[False, True], kind="mergesort").index[0]
+        drop += [i for i in g.index if i != keep]
+    removed = {c: int(df.loc[drop, c].notna().sum()) for c in cols}
+    df.loc[drop, cols] = np.nan
     return df, removed

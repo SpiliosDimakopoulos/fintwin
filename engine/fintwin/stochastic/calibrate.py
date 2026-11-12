@@ -524,12 +524,14 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
             src["stale"] = "; ".join(stale)
 
     # ---- revenue process ----
-    window = rev.tail(32).dropna()
-    # a revenue of exactly 0 between reported quarters is a zero booked for an unreported quarter (12-11-2026 review:
-    # it left a broken revenue base in every spec): an error of the firm-year. A negative quarter stays allowed
-    # (MM-F12 handles it); negative Q4s from mixing vintages are fixed in the data layer (D6).
-    if (window == 0).any() and window.max() > 0:
-        raise ValueError(f"{c.ticker}: zero revenue in the calibration window ({int((window == 0).sum())} quarters)")
+    recent = rev.dropna()
+    recent = recent[(recent != 0).cumsum() > 0].tail(8)  # after the first non-zero quarter: a pre-revenue start is fine
+    # a revenue of exactly 0 after revenue began, in the last eight quarters (the base the forecast starts from), is a
+    # zero booked for an unreported quarter (12-11-2026 review: it left a broken base in every spec): an error of the
+    # firm-year. Older zeros and leading (pre-revenue) zeros are left alone: genuine zero-revenue biotech quarters must
+    # not drop the firm for years (round 2). A negative quarter stays allowed (MM-F12 handles it).
+    if (recent == 0).any():
+        raise ValueError(f"{c.ticker}: zero revenue in the last eight quarters ({int((recent == 0).sum())} quarters)")
     seasonal = _seasonal(rev, q["season"])
     # A zero seasonal factor comes from quarters booked as 0 revenue between reported ones (12-11-2026: e.g.
     # CIK0000766421, 2012-2013). It made v3 (MM-F3 divides by it) non-finite and left v2 forecasting zero revenue, so

@@ -1123,6 +1123,10 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_
     res["density"] = _safe(calibration.density_section, panel)  # E2 / plan 2.2 B1
     liq = _safe(distress.liquidity_frame, cache)
     if isinstance(liq, pd.DataFrame):
+        # family pass: a joint petition or default labels every co-registrant (Hertz Corp / Hertz Global, round 2)
+        labels = [c for c in liq if c.startswith(("ce", "y_short", "bk", "acc", "delist"))]
+        liq, dedup_liq = dedupe_events(liq, labels, "year")
+        res["samples"]["family_events_removed_liquidity"] = dedup_liq
         res["liquidity"] = _safe(distress.liquidity_section, liq, B)  # E12 / plan 2.2 B2
         res["credit_events"] = _safe(distress.credit_section, liq, B)  # M9 / B3
     else:

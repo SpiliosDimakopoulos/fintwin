@@ -89,6 +89,7 @@ def compare(
     yearly = c.groupby("year").apply(lambda g: float(np.median(g["abs_e_a"]) - np.median(g["abs_e_b"])))
     out["statistic"] = _pooled(c)
     out["yearly"] = {int(y): v for y, v in yearly.items()}
+    out["yearly_n"] = {int(y): int(k) for y, k in c.groupby("year").size().items()}  # each year weighs 1 in t(G-1)
     out["years_negative"] = int((yearly < 0).sum())
     lo, hi = CONTINUITY
     cc = c[c["year"].between(lo, hi)]

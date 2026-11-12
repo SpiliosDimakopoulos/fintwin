@@ -39,7 +39,20 @@ def test_none_health_or_quantile_stops_the_stage(tmp_path):
     assert "panel.base health/p_breach missing or non-finite" in rep["red"]["v3"]
 
 
-def test_firm_years_missing_in_one_spec_stop_the_stage(tmp_path):
+def test_firm_years_missing_in_one_spec_without_an_error_stop_the_stage(tmp_path):
     full = [_shard(f"T{i}", origins=("2018-02-15", "2019-02-15")) for i in range(20)]
-    short = [_shard("T0")] + full[1:]  # one firm-year fewer in v2-pre
+    short = [_shard(f"T{i}") for i in range(4)] + full[4:]  # four firm-years silently fewer in v2-pre
     assert _run(tmp_path, {"v2-pre": short, "v3": full}) == 1
+
+
+def test_a_recorded_failure_in_one_spec_is_reported_not_fatal(tmp_path):
+    full = [_shard(f"T{i}", origins=("2018-02-15", "2019-02-15")) for i in range(200)]
+    failed = _shard("T0") | {"errors": {"panel 2019-02-15": "ValueError: non-finite simulation output"}}
+    assert _run(tmp_path, {"v2-pre": full, "v3": [failed, *full[1:]]}) == 0
+    rep = json.loads((tmp_path / "rep.json").read_text(encoding="utf-8"))
+    assert any("recorded error" in k for k in rep["warn"]["v3"])
+
+
+def test_a_dead_run_is_red(tmp_path):
+    dead = [{"ticker": f"T{i}", "errors": {"company": "FrozenMiss: not in the frozen snapshot"}} for i in range(5)]
+    assert _run(tmp_path, {"v3": dead}) == 1

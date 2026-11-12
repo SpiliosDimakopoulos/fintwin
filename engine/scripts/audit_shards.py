@@ -17,9 +17,12 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-# RED thresholds (share of rows / firms); anything non-finite or out of range is RED at any count
-MAX_NEG_REVENUE_SHARE = 0.001  # realized revenue < 0 among revenue forecast rows (a genuine negative quarter is rare)
-MAX_UNIT_DIFF_SHARE = 0.001  # firm-years with a panel row in one spec of a run tag and none in another
+# RED thresholds; anything non-finite or out of range is RED at any count
+MAX_SILENT_DIFF = (0.001, 3)  # firm-years present in another spec of the tag, absent here WITHOUT a recorded error:
+# RED above max(share x union, count) (round 2: a bare share made one unit RED in the small probe / dry runs)
+MAX_RECORDED_DIFF_SHARE = 0.01  # firm-years absent here WITH a recorded error (e.g. a diverged v3 path): RED above 1%
+MAX_COMPANY_ERROR_SHARE = 0.10  # shards that failed as a whole (a dead run must not pass green)
+# WARN only: negative realized revenue (MM-F12 allows negative quarters; recast annuals leave some, round 2)
 # WARN thresholds
 WARN_CRPS_RATIO = 50.0
 
@@ -34,6 +37,8 @@ class Audit:
         self.warn: dict[str, Counter] = defaultdict(Counter)
         self.examples: dict[str, list] = defaultdict(list)
         self.units: dict[str, set] = {}
+        self.recorded: dict[str, set] = defaultdict(set)  # (firm, origin) with a recorded panel / company error
+        self.firms: dict[str, set] = defaultdict(set)
         self.rows: Counter = Counter()
 
     def hit(self, level: str, run: str, what: str, firm: str) -> None:
@@ -44,6 +49,14 @@ class Audit:
 
     def shard(self, run: str, r: dict) -> None:
         t = r.get("ticker", "?")
+        self.rows[f"{run}:shards"] += 1
+        errs = r.get("errors") or {}
+        if "company" in errs:
+            self.rows[f"{run}:company_errors"] += 1
+            self.firms[run].add(t)  # every origin of this firm counts as recorded
+        for k in errs:
+            if k.startswith("panel "):
+                self.recorded[run].add((t, k.split(" ", 1)[1]))
         panel = r.get("panel") or []
         for pr in panel:
             self.units.setdefault(run, set()).add((t, pr.get("origin")))
@@ -90,26 +103,39 @@ class Audit:
             self.warn[run][f"error: {str(e).split(':')[0][:60]}"] += 1
 
     def finish(self, groups: list[list[str]]) -> dict:
-        for run in list(self.rows):
-            if run.endswith(":neg_revenue"):
-                name = run.split(":")[0]
-                share = self.rows[run] / max(1, self.rows[f"{name}:revenue_rows"])
-                if share > MAX_NEG_REVENUE_SHARE:
-                    self.red[name][f"realized revenue < 0 in {share:.2%} of revenue rows"] += 1
+        runs = {k.split(":")[0] for k in self.rows}
+        for run in runs:
+            n = self.rows[f"{run}:shards"]
+            if n and self.rows[f"{run}:company_errors"] / n > MAX_COMPANY_ERROR_SHARE:
+                self.red[run][f"{self.rows[f'{run}:company_errors']} of {n} shards failed as a whole"] += 1
+            if n and not self.rows[f"{run}:panel"] and not run.startswith("_known_bad"):
+                self.red[run]["no panel rows at all"] += 1
         for g in groups:  # runs of one tag must cover the same firm-years (a unit failing in one spec only)
             present = [r for r in g if r in self.units]
             union = set().union(*(self.units[r] for r in present)) if present else set()
             for r in present:
                 missing = union - self.units[r]
-                if union and len(missing) / len(union) > MAX_UNIT_DIFF_SHARE:
-                    self.red[r][f"{len(missing)} firm-years with a panel row in another spec of {g} but not here"] += 1
-                    self.examples[f"{r}:unit diff"] = [list(m) for m in sorted(missing)[:5]]
+                recorded = {m for m in missing if m in self.recorded[r] or m[0] in self.firms[r]}
+                silent = missing - recorded
+                share, count = MAX_SILENT_DIFF
+                if len(silent) > max(share * len(union), count):
+                    self.red[r][f"{len(silent)} firm-years in another spec of {g}, absent here with no error"] += 1
+                    self.examples[f"{r}:silent unit diff"] = [list(m) for m in sorted(silent)[:5]]
+                if recorded:
+                    self.warn[r][f"{len(recorded)} firm-years in another spec, a recorded error here"] += 1
+                    self.examples[f"{r}:recorded unit diff"] = [list(m) for m in sorted(recorded)[:5]]
+                if union and len(recorded) / len(union) > MAX_RECORDED_DIFF_SHARE:
+                    self.red[r][f"{len(recorded)} firm-years fail here only (> {MAX_RECORDED_DIFF_SHARE:.0%})"] += 1
         return {
             "red": {k: dict(v) for k, v in self.red.items() if v},
             "warn": {k: dict(v) for k, v in self.warn.items() if v},
             "rows": dict(self.rows),
             "examples": dict(self.examples),
-            "thresholds": {"neg_revenue_share": MAX_NEG_REVENUE_SHARE, "unit_diff_share": MAX_UNIT_DIFF_SHARE},
+            "thresholds": {
+                "silent_unit_diff": MAX_SILENT_DIFF,
+                "recorded_unit_diff_share": MAX_RECORDED_DIFF_SHARE,
+                "company_error_share": MAX_COMPANY_ERROR_SHARE,
+            },  # fmt: skip
         }
 
 

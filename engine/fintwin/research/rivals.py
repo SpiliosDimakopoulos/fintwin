@@ -37,9 +37,13 @@ def filing_features(filings: pd.DataFrame, origin: str) -> dict:
     items = f["items"].fillna("").astype(str) if "items" in f else pd.Series("", index=f.index)
     return {
         "age": float((o - d.min()).days / 365.25),
-        "amend_3y": float((y3 & f["form"].isin(["10-K/A", "10-Q/A"])).sum()),
-        "nonreliance_3y": float((y3 & (f["form"] == "8-K") & items.str.contains(r"(?<![\d.])4\.02(?!\d)")).any()),
-        "late_2y": float((y2 & f["form"].isin(["NT 10-K", "NT 10-Q"])).any()),
+        "amend_3y": float((y3 & f["form"].isin(["10-K/A", "10-Q/A", "10-K405/A", "10-KT/A"])).sum()),
+        "nonreliance_3y": float(
+            (y3 & f["form"].isin(["8-K", "8-K/A"]) & items.str.contains(r"(?<![\d.])4\.02(?!\d)")).any()
+        ),
+        "late_2y": float(
+            (y2 & f["form"].isin(["NT 10-K", "NT 10-Q", "NT 10-K/A", "NT 10-Q/A", "NTN 10K", "NTN 10Q"])).any()
+        ),
     }
 
 

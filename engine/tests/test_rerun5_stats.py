@@ -75,3 +75,22 @@ def test_walk_forward_candidates_are_scored_on_one_common_set():
     sel = X.walk_forward_select(years, real, {"tau_0.10": a, "tau_0.25": b}, lag=3, min_past=30)
     assert sel[2017]["choice"] == "tau_0.10"  # on the common rows a (1.0) beats b (1.5); per-own-set picked b
     assert sel[2017]["n_past"] == 40 and sel[2017]["n_excluded"] == {"tau_0.10": 0, "tau_0.25": 60}
+
+
+def test_walk_forward_records_a_year_lost_to_a_failing_grid_value():
+    # round 2, N2: with one value failing on most firm-years, the year used to fall back to the defaults silently
+    import numpy as np
+
+    from fintwin.research import experiments as X
+
+    years = np.repeat([2014, 2015, 2016, 2017, 2018], 100)
+    real = np.zeros(len(years))
+    a = np.ones(len(years))
+    b = np.where(np.tile(np.arange(100) < 90, 5), np.nan, 1.0)  # fails on 90% of firm-years
+    sel = X.walk_forward_select(years, real, {"tau_0.10": a, "tau_0.25": b}, lag=3, min_past=50)
+    assert sel[2017]["skipped"] and sel[2017]["choice"] is None and sel[2017]["n_excluded"]["tau_0.25"] == 90
+    rows = [{"origin": f"{y}-02-15", "structural": {"real_cfo": [0.0], "e1": True,
+             "grid": {"tau_0.10": {"cfo": 1.0}, "tau_0.25": {"cfo": None if i % 10 else 1.0}}}}
+            for y in (2014, 2015, 2016, 2017, 2018) for i in range(600)]  # fmt: skip
+    tab = X.select_from_panel(rows)
+    assert tab["tau_skipped"] == ["2017", "2018"] and "2017" not in tab["tau"]

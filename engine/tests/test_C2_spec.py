@@ -365,8 +365,8 @@ def test_second_pass_refuses_a_table_from_another_grid_pass(monkeypatch, tmp_pat
     table = tmp_path / "sel.json"
     table.write_text(json.dumps({"tau": {}, "lambda": {}, "_grid_stamp": "another"}), encoding="utf-8")
     monkeypatch.setenv("FINTWIN_SELECTION", str(table))
-    with pytest.raises(SystemExit, match="another grid pass"):
-        M.shard(0, 1, limit=3)
+    d = M.shard(0, 1, limit=3)  # skipped, not run on a stale table (round 2: raising killed every ladder process)
+    assert not list(d.glob("*.json"))
     monkeypatch.delenv("FINTWIN_SELECTION")
     good = M.grid_stamp()
     table.write_text(json.dumps({"tau": {}, "lambda": {}, "_grid_stamp": good}), encoding="utf-8")

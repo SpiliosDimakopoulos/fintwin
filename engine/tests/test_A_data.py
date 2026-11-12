@@ -438,3 +438,17 @@ def test_a_genuine_zero_revenue_without_another_tag_is_kept(monkeypatch):
         c.add_i("Assets", e, 1.0)
     d = c.load(monkeypatch)
     assert d.quarters["revenue"].iloc[3] == 0.0 and "zero_override" not in d.flags
+
+
+def test_D6_annual_leg_comes_from_an_annual_report_not_a_10q():
+    # Church & Dwight 2023: 10-Qs carry an FY2022 fact of another context (179) filed after the 9-month comparative;
+    # pairing it with the YTD gave Q4 2022 = -3,760.6M (round-2 review)
+    rows = [
+        fact("2022-01-01", "2022-09-30", 4000.0, "2022-10-28", "q3-22"),
+        fact("2022-01-01", "2022-12-31", 5375.0, "2023-02-15", "k-22", "10-K"),
+        fact("2022-01-01", "2022-09-30", 3940.0, "2023-10-27", "q3-23"),  # 9-month comparative, restated
+        fact("2022-01-01", "2022-12-31", 179.0, "2023-10-27", "q3-23b"),  # a 10-Q's annual fact of another context
+        fact("2022-01-01", "2022-12-31", 5376.0, "2024-02-14", "k-23", "10-K"),  # annual comparative, restated
+    ]
+    q = F._duration_table({"X": {"units": {"USD": rows}}}, "X", None, {})
+    assert q[pd.Timestamp("2022-12-31")][0] == 5376.0 - 3940.0
