@@ -109,3 +109,13 @@ D1 FIXED, D3 FIXED, D4 FIXED (as decided), D6 FIXED, `_finite` FIXED (unit test)
 | R2-D2 | MAJOR | Zero-revenue guard drops genuine pre-revenue / zero-revenue biotech firm-years (36 of 1,471, 2.4%; OptiNose, Coherus, Sage, Adaptimmune) for up to 8 years | trim leading zeros; test the last 8 quarters only |
 | R2-D3 | MAJOR | Annual recast in the next 10-K with the YTD never restated: Q4 from first-filed annual (by design of one vintage); 55 of 899 firms still have negative revenue quarters | document; negative quarters allowed by MM-F12; audit WARN |
 | R2-D4..D9 | MINOR | D2 also changes cfo (289 firms) and capex (205): supplement row must say so; legacy layer gets no zero override; FINITE_KEYS omits debt/revolver/dividends/capex; spec_name ignores spec.using; walk_forward.py fillna (not research path); floor overflows at T=20 (research H <= 12) | supplement; legacy left as revision 2 (declared); add keys; leave |
+
+## Round 3 (12-11-2026): both reviewers see no reason not to start probe and dry run
+Fixed: kept family member carries the family labels (M2); stale cfo-error / cross-spec files removed before any check and at
+the stats stage (M1); rejected walk-forward evidence kept in `*.rejected.json` (m3); thin family links counted (F7);
+supplement corrected (2020 cross-section scope, merger links, kept-member rule, confirmatory test spelled out, choices
+inside fix rows, extra non-finite filters, 10-KT/A); zero quarters left out of the seasonal factors (N1, Karyopharm 2021
+base 548M vs 23M); dividends / ebitda in the finite check (N4); audit floors for recorded differences (N2), bare-origin
+errors recorded (N5), panel-error share 20% and negative revenue 1% RED (N6). Open, accepted: N4 (B2 t(G-1) on yearly
+BSS not added; declared), F5 (plan2 small firms descriptive, declared), N3 (dry tables empty by design; declared).
+Tests: 266 pass. Branch merged into rev3 (6479eca).
