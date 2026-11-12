@@ -50,8 +50,16 @@ def _norm(fix_id: str) -> str:
     return f[3:] if f.startswith("MM-") else f
 
 
+def require_explicit() -> None:
+    """FINTWIN_REQUIRE_SPEC=1 (research runs): an unset FINTWIN_SPEC is an error, never the default."""
+    if os.environ.get("FINTWIN_REQUIRE_SPEC") == "1" and not (os.environ.get("FINTWIN_SPEC") or "").strip():
+        raise RuntimeError("FINTWIN_SPEC is not set and FINTWIN_REQUIRE_SPEC=1: refusing to run the default spec")
+
+
 def spec() -> str:
     o = _override.get()
+    if not (o and o[0]):
+        require_explicit()
     name = (o[0] if o and o[0] else None) or os.environ.get("FINTWIN_SPEC") or DEFAULT_SPEC
     name = name.strip().lower()
     if name not in SPECS:

@@ -30,6 +30,7 @@ except ImportError:  # pragma: no cover - only if spec.py is missing (stripped i
 # Used only by the fallback. M1, M4 and M5 are pre-specified extensions, off in every specification
 # (REVISION_PLAN_3 §1: switches, closed in the H2 comparisons); they are turned on with FINTWIN_FIXES.
 _SPEC_FIXES = {"v2-pre": set(), "v2-rev": set(), "v3": {"F3", "F6", "F11"}}
+G_LOG_MAX = 50.0  # see the revenue step in `simulate`
 
 
 def active(fix_id: str) -> bool:
@@ -207,7 +208,9 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
         # --- revenue: AR(1) growth in deseasonalized level, then season and scenario shock ---
         vol = p["sigma_g"] * (1.0 + (p["rec_vol_mult"] - 1.0) * regime)
         g = p["mu"] + p["phi"] * (g_prev - p["mu"]) + vol * e_g + p["rec_drift"] * regime
-        base = base * np.exp(g)
+        # numerical floor only: a quarterly log growth above 50 (x5e21) cannot be a forecast, and 12 such quarters
+        # overflow float64 to inf -> NaN; no path of a realistic draw comes near it (fat tails stay as specified)
+        base = base * np.exp(np.minimum(g, G_LOG_MAX))
         g_prev = g
         rev = base * seasonal[(p["season0"] + t) % 4] * (1.0 + scn["sales_shock"][t])
         override = scn.get("revenue_override")

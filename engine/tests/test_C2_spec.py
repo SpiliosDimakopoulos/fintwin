@@ -149,7 +149,7 @@ def test_shard_writes_spec_dir_and_dry_dir(monkeypatch, tmp_path):
     files = sorted(d.glob("*.json"))
     assert len(files) == 3 and all(y == {2015, 2020, 2022} for _, y in seen)
     rec = json.loads(files[0].read_text(encoding="utf-8"))
-    assert rec["_run"] == {"limit": 3, "cutoffs": [2015, 2020, 2022]} and rec["_stamp"] == M.stamp()
+    assert rec["_run"] == M.run_record(3, {2015, 2020, 2022}) and rec["_run"]["machine"] and rec["_stamp"] == M.stamp()
     assert M.dry_tickers(3) == M.dry_tickers(3)  # same firms in every rung
     seen.clear()
     M.shard(0, 1, limit=3, years={2015, 2020, 2022})
@@ -161,6 +161,7 @@ def test_shard_writes_spec_dir_and_dry_dir(monkeypatch, tmp_path):
 
 def test_stats_refuses_mixed_runs_and_incomplete_dirs(monkeypatch, tmp_path):
     import fintwin.research.__main__ as M
+    import fintwin.research.analysis as A
 
     monkeypatch.setenv("FINTWIN_SPEC", "v2-pre")
     monkeypatch.setattr(M, "ROOT", tmp_path)
@@ -169,12 +170,12 @@ def test_stats_refuses_mixed_runs_and_incomplete_dirs(monkeypatch, tmp_path):
     d.mkdir(parents=True)
     keys = M.dry_tickers(3)
     for t in keys[:2]:
-        (d / f"{t}.json").write_text(json.dumps({"_stamp": M.stamp(), "_run": {"limit": 3, "cutoffs": None}}))
+        (d / f"{t}.json").write_text(json.dumps({"_stamp": M.stamp(), "_run": M.run_record(3)}))
     with pytest.raises(SystemExit, match="incomplete"):
-        M.stats(3)
-    (d / f"{keys[2]}.json").write_text(json.dumps({"_stamp": M.stamp(), "_run": {"limit": 3, "cutoffs": [2020]}}))
+        A.stats(3)
+    (d / f"{keys[2]}.json").write_text(json.dumps({"_stamp": M.stamp(), "_run": M.run_record(3, {2020})}))
     with pytest.raises(SystemExit, match="another run"):
-        M.stats(3)
+        A.stats(3)
 
 
 def test_select_refuses_an_empty_run(monkeypatch, tmp_path):
@@ -188,7 +189,7 @@ def test_select_refuses_an_empty_run(monkeypatch, tmp_path):
     d = M.spec_dir("_s3")
     d.mkdir(parents=True)
     t = M.dry_tickers(3)[0]
-    (d / f"{t}.json").write_text(json.dumps({"_stamp": M.stamp(), "_run": {"limit": 3, "cutoffs": None}}))
+    (d / f"{t}.json").write_text(json.dumps({"_stamp": M.stamp(), "_run": M.run_record(3)}))
     with pytest.raises(SystemExit, match="incomplete"):  # a grid pass cut short gives no table
         M.select(3)
     assert M.selection_path("v3", "_s1000").name == "v3_s1000.json"
@@ -327,3 +328,47 @@ def test_wf_grid_follows_switches(monkeypatch):
     monkeypatch.setenv("FINTWIN_SPEC", "v3")
     monkeypatch.delenv("FINTWIN_FIXES")
     assert any(k.startswith("lam_") for k in X.wf_grid())
+
+
+def _fake_shard_env(monkeypatch, tmp_path):
+    import fintwin.research.__main__ as M
+
+    monkeypatch.setenv("FINTWIN_SPEC", "v2-pre")
+    monkeypatch.delenv("FINTWIN_NEW_RUN", raising=False)
+    monkeypatch.setattr(M, "ROOT", tmp_path)
+    monkeypatch.setattr(M, "research_tickers", lambda: [f"CIK{i:010d}" for i in range(1, 11)])
+    monkeypatch.setattr(M, "forecast_ciks", lambda: set())
+    monkeypatch.setattr(X, "company", lambda t, with_forecasts=True, years=None: {"ticker": t, "errors": {}})
+    return M
+
+
+def test_shard_refuses_to_overwrite_another_stamp_or_machine(monkeypatch, tmp_path):
+    # rerun 5, P2 / P3: a code change between stages, or another platform, must stop the stage, not recompute it
+    M = _fake_shard_env(monkeypatch, tmp_path)
+    d = M.shard(0, 1, limit=3)
+    f = sorted(d.glob("*.json"))[0]
+    rec = json.loads(f.read_text(encoding="utf-8"))
+    f.write_text(json.dumps(rec | {"_stamp": "old-code"}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="another stamp"):
+        M.shard(0, 1, limit=3)
+    f.write_text(json.dumps(rec | {"_run": rec["_run"] | {"machine": "aarch64"}}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="another run"):
+        M.shard(0, 1, limit=3)
+    monkeypatch.setenv("FINTWIN_NEW_RUN", "1")  # deliberate recompute
+    M.shard(0, 1, limit=3)
+    assert json.loads(f.read_text(encoding="utf-8"))["_run"] == M.run_record(3)
+
+
+def test_second_pass_refuses_a_table_from_another_grid_pass(monkeypatch, tmp_path):
+    # rerun 5, P6: a table copied from a lost server (or written before a code change) must not drive the "-wf" pass
+    M = _fake_shard_env(monkeypatch, tmp_path)
+    table = tmp_path / "sel.json"
+    table.write_text(json.dumps({"tau": {}, "lambda": {}, "_grid_stamp": "another"}), encoding="utf-8")
+    monkeypatch.setenv("FINTWIN_SELECTION", str(table))
+    d = M.shard(0, 1, limit=3)  # skipped, not run on a stale table (round 2: raising killed every ladder process)
+    assert not list(d.glob("*.json"))
+    monkeypatch.delenv("FINTWIN_SELECTION")
+    good = M.grid_stamp()
+    table.write_text(json.dumps({"tau": {}, "lambda": {}, "_grid_stamp": good}), encoding="utf-8")
+    monkeypatch.setenv("FINTWIN_SELECTION", str(table))
+    assert M.shard(0, 1, limit=3).name.endswith("_s3")

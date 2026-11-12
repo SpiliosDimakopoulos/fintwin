@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -37,12 +38,62 @@ DRY_SEED = 2026
 MAX_FAIL_SHARE = float(os.environ.get("FINTWIN_MAX_FAIL_SHARE", "0.10"))
 
 
+# Entry points of the code that writes shards (`shard`, `ladder`, `select`, `sobol-shard`): the shard digest covers
+# these files and everything they import, at any depth and also inside functions (static closure below). Analysis
+# commands live in research/analysis.py, reached by name only, so a change to a statistic never makes shards stale.
+SHARD_ROOTS = ("fintwin.research.__main__", "fintwin.research.experiments", "fintwin.research.assumption_sobol")
+
+
+def _module_file(root: Path, mod: str) -> Path | None:
+    parts = mod.split(".")[1:]
+    if not parts:
+        return root / "__init__.py"
+    rel = Path(*parts)
+    for p in (root / rel.with_suffix(".py"), root / rel / "__init__.py"):
+        if p.exists():
+            return p
+    return None
+
+
+def shard_modules() -> list[str]:
+    """Static import closure of SHARD_ROOTS inside the fintwin package (module-level and function-level imports;
+    each package's __init__ on the way is included)."""
+    import ast
+
+    root = Path(__file__).resolve().parents[1]
+    seen: set[str] = set()
+    todo = list(SHARD_ROOTS)
+    while todo:
+        mod = todo.pop()
+        if mod in seen or _module_file(root, mod) is None:
+            continue
+        seen.add(mod)
+        parts = mod.split(".")
+        for i in range(1, len(parts)):  # importing a.b.c runs a/__init__ and a/b/__init__
+            todo.append(".".join(parts[:i]))
+        path = _module_file(root, mod)
+        pkg = parts if path.name == "__init__.py" else parts[:-1]
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                todo += [a.name for a in node.names if a.name.startswith("fintwin")]
+            elif isinstance(node, ast.ImportFrom):
+                base = pkg[: len(pkg) - node.level + 1] if node.level else []
+                target = ".".join(base + (node.module.split(".") if node.module else []))
+                if not target.startswith("fintwin"):
+                    continue
+                todo.append(target)
+                todo += [f"{target}.{a.name}" for a in node.names]  # `from . import calibrate` imports a module
+    return sorted(seen)
+
+
 @lru_cache(maxsize=1)
 def _code_digest() -> str:
+    """Digest of the code and inputs that can change a shard: the shard modules, the committed data files
+    (*.csv / *.json in fintwin/data, read on the shard path) and the snapshot."""
     root = Path(__file__).resolve().parents[1]
+    files = [_module_file(root, m) for m in shard_modules()]
     h = hashlib.sha256()
-    # committed inputs: *.csv and *.json (sector_norms.json is read by calibrate and rewritten by the weekly pipeline)
-    for p in sorted([*root.rglob("*.py"), *DATA.glob("*.csv"), *DATA.glob("*.json")]):
+    for p in sorted({*files, *DATA.glob("*.csv"), *DATA.glob("*.json")}):
         h.update(p.relative_to(root).as_posix().encode())
         h.update(p.read_bytes().replace(b"\r\n", b"\n"))
     snap = root.parent / "snapshot" / "manifest.json"
@@ -50,25 +101,59 @@ def _code_digest() -> str:
     return h.hexdigest()
 
 
+def analysis_digest() -> str:
+    """Digest of the fintwin code outside the shard closure (statistics, export, web), recorded with each result."""
+    root = Path(__file__).resolve().parents[1]
+    shard = {_module_file(root, m) for m in shard_modules()}
+    h = hashlib.sha256()
+    for p in sorted(set(root.rglob("*.py")) - shard):
+        h.update(p.relative_to(root).as_posix().encode())
+        h.update(p.read_bytes().replace(b"\r\n", b"\n"))
+    return h.hexdigest()
+
+
 # Switches that change how a run is executed or merged, not what a shard contains (stats bootstrap sizes, fetch policy).
 RUN_ONLY_ENV = frozenset(
-    {"FINTWIN_MAX_FAIL_SHARE", "FINTWIN_B", "FINTWIN_B_PANEL", "FINTWIN_B_FAMILY", "FINTWIN_B_LAD", "FINTWIN_FILL_ONLY"}
+    {
+        "FINTWIN_MAX_FAIL_SHARE",
+        "FINTWIN_B",
+        "FINTWIN_B_PANEL",
+        "FINTWIN_B_FAMILY",
+        "FINTWIN_B_LAD",
+        "FINTWIN_FILL_ONLY",
+        "FINTWIN_FAMILIES",
+        "FINTWIN_REQUIRE_SPEC",
+        "FINTWIN_NEW_RUN",
+        "FINTWIN_ALLOW_DIRTY",
+        "FINTWIN_ALLOW_MACHINE",
+    }
 )
 
 
-def stamp() -> str:
-    """Hash of the code, committed inputs, data snapshot and switches that produce a shard: a shard written under a
-    different stamp is stale and is recomputed, and `stats` refuses to merge shards of mixed stamps. A walk-forward
-    selection table enters by its content, not its path."""
+def _env_hash(with_selection: bool = True) -> hashlib._Hash:
     h = hashlib.sha256(_code_digest().encode())
     for k in sorted(os.environ):
         # FINTWIN_SELECTION enters by content below, not by its (machine-specific) absolute path
         if k.startswith("FINTWIN_") and k not in RUN_ONLY_ENV and k != "FINTWIN_SELECTION":
             h.update(f"{k}={os.environ[k]}".encode())
     sel = os.environ.get("FINTWIN_SELECTION")
-    if sel and Path(sel).exists():
+    if with_selection and sel and Path(sel).exists():
         h.update(Path(sel).read_bytes())
-    return h.hexdigest()[:16]
+    return h
+
+
+def stamp() -> str:
+    """Hash of the code, committed inputs, data snapshot and switches that produce a shard: `stats` refuses to merge
+    shards of mixed stamps, and `shard` refuses to overwrite one of another stamp unless FINTWIN_NEW_RUN=1 (a code
+    change between stages would otherwise recompute a finished stage silently). A walk-forward selection table enters
+    by its content, not its path."""
+    return _env_hash().hexdigest()[:16]
+
+
+def grid_stamp() -> str:
+    """The stamp of the grid pass under the current switches (the selection table left out): a table records it, and
+    the second pass refuses a table written from another grid pass."""
+    return _env_hash(with_selection=False).hexdigest()[:16]
 
 
 def _stamp_of(path: Path) -> str | None:
@@ -93,7 +178,8 @@ def run_tag(limit: int | None = None, years: set[int] | None = None) -> str:
 
 
 def run_record(limit: int | None = None, years: set[int] | None = None) -> dict:
-    return {"limit": limit, "cutoffs": sorted(years) if years else None}
+    # the platform is part of the run: x86 and ARM differ in the last digits (B1 parity), so shards never mix
+    return {"limit": limit, "cutoffs": sorted(years) if years else None, "machine": platform.machine()}
 
 
 def spec_dir(tag: str = "") -> Path:
@@ -143,7 +229,7 @@ def prefetch() -> None:
 
 def shard(i: int, n: int, limit: int | None = None, years: set[int] | None = None) -> Path:
     """Run shard i of n under the current specification. `limit` / `years` restrict the run (own directory)."""
-    from ..export import _clean
+    from ..clean import _clean
     from .experiments import company
 
     out_dir = spec_dir(run_tag(limit, years))
@@ -152,12 +238,24 @@ def shard(i: int, n: int, limit: int | None = None, years: set[int] | None = Non
     st = stamp()
     keys = dry_tickers(limit) if limit is not None else research_tickers()
     run = run_record(limit, years)
+    sel = os.environ.get("FINTWIN_SELECTION")
+    if sel:
+        made_from = json.loads(Path(sel).read_text(encoding="utf-8")).get("_grid_stamp")
+        if made_from != grid_stamp():  # a table from another grid pass (an earlier code, a lost server): this pass
+            # is skipped, not run on it; `select` rebuilds the table and `stats` refuses an incomplete "-wf" run
+            print(f"  skip: selection table {sel} comes from another grid pass ({made_from} != {grid_stamp()})")
+            return out_dir
+    new_run = os.environ.get("FINTWIN_NEW_RUN") == "1"
     for k, t in enumerate(keys):
         if k % n != i:
             continue
         out = out_dir / f"{t}.json"
-        if out.exists() and _meta_of(out) == (st, run):  # resumable only under the same code, data, switches, run
+        old = _meta_of(out) if out.exists() else (None, None)
+        if old == (st, run):  # resumable only under the same code, data, switches, run
             continue
+        if old[0] is not None and not new_run:
+            why = "another stamp" if old[0] != st else f"another run {old[1]}"
+            raise SystemExit(f"{out} was written under {why}: set FINTWIN_NEW_RUN=1 to recompute deliberately")
         t0 = time.time()
         try:
             res = company(t, with_forecasts=int(t[3:]) in fc, years=years)
@@ -221,6 +319,13 @@ def select(limit: int | None = None, years: set[int] | None = None) -> Path:
     d = spec_dir(tag)
     check_run(d, limit, years)
     sel = select_from_shards(d)
+    skipped = {k: v for k, v in sel.items() if k.endswith("_skipped") and v}
+    if skipped:  # years with enough history but too few firm-years where every grid value is finite
+        rejected = selection_path(tag=tag).with_suffix(".rejected.json")  # evidence kept; never read as a table
+        rejected.parent.mkdir(parents=True, exist_ok=True)
+        rejected.write_text(json.dumps(sel, indent=1), encoding="utf-8")
+        raise SystemExit(f"walk-forward selection skipped years {skipped}: evidence in {rejected}")
+    sel["_grid_stamp"] = grid_stamp()  # the second pass checks that the table comes from this grid pass
     path = selection_path(tag=tag)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(sel, indent=1), encoding="utf-8")
@@ -249,20 +354,6 @@ def ladder(i: int, n: int, extra: list[str], rungs: list[str] | None = None, tag
                 env=e | {"FINTWIN_SELECTION": str(sel)},
                 check=True,
             )
-
-
-def stats(limit: int | None = None, years: set[int] | None = None) -> None:
-    from .stats import OUT, main
-
-    d = spec_dir(run_tag(limit, years))
-    check_run(d, limit, years)
-    summary = check_failures(_shards(d))
-    main(d)
-    copy = ROOT / "_results" / f"{d.name}.json"  # one result per spec, next to the shared docs/paper/research.json
-    copy.parent.mkdir(parents=True, exist_ok=True)
-    res = json.loads(Path(OUT).read_text(encoding="utf-8"))
-    res["failures"] = summary
-    copy.write_text(json.dumps(res, indent=1), encoding="utf-8")
 
 
 def _opts(args: list[str]) -> tuple[list[str], dict]:
@@ -302,12 +393,10 @@ def main(argv: list[str]) -> None:
         from .assumption_sobol import stats as sobol_stats
 
         print(json.dumps({k: v for k, v in sobol_stats().items() if k != "indices"}, default=str)[:2000])
-    elif cmd == "stats":
-        if "dry" in opt:
-            raise SystemExit("`stats --dry` is gone: pass the run's --limit / --cutoffs (one directory per run)")
-        stats(limit, years)
-    else:
-        raise SystemExit(f"unknown command {cmd}")
+    else:  # analysis commands (stats, cross-spec, ...): by name, outside the shard code digest
+        import importlib
+
+        importlib.import_module("fintwin.research.analysis").main(argv)
 
 
 if __name__ == "__main__":

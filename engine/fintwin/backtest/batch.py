@@ -224,7 +224,7 @@ def _realized(full: pd.DataFrame, after: pd.Timestamp, why: dict | None = None) 
         r = r.copy()
         if reason and why is not None:
             why["realized"] = reason
-    r["cash_like"] = r["cash"] + r["short_investments"]
+    r["cash_like"] = r["cash"] + r["short_investments"].fillna(0)  # as in the history (experiments, rw_empirical)
     return r
 
 
@@ -242,7 +242,7 @@ def _baseline(hist: pd.DataFrame, var: str, h: int) -> tuple[float, float]:
         r = s if legacy else _calendar(hist, hist["revenue"])
         yoy = np.log(r / r.shift(4)).dropna().tail(20)
         return float(same), float(same * yoy.std() * np.sqrt(int(np.ceil(h / 4))))
-    c = hist["cash"] + hist["short_investments"]
+    c = hist["cash"] + hist["short_investments"].fillna(0)
     if legacy:
         s = c.dropna()
         return float(s.iloc[-1]), float(s.diff().tail(20).std() * np.sqrt(h))
@@ -315,6 +315,8 @@ def company_cases(ticker: str, n_paths: int = 2000) -> dict:
                 flag: simulate(p, build_scenario({}, H), eps, {**DEFAULT_LEVERS, "recessions": flag})
                 for flag in (True, False)
             }
+            if not all(np.isfinite(s[k]).all() for s in sims.values() for k in ("revenue", "cash")):
+                raise ValueError("non-finite simulation output")  # reported under `skipped`, not written as NaN
             for var, key in (("revenue", "revenue"), ("cash_like", "cash")):
                 for h in range(H):
                     y = float(real[var].iloc[h])
@@ -345,7 +347,7 @@ def company_cases(ticker: str, n_paths: int = 2000) -> dict:
         vintages.append(_vintage(full_data, None, macro_quarterly()))
     except Exception as e:
         skipped["latest"] = f"{type(e).__name__}: {e}"
-    cash_like = full["cash"] + full["short_investments"]
+    cash_like = full["cash"] + full["short_investments"].fillna(0)
     timeline = {
         "ticker": ticker,
         "series": {
@@ -510,7 +512,7 @@ def aggregate() -> dict:
     res["skipped"] = {r["ticker"]: r["skipped"] for r in per if r["skipped"]}
     stamps = pd.Series([r.get("_stamp") or "none" for r in per]).value_counts()
     res["stamps"] = {"n_distinct": int(len(stamps)), "largest_share": float(stamps.iloc[0] / stamps.sum())}
-    from ..export import _clean
+    from ..clean import _clean
 
     OUT.write_text(json.dumps(_clean(res), separators=(",", ":"), allow_nan=False), encoding="utf-8")
     return res

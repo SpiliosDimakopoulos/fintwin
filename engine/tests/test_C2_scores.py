@@ -311,9 +311,26 @@ def test_sobol_indices_guard_and_firm_bootstrap(monkeypatch, tmp_path):
         real = float(rng.normal(10, 3))
         dx = float(rng.normal(0, 10))
         twin = (real + P[:, 0] * 5 * rng.normal() + 0.1 * dx).tolist()  # the first factor matters
-        row = {"real": real, "n1": real + 1, "rev_change": dx, "twin": twin, "_stamp": "s"}
+        row = {
+            "key": f"k{i}",
+            "year": 2018,
+            "real": real,
+            "n1": real + 1,
+            "rev_change": dx,
+            "twin": twin,
+            "_stamp": "s",
+        }
         (d / f"k{i}_2018.json").write_text(json.dumps(row), encoding="utf-8")
+    eligible = {
+        "_stamp": "s",
+        "n_sample": 60,
+        "keys": [[f"k{i}", 2018] for i in range(60)],
+        "failed": {},
+        "excluded": {},
+    }
+    (d / "_eligible.json").write_text(json.dumps(eligible), encoding="utf-8")
     out = A.stats(n_boot=40)
+    assert out["attrition"]["eligible"] == out["attrition"]["rows"] == 60
     top = max(out["median_ae"]["indices"], key=lambda r: r["ST"])
     assert top["factor"] == "fixed_share_prior"
     assert "elasticity_ratio" in out and out["n_base"] == n

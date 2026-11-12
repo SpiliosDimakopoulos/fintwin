@@ -37,6 +37,8 @@ B_LAD = _env_int("FINTWIN_B_LAD", 199)  # firm bootstrap of the LAD encompassing
 # Every random draw in research/stats, transmission and plan2 starts its own Generator from one of these seeds, so a
 # result does not depend on which statistics were computed before it (the old module-global RNG did). Written to
 # research.json as the seeds table.
+from .units import cluster_of, dedupe_events, family_pass, unit  # noqa: E402  (leaf module)
+
 SEEDS = {
     "boot": (20200220, "stats.boot / stats.paired: firm or row bootstrap, a fresh Generator per call"),
     "cv_folds": (7, "stats._cv_composite: fold assignment of the cross-validated composite"),
@@ -45,6 +47,7 @@ SEEDS = {
     "year_block": (102, "transmission.inference: year-block bootstrap of the combination gains"),
     "lad": (103, "transmission.encompassing: firm bootstrap of the LAD encompassing coefficients"),
     "cash_pool": (104, "plan2.cash_hybrid: firm bootstrap of the density-combination skill"),
+    "cross_spec": (105, "cross_spec.compare: year-block bootstrap of the v3 vs v2-pre test"),
 }
 
 
@@ -511,13 +514,14 @@ def load(cache: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
         if c:
             row = {
                 "ticker": c["ticker"],
+                "cluster": cluster_of(c["ticker"], cik),
                 "cik": cik,
                 "name": c["name"],
                 "sector": c["sector"] or "Unknown",
                 "gics": gics,
                 "bankrupt": r.get("bankrupt_2020", False),
                 **flags,
-                "bk_2020": bk_event(dates, "2020-02-20", 680),  # filings to the end of 2021
+                "bk_2020": bk_event(dates, "2020-02-20", 680, spans=spans),  # filings to the end of 2021; D8 (S3)
             }
             row |= {f"grid_{k}": v for k, v in (c.get("depth_grid") or {}).items()}
             row["st"] = c.get("structural") or {}
@@ -534,6 +538,7 @@ def load(cache: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
         for pr in r.get("panel", []):
             row = {
                 "ticker": r["ticker"],
+                "cluster": cluster_of(r["ticker"], cik),
                 "cik": cik,
                 "year": int(pr["origin"][:4]),
                 "industry": (c or {}).get("sector") or _industry(r["ticker"]),
@@ -553,8 +558,17 @@ def load(cache: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
             row |= pr["features"]
             row |= {f"y_{k}": v for k, v in (pr.get("outcome") or {}).items()}
             panel.append(row)
+        n_bad = 0
         for fr in r.get("forecasts", []):
-            fc.append({"ticker": r["ticker"], **fr})
+            q = fr.get("q")
+            # a quantile list with a non-finite value (a diverged simulation in a shard written before the engine
+            # check of 12-11-2026) would turn every conformal factor of its variable into NaN: an error, not a row
+            if isinstance(q, list) and not np.isfinite(np.asarray(q, float)).all():
+                n_bad += 1
+                continue
+            fc.append({"ticker": r["ticker"], "cluster": cluster_of(r["ticker"], cik), **fr})
+        if n_bad:
+            errors.setdefault(r["ticker"], {})["forecasts"] = f"{n_bad} forecasts with non-finite quantiles dropped"
     return pd.DataFrame(xs), pd.DataFrame(panel), pd.DataFrame(fc), errors
 
 
@@ -570,7 +584,9 @@ def _secondary_pvalues(res: dict) -> dict[str, float]:
     out: dict[str, float] = {}
     tp = res.get("transmission", {}).get("panel", {})
     for var in ("cfo", "fcf"):
-        h = tp.get(var, {}).get("hybrid", {})
+        # pre-spec 2.1: winsorization limits from the training years only (E6); `hybrid` (all-year limits) is the
+        # revision-2 continuity number and never enters the Holm family (12-11-2026 review, S4)
+        h = tp.get(var, {}).get("hybrid_train", {})
         for k in ("N3+T1_vs_N3+N1", "N3+T1_vs_N3+N5", "N3+T1_vs_N3+N6"):
             if k in h:
                 out[f"hybrid_{var}_{k}"] = h[k]["p"]
@@ -783,9 +799,11 @@ def _raw(p: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
             X["h_base"], X["pb_base"], X["h_rec"] = -p["h_base"], p["pb_base"], -p["h_rec"]
         elif k == "formula":
             X["formula"] = -_col(p, "health_t0")
-        else:
+        elif k in BENCH:
             col, sign = BENCH[k]
             X[k] = sign * _col(p, col)
+        else:  # a plain column of the frame (the exploratory rivals' features)
+            X[k] = _col(p, k)
     return X
 
 
@@ -817,7 +835,7 @@ def _fit_predict(train: pd.DataFrame, test: pd.DataFrame, ytr: np.ndarray, cols:
 
 def panel_section(p: pd.DataFrame) -> dict:
     ev = _events(p)
-    firms = p["ticker"].to_numpy()
+    firms = unit(p).to_numpy()
     R = risk_frame(p, "h_base", "pb_base")
     R["twin_rec"] = -p["h_rec"].astype(float)
     R["twin_no_loops"] = -p["h_base_no_loops"].astype(float)
@@ -917,7 +935,7 @@ def _clustered_logit(p: pd.DataFrame, y: np.ndarray) -> dict:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             m = sm.Logit(y, sm.add_constant(pd.concat([X, yr], axis=1))).fit(
-                disp=False, cov_type="cluster", cov_kwds={"groups": pd.factorize(p["ticker"])[0]}
+                disp=False, cov_type="cluster", cov_kwds={"groups": pd.factorize(unit(p))[0]}
             )
         return {
             k: {"coef": float(m.params[k]), "z": float(m.tvalues[k]), "p": float(m.pvalues[k])} for k in X.columns
@@ -949,7 +967,7 @@ def forecast_section(fc: pd.DataFrame) -> dict:
             d = (c_t - c_b).to_numpy(float)
             # Diebold-Mariano style test on scaled CRPS differentials, with standard errors clustered two ways: by
             # firm (repeated forecasts) and by origin (common shocks such as 2020)
-            firm_ids, origin_ids = pd.factorize(g["ticker"])[0], pd.factorize(g["origin"])[0]
+            firm_ids, origin_ids = pd.factorize(unit(g))[0], pd.factorize(g["origin"])[0]
             groups = np.column_stack([firm_ids, origin_ids]) if origin_ids.max() > 0 else firm_ids
             m = sm.OLS(d, np.ones(len(d))).fit(cov_type="cluster", cov_kwds={"groups": groups})
             # E9 / SW-14: with about a dozen origins the normal p-value above over-rejects; t(G-1) and a PSD check
@@ -1036,10 +1054,10 @@ def _safe(fn, *args) -> dict:
         return {"error": f"{type(e).__name__}: {e}"}
 
 
-def main(cache: Path, b_family: int | None = None, out: Path | None = None) -> dict:
+def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_errors: Path | None = None) -> dict:
     """`b_family` (default B_FAMILY, env FINTWIN_B_FAMILY) is the bootstrap size of the pre-specified comparison
     family; a dry run passes a small number. `out`: where to write research.json (default OUT), one file per
-    specification."""
+    specification. `cfo_errors`: where to write the firm-year CFO errors of the twin, read by `cross-spec`."""
     from . import calibration, distress, transmission
 
     b_family = B_FAMILY if b_family is None else int(b_family)
@@ -1051,6 +1069,9 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None) -> d
     if n_in_bk and not _data_legacy():
         panel_all = panel_all[~panel_all["in_bankruptcy"].astype(bool)].reset_index(drop=True)
     xs, panel = size_screen(xs), size_screen(panel_all)
+    # family pass (WP6): a group's bankruptcy counts once per family and cutoff
+    panel, dedup_panel = dedupe_events(panel, ["y_bk8", "y_bk4"], "year")
+    xs, dedup_xs = dedupe_events(xs, ["bk_2020"], None)
     samples = {
         "edgar": np.ones(len(xs), bool),
         "sp2020": xs["sp2020"].to_numpy(bool),
@@ -1063,6 +1084,15 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None) -> d
             "panel_firm_years": int(len(panel)),
             "panel_firms": int(panel["ticker"].nunique()) if len(panel) else 0,
             "panel_in_bankruptcy_excluded": 0 if _data_legacy() else n_in_bk,
+            "unit": "family" if family_pass() else "firm",
+            "family_events_removed": {**dedup_panel, **dedup_xs},
+            # units the tests drop silently (non-finite twin health): must be 0 or reported
+            "panel_health_missing": int(pd.to_numeric(panel.get("h_base"), errors="coerce").isna().sum())
+            if len(panel)
+            else 0,
+            "covid_health_missing": int(pd.to_numeric(xs.get("h_pandemic"), errors="coerce").isna().sum())
+            if len(xs)
+            else 0,
         },
         "seeds": seeds_table() | {"B_FAMILY_used": b_family},
         # cumulative FCF over 2020Q1-2021Q2 (raw, and relative to the run-rate); the worst-cumulative versions, which
@@ -1093,6 +1123,10 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None) -> d
     res["density"] = _safe(calibration.density_section, panel)  # E2 / plan 2.2 B1
     liq = _safe(distress.liquidity_frame, cache)
     if isinstance(liq, pd.DataFrame):
+        # family pass: a joint petition or default labels every co-registrant (Hertz Corp / Hertz Global, round 2)
+        labels = [c for c in liq if c.startswith(("ce", "y_short", "bk", "acc", "delist"))]
+        liq, dedup_liq = dedupe_events(liq, labels, "year")
+        res["samples"]["family_events_removed_liquidity"] = dedup_liq
         res["liquidity"] = _safe(distress.liquidity_section, liq, B)  # E12 / plan 2.2 B2
         res["credit_events"] = _safe(distress.credit_section, liq, B)  # M9 / B3
     else:
@@ -1103,10 +1137,19 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None) -> d
     from . import plan2
 
     res["plan2"] = plan2.section(panel_all, panel, fc, B_PANEL)
+    # exploratory, after the pre-specification (WP6, a reader): non-accounting rivals; firm units only
+    if not family_pass():
+        from . import rivals
+
+        res["exploratory_rivals"] = _safe(rivals.section, panel)
     res["plan2"]["verdicts"] = plan2.verdicts(res)
     res["plan2"]["holm"] = plan2.holm(_secondary_pvalues(res))
-    from ..export import _clean
+    from ..clean import _clean
+    from .cross_spec import cfo_errors_frame
 
+    if cfo_errors is not None:  # the same screened panel the tests used
+        Path(cfo_errors).parent.mkdir(parents=True, exist_ok=True)
+        cfo_errors_frame(transmission.frame(panel)).to_csv(cfo_errors, index=False)
     dest = Path(out) if out is not None else OUT
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(_clean(res), indent=1), encoding="utf-8")

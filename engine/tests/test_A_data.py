@@ -388,3 +388,67 @@ def test_legacy_frame_has_revision_2_columns_only(monkeypatch):
     d = c.load(monkeypatch, legacy=True)
     assert not set(F.FLAG_COLUMNS + ["da_annual", "debt_notes", "finance_lease"]) & set(d.quarters.columns)
     assert d.imputed is None and d.flags == {} and d.quarters["receivables"].iloc[2] == 0.0
+
+
+# ---- rerun 5 (12-11-2026): restated annuals, zero-valued revenue tags ----
+
+
+def test_D6_restated_annual_in_a_later_10k_is_not_differenced_against_the_original_ytd():
+    # HP 2014: the 2016 10-K restates FY2014 (spin-off) as a comparative; the 9-month YTD is never restated, so
+    # latest annual minus 9-month gave a negative Q4. The pair must come from one vintage: the 9-month as last filed
+    # and the first annual filed after it.
+    rows = [
+        fact("2013-11-01", "2014-07-31", 83.0, "2014-09-10", "q3"),
+        fact("2013-11-01", "2014-10-31", 111.0, "2014-12-18", "k14", "10-K"),
+        fact("2013-11-01", "2014-10-31", 56.0, "2016-12-15", "k16", "10-K"),
+    ]
+    diag: dict = {}
+    q = F._duration_table({"X": {"units": {"USD": rows}}}, "X", None, diag)
+    assert q[pd.Timestamp("2014-10-31")][0] == 28.0
+    assert diag["vintage_fixed"] == [("X", pd.Timestamp("2014-10-31"))]
+
+
+def test_D6_restated_ytd_pairs_with_the_annual_filed_after_it():
+    rows = [
+        fact("2024-01-01", "2024-09-30", 300, "2024-10-30", "q3"),
+        fact("2024-01-01", "2024-12-31", 420, "2025-02-15", "k", "10-K"),
+        fact("2024-01-01", "2024-09-30", 270, "2025-10-30", "q3next"),  # restated 9-month comparative
+        fact("2024-01-01", "2024-12-31", 380, "2026-02-15", "knext", "10-K"),  # and the annual restated with it
+    ]
+    q = F._duration_table({"X": {"units": {"USD": rows}}}, "X", None, {})
+    assert q[pd.Timestamp("2024-12-31")][0] == 110  # 380 - 270, one vintage
+
+
+def test_zero_in_the_first_revenue_tag_yields_to_a_non_zero_lower_tag(monkeypatch):
+    # Alaska Air 2012-13: `Revenues` = 0 beside `SalesRevenueNet` with the real figures
+    c = Co(n=0)
+    for i, (s, e) in enumerate(quarters(n=12)):
+        c.add("Revenues", s, e, 0.0 if i % 4 else 100.0)
+        c.add("SalesRevenueNet", s, e, 100.0)
+        c.add_i("Assets", e, 1.0)
+    d = c.load(monkeypatch)
+    assert (d.quarters["revenue"] == 100.0).all()
+    assert d.flags["zero_override"] == [{"field": "revenue", "tag": "SalesRevenueNet", "n": 9}]
+
+
+def test_a_genuine_zero_revenue_without_another_tag_is_kept(monkeypatch):
+    c = Co(n=0)
+    for i, (s, e) in enumerate(quarters(n=8)):
+        c.add("Revenues", s, e, 0.0 if i == 3 else 100.0)
+        c.add_i("Assets", e, 1.0)
+    d = c.load(monkeypatch)
+    assert d.quarters["revenue"].iloc[3] == 0.0 and "zero_override" not in d.flags
+
+
+def test_D6_annual_leg_comes_from_an_annual_report_not_a_10q():
+    # Church & Dwight 2023: 10-Qs carry an FY2022 fact of another context (179) filed after the 9-month comparative;
+    # pairing it with the YTD gave Q4 2022 = -3,760.6M (round-2 review)
+    rows = [
+        fact("2022-01-01", "2022-09-30", 4000.0, "2022-10-28", "q3-22"),
+        fact("2022-01-01", "2022-12-31", 5375.0, "2023-02-15", "k-22", "10-K"),
+        fact("2022-01-01", "2022-09-30", 3940.0, "2023-10-27", "q3-23"),  # 9-month comparative, restated
+        fact("2022-01-01", "2022-12-31", 179.0, "2023-10-27", "q3-23b"),  # a 10-Q's annual fact of another context
+        fact("2022-01-01", "2022-12-31", 5376.0, "2024-02-14", "k-23", "10-K"),  # annual comparative, restated
+    ]
+    q = F._duration_table({"X": {"units": {"USD": rows}}}, "X", None, {})
+    assert q[pd.Timestamp("2022-12-31")][0] == 5376.0 - 3940.0

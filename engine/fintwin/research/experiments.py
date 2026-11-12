@@ -74,6 +74,8 @@ LADDER: list[tuple[str, dict[str, str]]] = [
 def spec_name() -> str:
     # Unset means the same default as stochastic/spec.py, so labels and the fixes actually applied never disagree.
     default = getattr(_spec_mod, "DEFAULT_SPEC", "v3") if _spec_mod is not None else "v3"
+    if _spec_mod is not None:
+        _spec_mod.require_explicit()
     s = (os.environ.get("FINTWIN_SPEC") or default).strip()
     if s not in SPECS:
         raise ValueError(f"FINTWIN_SPEC={s!r}: expected one of {SPECS}")
@@ -266,21 +268,22 @@ def walk_forward_select(
     """
     years = np.asarray(years)
     real = np.asarray(real, float)
+    X = {name: np.asarray(x, float) for name, x in preds.items()}
     out: dict[int, dict] = {}
     for y in sorted(set(years.tolist())):
-        past = years <= y - lag
-        err: dict[str, float] = {}
-        n = 0
-        for name, x in preds.items():
-            x = np.asarray(x, float)
-            m = past & np.isfinite(x) & np.isfinite(real)
-            n = max(n, int(m.sum()))
-            if m.sum() >= min_past:
-                err[name] = float(np.median(np.abs(x[m] - real[m])))
-        if not err:
+        past = (years <= y - lag) & np.isfinite(real)
+        # one common set of firm-years for every value (12-11-2026 review, S5): a value that fails on the hard
+        # firm-years must not be scored on the easy ones only
+        m = past & np.all([np.isfinite(x) for x in X.values()], axis=0)
+        excluded = {name: int((past & ~np.isfinite(x)).sum()) for name, x in X.items()}
+        if m.sum() < min_past:
+            if past.sum() >= min_past:  # enough history, but the grid values fail on too many firm-years: recorded,
+                # and `select` stops (round 2, N2: the defaults ran silently under the "-wf" label)
+                out[int(y)] = {"choice": None, "n_past": int(m.sum()), "n_excluded": excluded, "skipped": True}
             continue
+        err = {name: float(np.median(np.abs(x[m] - real[m]))) for name, x in X.items()}
         best = min(err, key=lambda k: (err[k], list(preds).index(k)))
-        out[int(y)] = {"choice": best, "n_past": n, "median_ae": err}
+        out[int(y)] = {"choice": best, "n_past": int(m.sum()), "n_excluded": excluded, "median_ae": err}
     return out
 
 
@@ -303,7 +306,8 @@ def select_from_panel(rows: list[dict]) -> dict:
             continue
         preds = {k: np.array([(g.get(k) or {}).get("cfo", np.nan) for g in grid], float) for k in names}
         sel = walk_forward_select(np.array(years), np.array(real), preds)
-        out[key] = {str(y): float(s["choice"].split("_")[1]) for y, s in sel.items()}
+        out[key] = {str(y): float(s["choice"].split("_")[1]) for y, s in sel.items() if s["choice"]}
+        out[f"{key}_skipped"] = sorted(str(y) for y, s in sel.items() if s.get("skipped"))
         out[f"{key}_evidence"] = {str(y): s for y, s in sel.items()}
     return out
 
@@ -509,9 +513,20 @@ def shortfall(sim: dict, p: dict, k: int) -> float:
     return float(np.mean((sim["cash"][:, :k] + undrawn < 0).any(1)))
 
 
+FINITE_KEYS = ("revenue", "cash", "cfo", "fcf", "health", "debt", "revolver", "capex", "dividends", "ebitda")
+
+
+def _finite(sim: dict, keys: tuple[str, ...] = FINITE_KEYS) -> dict:
+    """A simulation that went non-finite is an error of its unit (recorded and counted), never a None in a shard."""
+    bad = [k for k in keys if k in sim and not np.isfinite(np.asarray(sim[k], float)).all()]
+    if bad:
+        raise ValueError(f"non-finite simulation output {bad}")
+    return sim
+
+
 def _run(p: dict, knobs: dict, levers: dict, n: int, horizon: int, seed: int) -> dict:
     eps = draw_shocks(p, n, horizon, seed=seed)
-    sim = simulate(p, build_scenario(knobs, horizon), eps, {**DEFAULT_LEVERS, **levers})
+    sim = _finite(simulate(p, build_scenario(knobs, horizon), eps, {**DEFAULT_LEVERS, **levers}))
     sm = summarize(sim)
     out = {"health": sm["health_score"], "p_breach": sm["p_breach"], "health_p10": sm["health_p10"]}
     out |= {f"short{k}": shortfall(sim, p, k) for k in SHORTFALL_Q if k <= horizon}
@@ -724,7 +739,7 @@ def structural(
         out[f"dyn_{name}"] = pc(_apply_rule(_cash_rule(pre, cash, True), rev, rev_prev))
     probs = {}
     for k, lv in ABLATIONS.items():
-        sim = simulate(p, scn, eps, {**DEFAULT_LEVERS, **lv})
+        sim = _finite(simulate(p, scn, eps, {**DEFAULT_LEVERS, **lv}))
         probs[k] = _probs(sim, p, n_q, rev_ttm, capex_pre)
         if k in ("full", "no_loops"):
             tag = "twin" if k == "full" else "noloops"
@@ -804,8 +819,8 @@ def structural(
                     pv.pop("spreads", None)
                 if name == "spreads_baa":
                     pv["spread_scale"] = _spread_scale(str((pre.index[-1] + pd.Timedelta(days=45)).date()))
-                sim = simulate(pv, scn, draw_shocks(pv, 500, T, seed=3), DEFAULT_LEVERS)
-                base = simulate(pv, build_scenario({}, T), draw_shocks(pv, 1000, T, seed=5), DEFAULT_LEVERS)
+                sim = _finite(simulate(pv, scn, draw_shocks(pv, 500, T, seed=3), DEFAULT_LEVERS))
+                base = _finite(simulate(pv, build_scenario({}, T), draw_shocks(pv, 1000, T, seed=5), DEFAULT_LEVERS))
                 sens[name] = {
                     "cfo": pc(np.median(sim["cfo"][:, :n_q], axis=0)),
                     "fcf": pc(np.median(sim["fcf"][:, :n_q], axis=0)),
@@ -825,7 +840,7 @@ def structural(
             fails.tried("grid")
             try:
                 pv = {**calibrate(hist, macro, T, a), "sector_tol": 1.0}
-                sim = simulate(pv, scn, draw_shocks(pv, 500, T, seed=3), DEFAULT_LEVERS)
+                sim = _finite(simulate(pv, scn, draw_shocks(pv, 500, T, seed=3), DEFAULT_LEVERS))
                 grid[name] = {
                     "cfo": med_tot(sim["cfo"]),
                     "fcf": med_tot(sim["fcf"]),
@@ -1046,7 +1061,7 @@ def _forecast_origin(
         fails.skip("forecast", why.get("realized", "short"))
         return rows
     p = calibrate(hist, macro_quarterly(origin), H_FC)
-    out = simulate(p, build_scenario({}, H_FC), draw_shocks(p, 2000, H_FC, seed=11), DEFAULT_LEVERS)
+    out = _finite(simulate(p, build_scenario({}, H_FC), draw_shocks(p, 2000, H_FC, seed=11), DEFAULT_LEVERS))
     q = hist.quarters
     scale = _ttm(q, "revenue") / 4
     series = {
