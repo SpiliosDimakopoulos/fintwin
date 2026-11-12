@@ -532,7 +532,9 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     # not drop the firm for years (round 2). A negative quarter stays allowed (MM-F12 handles it).
     if (recent == 0).any():
         raise ValueError(f"{c.ticker}: zero revenue in the last eight quarters ({int((recent == 0).sum())} quarters)")
-    seasonal = _seasonal(rev, q["season"])
+    # a zero quarter is not a seasonal observation (an unreported quarter booked as 0, or a pre-revenue start): left out
+    # of the factors, or an old zero season shrank its factor towards 0 and inflated the base (round 3: Karyopharm 2021)
+    seasonal = _seasonal(rev.where(rev != 0), q["season"])
     # A zero seasonal factor comes from quarters booked as 0 revenue between reported ones (12-11-2026: e.g.
     # CIK0000766421, 2012-2013). It made v3 (MM-F3 divides by it) non-finite and left v2 forecasting zero revenue, so
     # it is an error of the firm-year in every specification.

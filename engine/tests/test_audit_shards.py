@@ -56,3 +56,17 @@ def test_a_recorded_failure_in_one_spec_is_reported_not_fatal(tmp_path):
 def test_a_dead_run_is_red(tmp_path):
     dead = [{"ticker": f"T{i}", "errors": {"company": "FrozenMiss: not in the frozen snapshot"}} for i in range(5)]
     assert _run(tmp_path, {"v3": dead}) == 1
+
+
+def test_one_recorded_failure_in_a_small_run_is_not_fatal(tmp_path):
+    # round 3: the probe's 12 known-bad firms; a 1% share without a floor made one unit RED
+    full = [_shard(f"T{i}") for i in range(12)]
+    failed = {"ticker": "T0", "errors": {"2018-02-15": "ValueError: zero revenue in the last eight quarters"}}
+    assert _run(tmp_path, {"v2-pre": full, "v3": [failed, *full[1:]]}) == 0  # a bare-origin key counts as recorded
+
+
+def test_most_firm_years_failing_is_red(tmp_path):
+    shards = [_shard("T0")] + [
+        {"ticker": f"T{i}", "errors": {"panel 2018-02-15": "ValueError: x"}} for i in range(1, 10)
+    ]
+    assert _run(tmp_path, {"v3": shards}) == 1

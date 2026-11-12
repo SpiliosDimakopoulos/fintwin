@@ -155,3 +155,17 @@ def test_leading_and_old_zero_revenue_quarters_do_not_drop_the_firm(macro):  # n
     with spec.using("v3", None):
         p = C.calibrate(c, macro, 8)
     assert np.isfinite(p["base_rev0"]) and p["base_rev0"] > 0
+
+
+def test_an_old_zero_quarter_does_not_shrink_a_seasonal_factor(macro):  # noqa: F811
+    # round 3: Karyopharm 2021 had zeros older than eight quarters; one season's factor fell to 0.04 and the base
+    # revenue came out 24x too high. A zero is not a seasonal observation.
+    c = synthetic_company(season_amp=0.0)
+    q = c.quarters
+    old = [i for i in range(len(q) - 32, len(q) - 8) if q.index[i].quarter == 3][:5]  # most of one season, older
+    assert len(old) == 5 and len(q) >= 32
+    q.loc[q.index[old], "revenue"] = 0.0
+    with spec.using("v3", None):
+        p = C.calibrate(c, macro, 8)
+    assert min(p["seasonal"]) > 0.5
+    assert 0.5 < p["base_rev0"] / float(q["revenue"].iloc[-4:].mean()) < 2.0

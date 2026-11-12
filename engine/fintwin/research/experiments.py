@@ -513,7 +513,7 @@ def shortfall(sim: dict, p: dict, k: int) -> float:
     return float(np.mean((sim["cash"][:, :k] + undrawn < 0).any(1)))
 
 
-FINITE_KEYS = ("revenue", "cash", "cfo", "fcf", "health", "debt", "revolver", "capex")  # what shards and _probs read
+FINITE_KEYS = ("revenue", "cash", "cfo", "fcf", "health", "debt", "revolver", "capex", "dividends", "ebitda")
 
 
 def _finite(sim: dict, keys: tuple[str, ...] = FINITE_KEYS) -> dict:

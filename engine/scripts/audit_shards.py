@@ -22,6 +22,8 @@ MAX_SILENT_DIFF = (0.001, 3)  # firm-years present in another spec of the tag, a
 # RED above max(share x union, count) (round 2: a bare share made one unit RED in the small probe / dry runs)
 MAX_RECORDED_DIFF_SHARE = 0.01  # firm-years absent here WITH a recorded error (e.g. a diverged v3 path): RED above 1%
 MAX_COMPANY_ERROR_SHARE = 0.10  # shards that failed as a whole (a dead run must not pass green)
+MAX_PANEL_ERROR_SHARE = 0.20  # firm-years with a recorded error among all firm-years tried (round 3)
+MAX_NEG_REVENUE_SHARE = 0.01  # realized revenue < 0: WARN below, RED above (MM-F12 allows some negative quarters)
 # WARN only: negative realized revenue (MM-F12 allows negative quarters; recast annuals leave some, round 2)
 # WARN thresholds
 WARN_CRPS_RATIO = 50.0
@@ -54,9 +56,11 @@ class Audit:
         if "company" in errs:
             self.rows[f"{run}:company_errors"] += 1
             self.firms[run].add(t)  # every origin of this firm counts as recorded
-        for k in errs:
-            if k.startswith("panel "):
-                self.recorded[run].add((t, k.split(" ", 1)[1]))
+        for k in errs:  # "panel <origin>" or a bare origin (a load error at that cutoff)
+            origin = k.split(" ", 1)[1] if k.startswith("panel ") else k
+            if len(origin) == 10 and origin[4] == "-" and origin[7] == "-":
+                self.recorded[run].add((t, origin))
+                self.rows[f"{run}:panel_errors"] += 1
         panel = r.get("panel") or []
         for pr in panel:
             self.units.setdefault(run, set()).add((t, pr.get("origin")))
@@ -110,6 +114,14 @@ class Audit:
                 self.red[run][f"{self.rows[f'{run}:company_errors']} of {n} shards failed as a whole"] += 1
             if n and not self.rows[f"{run}:panel"] and not run.startswith("_known_bad"):
                 self.red[run]["no panel rows at all"] += 1
+            tried = self.rows[f"{run}:panel"] + self.rows[f"{run}:panel_errors"]
+            if tried and self.rows[f"{run}:panel_errors"] / tried > MAX_PANEL_ERROR_SHARE:
+                self.red[run][f"{self.rows[f'{run}:panel_errors']} of {tried} firm-years with a recorded error"] += 1
+            rev = self.rows[f"{run}:revenue_rows"]
+            if rev and self.rows[f"{run}:neg_revenue"] / rev > MAX_NEG_REVENUE_SHARE:
+                self.red[run][
+                    f"realized revenue < 0 in {self.rows[f'{run}:neg_revenue'] / rev:.2%} of revenue rows"
+                ] += 1
         for g in groups:  # runs of one tag must cover the same firm-years (a unit failing in one spec only)
             present = [r for r in g if r in self.units]
             union = set().union(*(self.units[r] for r in present)) if present else set()
@@ -124,7 +136,7 @@ class Audit:
                 if recorded:
                     self.warn[r][f"{len(recorded)} firm-years in another spec, a recorded error here"] += 1
                     self.examples[f"{r}:recorded unit diff"] = [list(m) for m in sorted(recorded)[:5]]
-                if union and len(recorded) / len(union) > MAX_RECORDED_DIFF_SHARE:
+                if union and len(recorded) > max(MAX_RECORDED_DIFF_SHARE * len(union), 3):
                     self.red[r][f"{len(recorded)} firm-years fail here only (> {MAX_RECORDED_DIFF_SHARE:.0%})"] += 1
         return {
             "red": {k: dict(v) for k, v in self.red.items() if v},

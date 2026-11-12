@@ -259,6 +259,9 @@ select)
   ;;
 stats)
   stamp "stats"
+  # results of an earlier stats run on this server must not be compared (round 3: a failed stats left an old
+  # v3-wf error file that cross-spec would have used as the confirmatory input)
+  rm -f .cache/research/_results/*_cfo_errors.csv .cache/research/_results/cross_spec_*.json
   # every group runs even if an earlier one failed (set -e would stop at the first), and the stage fails at the end
   rc=0
   stats_runs "$CONFIRM" > out/stats.log 2>&1 || rc=1
