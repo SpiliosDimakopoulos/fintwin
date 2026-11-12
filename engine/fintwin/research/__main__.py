@@ -114,7 +114,19 @@ def analysis_digest() -> str:
 
 # Switches that change how a run is executed or merged, not what a shard contains (stats bootstrap sizes, fetch policy).
 RUN_ONLY_ENV = frozenset(
-    {"FINTWIN_MAX_FAIL_SHARE", "FINTWIN_B", "FINTWIN_B_PANEL", "FINTWIN_B_FAMILY", "FINTWIN_B_LAD", "FINTWIN_FILL_ONLY"}
+    {
+        "FINTWIN_MAX_FAIL_SHARE",
+        "FINTWIN_B",
+        "FINTWIN_B_PANEL",
+        "FINTWIN_B_FAMILY",
+        "FINTWIN_B_LAD",
+        "FINTWIN_FILL_ONLY",
+        "FINTWIN_FAMILIES",
+        "FINTWIN_REQUIRE_SPEC",
+        "FINTWIN_NEW_RUN",
+        "FINTWIN_ALLOW_DIRTY",
+        "FINTWIN_ALLOW_MACHINE",
+    }
 )
 
 

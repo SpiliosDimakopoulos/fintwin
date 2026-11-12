@@ -17,6 +17,7 @@ import pandas as pd
 
 from ..backtest.batch import dm_stat, seen_by
 from ..backtest.scoring import crps_gaussian, crps_samples
+from .units import unit
 
 REPORT_LAG = pd.Timedelta(days=90)
 ALPHA = 0.10
@@ -200,13 +201,13 @@ def section(fc: pd.DataFrame, panel: pd.DataFrame) -> dict:
         ok = X.notna().all(axis=1) & np.isfinite(w)
         if ok.sum() > 100:
             m = sm.OLS(w[ok], sm.add_constant((X[ok] - X[ok].mean()) / X[ok].std())).fit(
-                cov_type="cluster", cov_kwds={"groups": pd.factorize(d.loc[ok, "ticker"])[0]}
+                cov_type="cluster", cov_kwds={"groups": pd.factorize(unit(d).loc[ok])[0]}
             )
             res["width_regression"] = {k: {"coef": float(m.params[k]), "t": float(m.tvalues[k])} for k in X}
             # and do the realized errors scale the same way?
             e = np.log((d["y"] - d["q50"]).abs().clip(lower=1e-9) / d["scale"].clip(lower=1e-9))
             m2 = sm.OLS(e[ok], sm.add_constant((X[ok] - X[ok].mean()) / X[ok].std())).fit(
-                cov_type="cluster", cov_kwds={"groups": pd.factorize(d.loc[ok, "ticker"])[0]}
+                cov_type="cluster", cov_kwds={"groups": pd.factorize(unit(d).loc[ok])[0]}
             )
             res["error_regression"] = {k: {"coef": float(m2.params[k]), "t": float(m2.tvalues[k])} for k in X}
         out[var] = res
@@ -228,7 +229,7 @@ def dm_by_horizon(fc: pd.DataFrame, a: str = "crps_twin", refs: tuple[str, ...] 
                 continue
             r[ref] = {
                 "skill": float(1 - x[ok].mean() / y[ok].mean()),
-                **dm_stat((x - y).to_numpy()[ok], g["ticker"].to_numpy()[ok]),
+                **dm_stat((x - y).to_numpy()[ok], unit(g).to_numpy()[ok]),
             }
         out.setdefault(str(var), {})[int(h)] = r
     return out
@@ -294,6 +295,7 @@ def density_frame(panel: pd.DataFrame) -> pd.DataFrame:
             recs.append(
                 {
                     "ticker": r.ticker,
+                    "cluster": getattr(r, "cluster", r.ticker),
                     "year": int(r.year),
                     "var": var,
                     "real": float(np.sum(st[f"real_{var}"])),
@@ -353,7 +355,7 @@ def density_section(panel: pd.DataFrame) -> dict:
             "coverage90_twin": float(((real >= q[:, i05]) & (real <= q[:, i95]))[ok].mean()) if ok.any() else None,
         }
         for name, c in (("gaussian", cg), ("empirical", ce)):
-            dm = dm_two_way(tw[ok] - c[ok], g["ticker"].to_numpy()[ok], yrs[ok])
+            dm = dm_two_way(tw[ok] - c[ok], unit(g).to_numpy()[ok], yrs[ok])
             by_year = {
                 int(t): float(np.mean(tw[ok & (yrs == t)] - c[ok & (yrs == t)])) for t in sorted(set(yrs[ok].tolist()))
             }

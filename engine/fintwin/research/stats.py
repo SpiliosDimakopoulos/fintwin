@@ -37,6 +37,8 @@ B_LAD = _env_int("FINTWIN_B_LAD", 199)  # firm bootstrap of the LAD encompassing
 # Every random draw in research/stats, transmission and plan2 starts its own Generator from one of these seeds, so a
 # result does not depend on which statistics were computed before it (the old module-global RNG did). Written to
 # research.json as the seeds table.
+from .units import cluster_of, dedupe_events, family_pass, unit  # noqa: E402  (leaf module)
+
 SEEDS = {
     "boot": (20200220, "stats.boot / stats.paired: firm or row bootstrap, a fresh Generator per call"),
     "cv_folds": (7, "stats._cv_composite: fold assignment of the cross-validated composite"),
@@ -512,6 +514,7 @@ def load(cache: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
         if c:
             row = {
                 "ticker": c["ticker"],
+                "cluster": cluster_of(c["ticker"], cik),
                 "cik": cik,
                 "name": c["name"],
                 "sector": c["sector"] or "Unknown",
@@ -535,6 +538,7 @@ def load(cache: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
         for pr in r.get("panel", []):
             row = {
                 "ticker": r["ticker"],
+                "cluster": cluster_of(r["ticker"], cik),
                 "cik": cik,
                 "year": int(pr["origin"][:4]),
                 "industry": (c or {}).get("sector") or _industry(r["ticker"]),
@@ -562,7 +566,7 @@ def load(cache: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
             if isinstance(q, list) and not np.isfinite(np.asarray(q, float)).all():
                 n_bad += 1
                 continue
-            fc.append({"ticker": r["ticker"], **fr})
+            fc.append({"ticker": r["ticker"], "cluster": cluster_of(r["ticker"], cik), **fr})
         if n_bad:
             errors.setdefault(r["ticker"], {})["forecasts"] = f"{n_bad} forecasts with non-finite quantiles dropped"
     return pd.DataFrame(xs), pd.DataFrame(panel), pd.DataFrame(fc), errors
@@ -795,9 +799,11 @@ def _raw(p: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
             X["h_base"], X["pb_base"], X["h_rec"] = -p["h_base"], p["pb_base"], -p["h_rec"]
         elif k == "formula":
             X["formula"] = -_col(p, "health_t0")
-        else:
+        elif k in BENCH:
             col, sign = BENCH[k]
             X[k] = sign * _col(p, col)
+        else:  # a plain column of the frame (the exploratory rivals' features)
+            X[k] = _col(p, k)
     return X
 
 
@@ -829,7 +835,7 @@ def _fit_predict(train: pd.DataFrame, test: pd.DataFrame, ytr: np.ndarray, cols:
 
 def panel_section(p: pd.DataFrame) -> dict:
     ev = _events(p)
-    firms = p["ticker"].to_numpy()
+    firms = unit(p).to_numpy()
     R = risk_frame(p, "h_base", "pb_base")
     R["twin_rec"] = -p["h_rec"].astype(float)
     R["twin_no_loops"] = -p["h_base_no_loops"].astype(float)
@@ -929,7 +935,7 @@ def _clustered_logit(p: pd.DataFrame, y: np.ndarray) -> dict:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             m = sm.Logit(y, sm.add_constant(pd.concat([X, yr], axis=1))).fit(
-                disp=False, cov_type="cluster", cov_kwds={"groups": pd.factorize(p["ticker"])[0]}
+                disp=False, cov_type="cluster", cov_kwds={"groups": pd.factorize(unit(p))[0]}
             )
         return {
             k: {"coef": float(m.params[k]), "z": float(m.tvalues[k]), "p": float(m.pvalues[k])} for k in X.columns
@@ -961,7 +967,7 @@ def forecast_section(fc: pd.DataFrame) -> dict:
             d = (c_t - c_b).to_numpy(float)
             # Diebold-Mariano style test on scaled CRPS differentials, with standard errors clustered two ways: by
             # firm (repeated forecasts) and by origin (common shocks such as 2020)
-            firm_ids, origin_ids = pd.factorize(g["ticker"])[0], pd.factorize(g["origin"])[0]
+            firm_ids, origin_ids = pd.factorize(unit(g))[0], pd.factorize(g["origin"])[0]
             groups = np.column_stack([firm_ids, origin_ids]) if origin_ids.max() > 0 else firm_ids
             m = sm.OLS(d, np.ones(len(d))).fit(cov_type="cluster", cov_kwds={"groups": groups})
             # E9 / SW-14: with about a dozen origins the normal p-value above over-rejects; t(G-1) and a PSD check
@@ -1063,6 +1069,9 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_
     if n_in_bk and not _data_legacy():
         panel_all = panel_all[~panel_all["in_bankruptcy"].astype(bool)].reset_index(drop=True)
     xs, panel = size_screen(xs), size_screen(panel_all)
+    # family pass (WP6): a group's bankruptcy counts once per family and cutoff
+    panel, dedup_panel = dedupe_events(panel, ["y_bk8", "y_bk4"], "year")
+    xs, dedup_xs = dedupe_events(xs, ["bk_2020"], None)
     samples = {
         "edgar": np.ones(len(xs), bool),
         "sp2020": xs["sp2020"].to_numpy(bool),
@@ -1075,6 +1084,8 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_
             "panel_firm_years": int(len(panel)),
             "panel_firms": int(panel["ticker"].nunique()) if len(panel) else 0,
             "panel_in_bankruptcy_excluded": 0 if _data_legacy() else n_in_bk,
+            "unit": "family" if family_pass() else "firm",
+            "family_events_removed": {**dedup_panel, **dedup_xs},
             # units the tests drop silently (non-finite twin health): must be 0 or reported
             "panel_health_missing": int(pd.to_numeric(panel.get("h_base"), errors="coerce").isna().sum())
             if len(panel)
@@ -1122,6 +1133,11 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_
     from . import plan2
 
     res["plan2"] = plan2.section(panel_all, panel, fc, B_PANEL)
+    # exploratory, after the pre-specification (WP6, a reader): non-accounting rivals; firm units only
+    if not family_pass():
+        from . import rivals
+
+        res["exploratory_rivals"] = _safe(rivals.section, panel)
     res["plan2"]["verdicts"] = plan2.verdicts(res)
     res["plan2"]["holm"] = plan2.holm(_secondary_pvalues(res))
     from ..clean import _clean

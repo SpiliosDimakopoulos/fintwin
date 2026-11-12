@@ -48,6 +48,9 @@ trap 'pack_results $?' EXIT
 
 SAMPLE=1000
 DRY=(--limit 300 --cutoffs 2015,2020,2022)
+DRY_RUNS=(v2-pre_s300_c2015.2020.2022 v2-pre+F5_s300_c2015.2020.2022 v2-pre+F5+F4_s300_c2015.2020.2022
+          v2-pre+F5+F4+F1_s300_c2015.2020.2022 v2-pre+F5+F4+F1+F2_s300_c2015.2020.2022 v3_s300_c2015.2020.2022
+          v2-rev_s300_c2015.2020.2022)
 CONFIRM="v2-pre,v3,v2-rev"
 LADDER_SAMPLE="v2-pre,v2-pre+F5,v2-pre+F5+F4,v2-pre+F5+F4+F1,v2-pre+F5+F4+F1+F2,v3"
 
@@ -144,12 +147,42 @@ sys.exit(1 if bad else 0)
 EOF
 }
 
+audit() {  # audit RUN... : every shard of these runs (same tag) before the next stage; RED stops the stage
+  py scripts/audit_shards.py --runs "$@" --group "$@" --out "out/audit_${STAGE}_$1.json" >> out/audit.log 2>&1 \
+    || { stamp "AUDIT RED for $*: see out/audit_${STAGE}_$1.json"; exit 1; }
+  stamp "audit clean: $*"
+}
+# Firms behind the 12-11-2026 findings (zero revenue tags, restated annuals, cash without short investments, diverged
+# v3 paths): the probe runs them in v2-pre and v3 and audits the result, so every fix is checked on real data.
+KNOWN_BAD="766421 818479 47217 10456 20212 1320461 911216 1648365 106040 1109357 935703 5981"
+known_bad() {
+  for spec in v2-pre v3; do
+    FINTWIN_SPEC=$spec py - "$spec" $KNOWN_BAD <<'EOF'
+import json, sys
+from pathlib import Path
+from fintwin.clean import _clean
+from fintwin.research.experiments import company
+d = Path(".cache/research") / f"_known_bad_{sys.argv[1]}"
+d.mkdir(parents=True, exist_ok=True)
+for c in sys.argv[2:]:
+    t = f"CIK{int(c):010d}"
+    try:
+        r = company(t, with_forecasts=True)
+    except Exception as e:  # recorded like a shard
+        r = {"ticker": t, "errors": {"company": f"{type(e).__name__}: {e}"}}
+    (d / f"{t}.json").write_text(json.dumps(_clean(r)), encoding="utf-8")
+    print(t, len(r.get("panel", [])), "panel rows", len(r.get("errors") or {}), "errors", flush=True)
+EOF
+  done > out/known_bad.log 2>&1
+  audit _known_bad_v2-pre _known_bad_v3
+}
+
 case "$STAGE" in
 probe)
   stamp "test suite"
   # unit tests use their own fixtures, not the snapshot; test_d_repo needs the repo root, which is not pushed
   if env -u FINTWIN_FROZEN -u FINTWIN_REQUIRE_SPEC uv run --quiet python -m pytest -q -p no:cacheprovider --deselect tests/test_d_repo.py > out/tests.log 2>&1
-  then stamp "tests: $(tail -1 out/tests.log)"; else stamp "TESTS FAILED: $(tail -1 out/tests.log)"; fi
+  then stamp "tests: $(tail -1 out/tests.log)"; else stamp "TESTS FAILED: $(tail -1 out/tests.log)"; TESTS_FAILED=1; fi
   env -u FINTWIN_FROZEN -u FINTWIN_REQUIRE_SPEC uv run --quiet python -m pytest -q -p no:cacheprovider -vv tests/test_B1_parity.py > out/tests_B1.log 2>&1 || true
   stamp "probe: 60 firms, v3, all origins"
   ladder_all --limit 60 --rungs v3
@@ -164,27 +197,41 @@ for key, year in AS.sample():
         print({"key": key, "year": year, "design_points": len(X), "seconds": round(time.perf_counter() - t, 1)})
         break
 EOF
+  audit v3_s60
+  stamp "probe: known-bad firms in v2-pre and v3"
+  known_bad
+  [ -z "${TESTS_FAILED:-}" ] || { stamp "probe failed: the test suite did not pass"; exit 1; }
   stamp "probe done"
   ;;
 dry)
   stamp "dry ladder: 300 firms x 2015/2020/2022, grid pass"
   ladder_all "${DRY[@]}"
+  audit "${DRY_RUNS[@]}"
   stamp "dry walk-forward tables and second pass"
   for r in v2-pre+F5+F4+F1 v2-pre+F5+F4+F1+F2 v3; do select_rung "$r" "${DRY[@]}"; done
   ladder_all "${DRY[@]}"
   stamp "dry stats"
+  audit v3-wf_s300_c2015.2020.2022 v2-pre+F5+F4+F1-wf_s300_c2015.2020.2022 v2-pre+F5+F4+F1+F2-wf_s300_c2015.2020.2022
   FINTWIN_B_FAMILY=500 stats_runs "$LADDER_SAMPLE,v2-rev" "${DRY[@]}" > out/stats_dry.log 2>&1
+  # the whole stats stage in small: the confirmatory v3 vs v2-pre test and the family pass
+  py -m fintwin.research cross-spec v3-wf_s300_c2015.2020.2022 v2-pre_s300_c2015.2020.2022 >> out/stats_dry.log 2>&1
+  py -m fintwin.research families >> out/stats_dry.log 2>&1
+  FINTWIN_B_FAMILY=500 FINTWIN_FAMILIES="$PWD/.cache/research/_results/families.json" \
+    stats_runs "$CONFIRM" "${DRY[@]}" >> out/stats_dry.log 2>&1
   stamp "dry done"
   ;;
 universe)
   stamp "universe grid pass: $CONFIRM"
   ladder_all --rungs "$CONFIRM"
+  audit v2-pre v3 v2-rev
   ;;
 sample)
   stamp "sample ladder ($SAMPLE firms): $LADDER_SAMPLE"
   ladder_all --limit "$SAMPLE" --rungs "$LADDER_SAMPLE"
   stamp "sample: legacy data layer, v2-pre"
   FINTWIN_DATA_LEGACY=1 ladder_all --limit "$SAMPLE" --rungs v2-pre
+  audit v2-pre_s1000 v2-pre+F5_s1000 v2-pre+F5+F4_s1000 v2-pre+F5+F4+F1_s1000 v2-pre+F5+F4+F1+F2_s1000 v3_s1000
+  audit v2-pre-legacydata_s1000
   ;;
 select)
   stamp "walk-forward tables"
@@ -193,6 +240,8 @@ select)
   stamp "second pass: universe v3, sample +F1 / +F2 / v3"
   ladder_all --rungs v3
   ladder_all --limit "$SAMPLE" --rungs v2-pre+F5+F4+F1,v2-pre+F5+F4+F1+F2,v3
+  audit v3-wf v2-pre
+  audit v3-wf_s1000 v2-pre+F5+F4+F1-wf_s1000 v2-pre+F5+F4+F1+F2-wf_s1000
   ;;
 stats)
   stamp "stats"
@@ -203,6 +252,11 @@ stats)
   # each `stats` above wrote after its stamp check
   py -m fintwin.research cross-spec v3-wf v2-pre >> out/stats.log 2>&1 || rc=1
   py -m fintwin.research cross-spec v3 v2-pre >> out/stats.log 2>&1 || rc=1
+  # robustness after the pre-specification (WP6): corporate families as the resampling unit, one bankruptcy per
+  # family and cutoff, on the confirmatory rungs and the confirmatory v3 vs v2-pre test
+  py -m fintwin.research families >> out/stats.log 2>&1 || rc=1
+  FINTWIN_FAMILIES="$PWD/.cache/research/_results/families.json" stats_runs "$CONFIRM" >> out/stats.log 2>&1 || rc=1
+  py -m fintwin.research cross-spec v3-wf_family v2-pre_family >> out/stats.log 2>&1 || rc=1
   stats_runs "$LADDER_SAMPLE" --limit "$SAMPLE" >> out/stats.log 2>&1 || rc=1
   FINTWIN_DATA_LEGACY=1 FINTWIN_SPEC=v2-pre py -m fintwin.research stats --limit "$SAMPLE" >> out/stats.log 2>&1 || rc=1
   [ "$rc" = 0 ] || { stamp "a stats group failed: see out/stats.log"; exit 1; }

@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from . import stats as S
+from .units import cluster_of, unit
 
 DATA = S.DATA
 EPS_LOG = 1e-4  # probabilities are clipped to [EPS_LOG, 1 - EPS_LOG] for the log score: 500-2000 paths give exact 0s
@@ -70,7 +71,7 @@ def bankruptcy_panel(p: pd.DataFrame, b: int) -> dict:
     """Bankruptcy within eight quarters, every cutoff 2014-2024, all firms and the already-weak ones."""
     df = p[np.isfinite(p["y_bk8"].astype(float))].reset_index(drop=True)
     y = df["y_bk8"].to_numpy(float)
-    firms = df["ticker"].to_numpy()
+    firms = unit(df).to_numpy()
     R = _risk(df, "h_base", "pb_base")
     R["twin_rec"] = -df["h_rec"].astype(float)
     out: dict = {"all": auc_table(df, y, R, firms, b)}
@@ -397,6 +398,7 @@ def liquidity_frame(cache: Path, min_log_rev: float = S.MIN_LOG_REV) -> pd.DataF
                 continue
             row = {
                 "ticker": r["ticker"],
+                "cluster": cluster_of(r["ticker"], r.get("cik")),
                 "cik": r.get("cik"),
                 "origin": pr["origin"],
                 "year": int(pr["origin"][:4]),
@@ -425,7 +427,7 @@ def liquidity_frame(cache: Path, min_log_rev: float = S.MIN_LOG_REV) -> pd.DataF
             i if isinstance(i, str) and i else S._industry(t) for i, t in zip(df["industry"], df["ticker"], strict=True)
         ]
     df = df[df["log_rev"].astype(float) >= min_log_rev].reset_index(drop=True)
-    num = [c for c in df if c not in ("ticker", "origin", "industry", "outcome_filed", "outcome_filed4")]
+    num = [c for c in df if c not in ("ticker", "cluster", "origin", "industry", "outcome_filed", "outcome_filed4")]
     df[num] = df[num].apply(pd.to_numeric, errors="coerce")
     df.attrs["in_bankruptcy_excluded"] = excluded
     return df
@@ -475,7 +477,7 @@ def _versus(df: pd.DataFrame, p: np.ndarray, y: np.ndarray, k: int, years: list[
         out[f"bss_vs_{name}"] = {
             "bss": _bss(P, ref, Y),
             "year_block": block_ci(_bss, [P, ref, Y], yr[test], b),
-            "firm_block": block_ci(_bss, [P, ref, Y], df["ticker"].to_numpy()[test], b),
+            "firm_block": block_ci(_bss, [P, ref, Y], unit(df).to_numpy()[test], b),
         }
     out["by_year"] = {
         int(t): {
@@ -539,7 +541,7 @@ def credit_section(df: pd.DataFrame, b: int = 2000) -> dict:
     """M9 / B3 (secondary): AUC of the twin's baseline verdict for the broad credit-event label and each item."""
     if df.empty:
         return {}
-    firms = df["ticker"].to_numpy()
+    firms = unit(df).to_numpy()
     preds = {"twin": -df["h_base"].to_numpy(float), "pb_base": df["pb_base"].to_numpy(float),
              "altman_z2": -df["z2"].to_numpy(float), "recession8": df["rec8"].to_numpy(float)}  # fmt: skip
     out: dict = {}

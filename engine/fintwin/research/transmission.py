@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 
 from . import stats as S
+from .units import unit
 
 MODELS = ["N1", "N2", "N3", "N4", "N5", "N6", "T0", "T1"]
 LABELS = {
@@ -116,6 +117,7 @@ def frame(rows: pd.DataFrame) -> pd.DataFrame:
         m = st.get("m", {})
         rec = {
             "ticker": r.ticker,
+            "cluster": getattr(r, "cluster", r.ticker),
             "year": getattr(r, "year", 2020),
             "industry": getattr(r, "industry", ""),
             "rev_change": float(rev.sum() / (len(rev) / 4) - 100),
@@ -171,7 +173,7 @@ def frame(rows: pd.DataFrame) -> pd.DataFrame:
         recs.append(rec)
     df = pd.DataFrame(recs)
     for c in df.columns:
-        if c not in ("ticker", "industry"):
+        if c not in ("ticker", "cluster", "industry"):
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
 
@@ -300,7 +302,15 @@ def encompassing(df: pd.DataFrame, var: str) -> dict:
     import statsmodels.api as sm
 
     cols = ["T1", "N3", "N4", "N6"]
-    d = df[[f"real_{var}", *[f"{k}_{var}" for k in ["N1", *cols]], "year", "ticker"]].dropna()
+    d = df[
+        [
+            f"real_{var}",
+            *[f"{k}_{var}" for k in ["N1", *cols]],
+            "year",
+            "ticker",
+            *(["cluster"] if "cluster" in df else []),
+        ]
+    ].dropna()
     real = d[f"real_{var}"]
     lo, hi = np.nanpercentile(real, [1, 99])
     y = _wins(real, lo, hi) - _wins(d[f"N1_{var}"], lo, hi)
@@ -309,7 +319,7 @@ def encompassing(df: pd.DataFrame, var: str) -> dict:
     out = {}
     for name, use in (("all", cols), ("twin_only", ["T1"]), ("nulls_only", ["N3", "N4", "N6"])):
         Xs = sm.add_constant(X[[*use, *[c for c in X if c.startswith("y_")]]])
-        m = sm.OLS(y.to_numpy(float), Xs).fit(cov_type="cluster", cov_kwds={"groups": pd.factorize(d["ticker"])[0]})
+        m = sm.OLS(y.to_numpy(float), Xs).fit(cov_type="cluster", cov_kwds={"groups": pd.factorize(unit(d))[0]})
         out[name] = {
             "coef": {k: float(m.params[k]) for k in use},
             "t": {k: float(m.tvalues[k]) for k in use},
@@ -318,7 +328,7 @@ def encompassing(df: pd.DataFrame, var: str) -> dict:
             "n": int(m.nobs),
         }
     # the same with standard errors clustered by firm and by cutoff year (common shocks within a year)
-    two_way = np.column_stack([pd.factorize(d["ticker"])[0], pd.factorize(d["year"])[0]])
+    two_way = np.column_stack([pd.factorize(unit(d))[0], pd.factorize(d["year"])[0]])
     Xs = sm.add_constant(X[[*cols, *[c for c in X if c.startswith("y_")]]])
     m = sm.OLS(y.to_numpy(float), Xs).fit(cov_type="cluster", cov_kwds={"groups": two_way})
     out["all_two_way"] = {"t": {k: float(m.tvalues[k]) for k in cols}, "p": {k: float(m.pvalues[k]) for k in cols}}
@@ -342,7 +352,7 @@ def encompassing(df: pd.DataFrame, var: str) -> dict:
     for name, use in (("levels", ["N1", *cols]), ("levels_nulls_only", ["N1", "N3", "N4", "N6"])):
         Xs = sm.add_constant(lv[[*use, *[c for c in lv if c.startswith("y_")]]])
         m = sm.OLS(np.asarray(_wins(real, lo, hi), float), Xs).fit(
-            cov_type="cluster", cov_kwds={"groups": pd.factorize(d["ticker"])[0]}
+            cov_type="cluster", cov_kwds={"groups": pd.factorize(unit(d))[0]}
         )
         m2 = sm.OLS(np.asarray(_wins(real, lo, hi), float), Xs).fit(cov_type="cluster", cov_kwds={"groups": two_way})
         out[name] = {
@@ -366,7 +376,7 @@ def _one_sided(t: float, df: int) -> float:
 def _encompassing_v3(d: pd.DataFrame, var: str, X: pd.DataFrame, lo: float, hi: float, cols: list[str]) -> dict:
     """E9 / SW-14: the two-way clustered tests with t(G-1) critical values and a PSD check, beside the firm-only ones.
     E7: encompassing and DM under absolute loss, the loss lambda is chosen on, and a LAD (median) regression."""
-    firms, years = d["ticker"].to_numpy(), d["year"].to_numpy()
+    firms, years = unit(d).to_numpy(), d["year"].to_numpy()
     real = d[f"real_{var}"].to_numpy(float)
     yfe = [c for c in X if c.startswith("y_")]
     out: dict = {}
@@ -421,7 +431,7 @@ def _lad(d: pd.DataFrame, var: str, use: list[str], yfe: list[str], X: pd.DataFr
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             beta = np.asarray(sm.QuantReg(y, A).fit(q=0.5, max_iter=2000).params)[1 : 1 + len(use)]
-            groups = S._clusters(d["ticker"].to_numpy())
+            groups = S._clusters(unit(d).to_numpy())
             g = S.rng("lad")
             bs = np.full((b, len(use)), np.nan)
             for k in range(b):
@@ -717,7 +727,7 @@ def boot_losses(
     `scheme`: "firm" (resample firms), "year" (resample cutoff years, the year-block bootstrap) or "firm_year" (both,
     the pigeonhole bootstrap). The variables share the same resamples, so a family across them is coherent."""
     years = sorted({int(y) for y in df["year"]})
-    fcode = pd.factorize(df["ticker"])[0]
+    fcode = pd.factorize(unit(df))[0]
     tcode = np.searchsorted(years, df["year"].to_numpy().astype(int))
     data = {v: _Losses(df, v, names, bounds, fcode, tcode, years) for v in variables}
     g = np.random.default_rng(S.SEEDS["family"][0] if seed is None else seed)
@@ -822,7 +832,7 @@ def _gains(df: pd.DataFrame, b: int, fy: dict, seed: int) -> dict:
     for var in ("cfo", "fcf"):
         r = yb[var]
         d: _Losses = r["_data"]
-        firms, years = df["ticker"].to_numpy()[d.idx], d.yt
+        firms, years = unit(df).to_numpy()[d.idx], d.yt
         res: dict = {"n": r["n"], "test_years": r["test_years"]}
         if not d.test_years:  # too little history for any combination weight (small dry runs)
             out[var] = res
@@ -1010,7 +1020,7 @@ def section(rows: pd.DataFrame, b: int, panel: bool = True, b_family: int | None
     df = add_shrunk(frame(rows))
     if df.empty:
         return {}
-    firms = df["ticker"].to_numpy()
+    firms = unit(df).to_numpy()
     out: dict = {
         "n": int(len(df)),
         "n_firms": int(df["ticker"].nunique()),

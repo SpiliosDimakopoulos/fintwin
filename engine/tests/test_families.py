@@ -30,3 +30,37 @@ def test_joint_periodic_reports_link_and_ownership_filings_do_not():
 def test_families_are_transitive_and_order_free():
     fam = F.families([5, 3, 9, 7], [(7, 9), (3, 7)])
     assert fam == {5: 5, 3: 3, 9: 3, 7: 3}
+
+
+def test_family_pass_sets_units_and_counts_a_group_bankruptcy_once(tmp_path, monkeypatch):
+    import json
+
+    import numpy as np
+
+    from fintwin.research import units as U
+
+    df = pd.DataFrame({"ticker": ["CIK0000000001", "CIK0000000002", "CIK0000000003"], "cik": [1, 2, 3],
+                       "year": [2019, 2019, 2019], "log_rev": [22.0, 20.0, 21.0], "y_bk8": [1.0, 1.0, 1.0]})  # fmt: skip
+    assert U.unit(df).tolist() == df["ticker"].tolist()  # firm units by default
+    assert U.dedupe_events(df, ["y_bk8"], "year") == (df, {})  # no family pass: nothing changes
+    fam = tmp_path / "families.json"
+    fam.write_text(json.dumps({"1": 1, "2": 1, "3": 3}), encoding="utf-8")
+    monkeypatch.setenv("FINTWIN_FAMILIES", str(fam))
+    U._families.cache_clear()
+    df["cluster"] = [U.cluster_of(t, c) for t, c in zip(df["ticker"], df["cik"], strict=True)]
+    assert df["cluster"].tolist() == ["F0000000001", "F0000000001", "F0000000003"]
+    out, removed = U.dedupe_events(df, ["y_bk8"], "year")
+    assert (
+        removed == {"y_bk8": 1} and np.isnan(out.loc[1, "y_bk8"]) and out.loc[0, "y_bk8"] == 1.0
+    )  # the larger keeps it
+
+
+def test_the_family_switch_does_not_change_the_shard_stamp(monkeypatch):
+    import fintwin.research.__main__ as M
+
+    monkeypatch.setenv("FINTWIN_SPEC", "v3")
+    monkeypatch.delenv("FINTWIN_FAMILIES", raising=False)
+    before = M.stamp()
+    for k in ("FINTWIN_FAMILIES", "FINTWIN_REQUIRE_SPEC", "FINTWIN_NEW_RUN"):
+        monkeypatch.setenv(k, "1")
+    assert M.stamp() == before

@@ -16,6 +16,7 @@ import pandas as pd
 
 from . import stats as S
 from . import transmission as T
+from .units import unit
 
 PRIORS = {
     "baseline": 0.35,
@@ -42,6 +43,7 @@ def frame(panel: pd.DataFrame) -> pd.DataFrame:
         m = st.get("m", {})
         rec: dict = {
             "ticker": r.ticker,
+            "cluster": getattr(r, "cluster", r.ticker),
             "year": r.year,
             "industry": getattr(r, "industry", ""),
             "rev_change": float(rev.sum() / 2 - 100),
@@ -99,7 +101,7 @@ def frame(panel: pd.DataFrame) -> pd.DataFrame:
         recs.append(rec)
     df = pd.DataFrame(recs)
     for c in df.columns:
-        if c not in ("ticker", "industry"):
+        if c not in ("ticker", "cluster", "industry"):
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
 
@@ -215,7 +217,7 @@ def cash_hybrid(fc: pd.DataFrame) -> dict:
     crps_h = np.array([crps_gaussian(a, s_, t) for a, s_, t in zip(pred[m], sd[m], y[m], strict=True)])
     crps_rw = g["crps_rw"].to_numpy(float)[m]
     crps_tw = g["crps_twin"].to_numpy(float)[m]
-    firms = g["ticker"].to_numpy()[m]
+    firms = unit(g).to_numpy()[m]
     s_ = sc[m]
     d = S.boot(lambda a, b_: 1 - np.mean(a) / np.mean(b_), [crps_h / s_, crps_rw / s_], firms, b=300)
     out = {
@@ -266,7 +268,7 @@ def density_combos(g: pd.DataFrame, oy: np.ndarray, m: int = 50, b: int = 300) -
     ok = np.isfinite(y) & np.isfinite(rw) & np.isfinite(sd) & (sd > 0) & np.isfinite(sc) & (sc > 0)
     ok &= np.isfinite(Q).all(axis=1)
     y, rw, sd, sc, Q, oy_ = y[ok], rw[ok], sd[ok], sc[ok], Q[ok], oy[ok]
-    firms = g["ticker"].to_numpy()[ok]
+    firms = unit(g).to_numpy()[ok]
     if len(y) < 50:
         return {}
     z = norm.ppf((np.arange(m) + 0.5) / m)
@@ -636,7 +638,7 @@ def holm(pvals: dict[str, float]) -> dict[str, float]:
 
 def robustness_stats(tdf: pd.DataFrame, b: int) -> dict:
     """Key transmission statistics with firm x year clustering."""
-    firms, years = tdf["ticker"].to_numpy(), tdf["year"].to_numpy()
+    firms, years = unit(tdf).to_numpy(), tdf["year"].to_numpy()
     real, t1, n3 = (tdf[c].to_numpy(float) for c in ("real_cfo", "T1_cfo", "N3_cfo"))
     d = boot_two_way(S.rho, [t1 - n3, real - n3], firms, years, b)
     return {"incr_twin_vs_16q": S.rho(t1 - n3, real - n3), "ci_two_way": S.ci(d)}
@@ -773,7 +775,7 @@ def _safe(fn, *args) -> dict:
 
 def section(panel_all: pd.DataFrame, panel: pd.DataFrame, fc: pd.DataFrame, b: int) -> dict:
     df = frame(panel)
-    firms = df["ticker"].to_numpy() if len(df) else np.array([])
+    firms = unit(df).to_numpy() if len(df) else np.array([])
     out: dict = {
         "revised_spec": _safe(revised_spec, df, firms, b),
         "overreaction": _safe(overreaction, df),

@@ -17,12 +17,14 @@ from . import __main__ as M  # the shard CLI: stamp checks, run directories (ROO
 
 def stats(limit: int | None = None, years: set[int] | None = None) -> None:
     from .stats import OUT, main
+    from .units import family_pass
 
     d = M.spec_dir(M.run_tag(limit, years))
     M.check_run(d, limit, years)
     summary = M.check_failures(M._shards(d))
-    main(d, cfo_errors=M.ROOT / "_results" / f"{d.name}_cfo_errors.csv")
-    copy = M.ROOT / "_results" / f"{d.name}.json"  # one result per spec, next to the shared docs/paper/research.json
+    name = d.name + ("_family" if family_pass() else "")  # the family pass (WP6) writes beside the firm pass
+    main(d, cfo_errors=M.ROOT / "_results" / f"{name}_cfo_errors.csv")
+    copy = M.ROOT / "_results" / f"{name}.json"  # one result per spec, next to the shared docs/paper/research.json
     copy.parent.mkdir(parents=True, exist_ok=True)
     res = json.loads(Path(OUT).read_text(encoding="utf-8"))
     res["failures"] = summary
@@ -56,6 +58,12 @@ def main(argv: list[str]) -> None:
         if "dry" in opt:
             raise SystemExit("`stats --dry` is gone: pass the run's --limit / --cutoffs (one directory per run)")
         stats(limit, years)
+    elif cmd == "families":  # CIK -> family of the universe from the snapshot's joint filings (WP6)
+        from . import families as F
+
+        out = M.ROOT / "_results" / "families.json"
+        fam = F.build([int(k[3:]) for k in M.research_tickers()], out)
+        print(json.dumps(F.summary(fam)), "->", out)
     elif cmd == "cross-spec":  # cross-spec CANDIDATE REFERENCE, e.g. v3-wf v2-pre (each after its own `stats`)
         cross_spec(pos[1], pos[2])
     else:

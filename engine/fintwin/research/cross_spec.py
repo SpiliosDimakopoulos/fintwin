@@ -18,6 +18,7 @@ import pandas as pd
 from scipy.stats import t as student_t
 
 from . import stats as S
+from .units import unit
 
 B_YEAR_BLOCK = 2000
 CONTINUITY = (2018, 2024)
@@ -29,6 +30,7 @@ def cfo_errors_frame(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["ticker", "year", "abs_e"])
     e = (df["T1_cfo"].astype(float) - df["real_cfo"].astype(float)).abs()
     out = pd.DataFrame({"ticker": df["ticker"].astype(str), "year": df["year"].astype(int), "abs_e": e})
+    out["cluster"] = df["cluster"].astype(str) if "cluster" in df else out["ticker"]  # family pass: the family
     return out[np.isfinite(out["abs_e"])].drop_duplicates(["ticker", "year"]).reset_index(drop=True)
 
 
@@ -65,6 +67,8 @@ def compare(
     ka = set(zip(a["ticker"], a["year"], strict=True))
     kb = set(zip(b["ticker"], b["year"], strict=True))
     c = a.merge(b, on=["ticker", "year"], suffixes=("_a", "_b"))
+    if "cluster_a" in c:  # the candidate's units (the same firm has the same family in both specs)
+        c["cluster"] = c["cluster_a"]
     lost_a, lost_b = len(kb - ka), len(ka - kb)  # firm-years with an error in one spec only
     union = len(ka | kb)
     out: dict = {
@@ -93,7 +97,5 @@ def compare(
     up = out["decision"]["ci"][1]
     out["success"] = bool(up is not None and up < 0)
     out["year_block"] = _year_block(c, boot, S.SEEDS["cross_spec"][0])
-    out["dm"] = S.two_way_mean(
-        (c["abs_e_a"] - c["abs_e_b"]).to_numpy(float), c["ticker"].to_numpy(), c["year"].to_numpy()
-    )
+    out["dm"] = S.two_way_mean((c["abs_e_a"] - c["abs_e_b"]).to_numpy(float), unit(c).to_numpy(), c["year"].to_numpy())
     return out

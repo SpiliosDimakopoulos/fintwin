@@ -50,4 +50,9 @@ def test_cfo_errors_frame_drops_non_finite_and_duplicates():
         }
     )
     out = cfo_errors_frame(df)
-    assert out.to_dict("list") == {"ticker": ["A", "C"], "year": [2015, 2016], "abs_e": [1.0, 2.0]}
+    assert out.to_dict("list") == {
+        "ticker": ["A", "C"],
+        "year": [2015, 2016],
+        "abs_e": [1.0, 2.0],
+        "cluster": ["A", "C"],
+    }
