@@ -119,3 +119,13 @@ base 548M vs 23M); dividends / ebitda in the finite check (N4); audit floors for
 errors recorded (N5), panel-error share 20% and negative revenue 1% RED (N6). Open, accepted: N4 (B2 t(G-1) on yearly
 BSS not added; declared), F5 (plan2 small firms descriptive, declared), N3 (dry tables empty by design; declared).
 Tests: 266 pass. Branch merged into rev3 (6479eca).
+
+## Gates (13-11-2026)
+- G3 probe PASSED (cpx32 x86, 4 vCPU, commit 2bdfc6c, digest 9f7e4114b07a, 21 min): 384 tests pass on the server, parity
+  passes; audit clean on v3_s60 and on the 12 known-bad firms in v2-pre and v3 (identical units: 103 panel rows and 9
+  recorded errors in each, no None / NaN); errors only the known missing-balance-sheet class; Sobol 166 s per firm-year.
+- G4 dry PASSED (same server, 111 min): all 10 firm-pass stats groups ok incl. the walk-forward passes; families built on
+  the server (0 CIKs without submissions, 120 links, 11 on <= 2 filings); family pass 4/4 ok; cross-spec 289 common
+  firm-years, 0 lost on either side; walk-forward tables empty by design (299 rows < 500); every audit clean. Dry
+  numbers not read (pre-spec discipline). Not rehearsed: the lost-server resume (recipe reviewed in rounds 2-3).
+- Probe + dry cost ~0.18 EUR (cpx32). Outputs: engine/out/probe_1113, engine/out/dry_1113.
