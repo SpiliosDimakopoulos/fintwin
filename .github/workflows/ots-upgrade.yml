@@ -1,0 +1,30 @@
+# Monthly: upgrade pending OpenTimestamps proofs of the predictions-* releases and store the
+# upgraded proofs in a separate append-only release `ots-upgrades` (immutable releases cannot take replaced assets).
+# The release `ots-upgrades` must be created once by the maintainer (gh release create ots-upgrades --notes "upgraded .ots proofs").
+# A proof already uploaded is never replaced; a still-pending proof is simply tried again next month.
+name: ots-upgrade
+on:
+  schedule: [{ cron: "0 5 1 * *" }]   # 1st of each month, 05:00 UTC
+  workflow_dispatch: {}
+permissions: {}
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions: { contents: write }   # uploads assets to the ots-upgrades release only
+    env: { GH_TOKEN: "${{ github.token }}", GH_REPO: "${{ github.repository }}" }
+    steps:
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      - run: |
+          mkdir -p w && cd w
+          have=$(gh release view ots-upgrades --json assets -q '.assets[].name')
+          for tag in $(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[].tag_name | select(startswith("predictions-"))'); do
+            wk=${tag#predictions-}; f="manifest_$wk.json"
+            echo "$have" | grep -qx "$f.ots" && continue
+            gh release download "$tag" -p "$f" -p "$f.ots" || continue
+            [ -f "$f.ots" ] || continue
+            # `ots upgrade` exits non-zero while the proof is still pending (Bitcoin confirmation takes hours); try again next month
+            if uvx --from opentimestamps-client==0.7.2 ots upgrade "$f.ots"; then
+              gh release upload ots-upgrades "$f.ots"
+            fi
+          done
