@@ -1,6 +1,6 @@
 [project]
 name = "fintwin"
-version = "3.0.0.dev0"
+version = "3.0.0"
 description = "Corporate financial health digital twin: SEC XBRL -> system dynamics -> Monte Carlo stress tests"
 readme = "README.md"
 license = "MIT"
