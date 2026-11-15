@@ -27,7 +27,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -yq --no-install-recommends latexmk texlive-latex-recommended texlive-latex-extra \
-            texlive-fonts-recommended texlive-science texlive-pictures texlive-bibtex-extra
+            texlive-fonts-recommended texlive-science texlive-pictures texlive-bibtex-extra texlive-publishers
       - run: uv sync --locked
         working-directory: engine
       - name: Regenerate tables, figures and numbers from the committed research.json
