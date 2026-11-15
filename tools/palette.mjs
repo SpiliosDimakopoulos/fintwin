@@ -1,5 +1,7 @@
-import puppeteer from "puppeteer-core";
-const b = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+import { mkdirSync } from "node:fs";
+import { launch } from "./lib.mjs";
+mkdirSync("shots", { recursive: true });
+const b = await launch();
 const p = await b.newPage();
 const errs = []; p.on("pageerror", (e) => errs.push(e.message));
 await p.setViewport({ width: 1280, height: 800 });

@@ -14,10 +14,11 @@ import json
 import sys
 from pathlib import Path
 
-from .model.ratings import RATINGS
+from .model.ratings import INVESTMENT_GRADE_MIN_RANK, RATINGS
+from .scenarios.reverse_stress import TARGETS
 
 DATA = Path(__file__).resolve().parents[2] / "web" / "public" / "data"
-INVESTMENT_GRADE = 9
+RULE_BASED = "FinTwin rule-based analyst"
 
 
 def _money(x: float) -> str:
@@ -30,21 +31,27 @@ def _pct(x: float, d: int = 0) -> str:
     return f"{x * 100:.{d}f}%"
 
 
+def _ttm_revenue(c: dict) -> float | None:
+    """Revenue over the last 4 quarters; None when one is missing, which would silently understate the sum."""
+    last4 = c["history"]["series"]["revenue"][-4:]
+    return sum(last4) if len(last4) == 4 and all(x is not None for x in last4) else None
+
+
 def fact_sheet(c: dict, meta: dict) -> dict:
     """Compact, human-readable facts used by both the rule-based notes and the optional LLM memo."""
     p = c["params"]
     hist = c["history"]["series"]
     last_rating = next((r for r in reversed(hist["rating"]) if r is not None), None)
-    rev_ttm = sum(x for x in hist["revenue"][-4:] if x is not None)
+    rev_ttm = _ttm_revenue(c)
     sheet = {
         "company": c["name"],
         "ticker": c["ticker"],
         "sector": c["sector"],
         "last_reported_quarter": p["last_quarter"],
         "horizon_quarters": p["horizon"],
-        "simulated_paths": 5000,
+        "simulated_paths": c.get("n_paths", 5000),
         "reported": {
-            "revenue_last_4_quarters": _money(rev_ttm),
+            "revenue_last_4_quarters": _money(rev_ttm) if rev_ttm is not None else "n/a (a quarter is missing)",
             "cash_and_short_term_investments": _money(p["cash0"]),
             "total_debt": _money(p["debt0"]),
             "synthetic_rating_today": RATINGS[int(last_rating)] if last_rating is not None else "n/a",
@@ -103,20 +110,26 @@ def write_note(c: dict, meta: dict) -> dict:
     worst = pr[worst_key]
     rating_hist = [r for r in c["history"]["series"]["rating"] if r is not None]
     rating = RATINGS[int(rating_hist[-1])] if rating_hist else None
-    rev_q = sum(x for x in c["history"]["series"]["revenue"][-4:] if x is not None) / 4
+    rev_ttm = _ttm_revenue(c)
     mat4 = sum(p["maturities_q"][:4])
-    fixed_share = p["F"] / max(p["F"] + p["v"] * rev_q, 1e-9)
+    fixed_share = p["F"] / max(p["F"] + p["v"] * rev_ttm / 4, 1e-9) if rev_ttm is not None else None
     rs = c["reverse_stress"]["sales_depth"]
+    rs_t = TARGETS["sales_depth"]
+    n_paths = c.get("n_paths", 5000)
     tornado = sorted(c["tornado"], key=lambda t: t["d_health"])
     sob = c.get("sobol")
     verdict = _verdict(h)
 
     # ---- headline & summary ----
-    breaking = (
-        f"breaks (50% breach odds) at a {_pct(rs['p50'])} revenue drop"
-        if rs["p50"] is not None
-        else "can fund itself even through a 95% revenue drop held for three quarters"
-    )
+    if rs["p50"] is None:
+        breaking = (
+            f"can fund itself even through a {_pct(rs_t['hi'])} revenue drop over "
+            f"{rs_t['base']['sales_duration']} quarters"
+        )
+    elif rs["p50"] == rs_t["lo"]:  # breaking_point returns the lower bound when the baseline already breaches
+        breaking = "already has even odds of running out of cash with no revenue shock"
+    else:
+        breaking = f"breaks (50% breach odds) at a {_pct(rs['p50'])} revenue drop"
     headline = (
         f"{verdict} credit profile: health {h:.0f}/100 under baseline, {worst['health_score']:.0f} under "
         f"{labels[worst_key].lower()}; the company {breaking}."
@@ -127,7 +140,7 @@ def write_note(c: dict, meta: dict) -> dict:
         + (f" and a synthetic {rating} rating from interest coverage." if rating else ".")
     ]
     summary.append(
-        f"Across 5,000 simulated {p['horizon']}-quarter futures the median health score is {h:.0f}, with the "
+        f"Across {n_paths:,} simulated {p['horizon']}-quarter futures the median health score is {h:.0f}, with the "
         f"unluckiest tenth of paths at {base['health_p10']:.0f} or below and a {_pct(base['p_breach'], 1)} chance "
         "of exhausting liquidity under business as usual."
     )
@@ -147,15 +160,16 @@ def write_note(c: dict, meta: dict) -> dict:
     risks = []
     rev_t = next((t for t in c["tornado"] if t["knob"] == "sales_depth"), None)
     if rev_t and rev_t["d_health"] < -5:
-        risks.append(
-            {
-                "risk": "Demand sensitivity",
-                "evidence": f"A 30% revenue fall lowers the health score by {abs(rev_t['d_health']):.1f} points and "
-                f"raises breach odds by {rev_t['d_p_breach'] * 100:.1f} percentage points; fixed costs are about "
-                f"{_pct(fixed_share)} of the cost base, so losses scale faster than revenue.",
-            }
+        evidence = (
+            f"A {_pct(rev_t['value'])} revenue fall lowers the health score by {abs(rev_t['d_health']):.1f} points and "
+            f"raises breach odds by {rev_t['d_p_breach'] * 100:.1f} percentage points"
         )
-    elif fixed_share > 0.4:
+        if fixed_share is not None:
+            evidence += (
+                f"; fixed costs are about {_pct(fixed_share)} of the cost base, so losses scale faster than revenue"
+            )
+        risks.append({"risk": "Demand sensitivity", "evidence": evidence + "."})
+    elif fixed_share is not None and fixed_share > 0.4:
         risks.append(
             {
                 "risk": "Operating leverage",
@@ -220,12 +234,14 @@ def write_note(c: dict, meta: dict) -> dict:
             f"A committed credit facility of about {_money(p['revolver_cap'])} backstops liquidity"
             + (" (size assumed: not tagged in filings)." if assumed else ".")
         )
-    if rating_hist and rating_hist[-1] >= INVESTMENT_GRADE:
+    if rating_hist and rating_hist[-1] >= INVESTMENT_GRADE_MIN_RANK:
         resilience.append(
             f"Interest coverage implies an investment-grade synthetic rating ({rating}), keeping refinancing cheap."
         )
     if c["reverse_stress"]["rate_bp"]["p50"] is None:
-        resilience.append("No interest-rate rise up to 1,500bp produces even odds of a liquidity breach.")
+        resilience.append(
+            f"No interest-rate rise up to {TARGETS['rate_bp']['hi']:,.0f}bp produces even odds of a liquidity breach."
+        )
     if rs["p50"] is None or rs["p50"] > 0.5:
         resilience.append("It would take a revenue collapse of more than half to make a cash shortfall likely.")
     resilience = resilience[:4] or ["Few structural buffers: resilience relies on market access and management cuts."]
@@ -256,7 +272,7 @@ def write_note(c: dict, meta: dict) -> dict:
 
     return {
         "ticker": c["ticker"],
-        "generated_by": "FinTwin rule-based analyst (deterministic, no language model)",
+        "generated_by": f"{RULE_BASED} (deterministic, no language model)",
         "as_of": p["last_quarter"],
         "attempts": 1,
         "unverified_numbers": [],
@@ -271,15 +287,27 @@ def write_note(c: dict, meta: dict) -> dict:
     }
 
 
+def _is_rule_based(path: Path) -> bool:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("generated_by", "").startswith(RULE_BASED)
+    except (OSError, ValueError):
+        return True  # unreadable file: safe to regenerate
+
+
 def build(tickers: list[str] | None = None) -> None:
     index = json.loads((DATA / "index.json").read_text(encoding="utf-8"))
     out = DATA / "memos"
     out.mkdir(exist_ok=True)
+    written = 0
     for t in tickers or sorted(index["companies"]):
         c = json.loads((DATA / "companies" / f"{t}.json").read_text(encoding="utf-8"))
+        path = out / f"{t}.json"
+        if path.exists() and not _is_rule_based(path):
+            continue  # never overwrite a committed Claude memo (fintwin.memo writes the same path)
         note = write_note(c, index["meta"])
-        (out / f"{t}.json").write_text(json.dumps(note, indent=1, ensure_ascii=False), encoding="utf-8")
-    print(f"wrote {len(tickers or index['companies'])} analyst notes")
+        path.write_text(json.dumps(note, indent=1, ensure_ascii=False), encoding="utf-8")
+        written += 1
+    print(f"wrote {written} analyst notes")
 
 
 if __name__ == "__main__":

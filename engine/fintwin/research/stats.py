@@ -8,19 +8,61 @@ Confidence intervals come from bootstraps that resample *firms* (the panel has r
 from __future__ import annotations
 
 import json
+import os
+import sys
 import warnings
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy.stats import rankdata, spearmanr
+from scipy.stats import t as t_dist
 
 OUT = Path(__file__).resolve().parents[3] / "docs" / "paper" / "research.json"
 DATA = Path(__file__).resolve().parents[1] / "data"
 MIN_LOG_REV = float(np.log(50e6))  # $50M trailing revenue at the cutoff
-B = 2000
-B_PANEL = 500  # firm-clustered panel bootstraps are slower
-RNG = np.random.default_rng(20200220)
+
+
+def _env_int(name: str, default: int) -> int:
+    v = os.environ.get(name, "").strip()
+    return int(v) if v else default
+
+
+B = _env_int("FINTWIN_B", 2000)
+B_PANEL = _env_int("FINTWIN_B_PANEL", 500)  # firm-clustered panel bootstraps are slower
+# the pre-specified family of forecast comparisons (Romano-Wolf, SPA, MCS; REVISION_PLAN_3 2.1): B = 10,000. A dry run
+# sets FINTWIN_B_FAMILY to a small number.
+B_FAMILY = _env_int("FINTWIN_B_FAMILY", 10_000)
+B_LAD = _env_int("FINTWIN_B_LAD", 199)  # firm bootstrap of the LAD encompassing regression (one fit per resample)
+
+# Every random draw in research/stats, transmission and plan2 starts its own Generator from one of these seeds, so a
+# result does not depend on which statistics were computed before it (the old module-global RNG did). Written to
+# research.json as the seeds table.
+from .units import cluster_of, dedupe_events, family_pass, unit  # noqa: E402  (leaf module)
+
+SEEDS = {
+    "boot": (20200220, "stats.boot / stats.paired: firm or row bootstrap, a fresh Generator per call"),
+    "cv_folds": (7, "stats._cv_composite: fold assignment of the cross-validated composite"),
+    "boot_two_way": (11, "plan2.boot_two_way: firm x year pigeonhole bootstrap"),
+    "family": (101, "transmission.inference: firm x year bootstrap for Romano-Wolf, SPA and MCS"),
+    "year_block": (102, "transmission.inference: year-block bootstrap of the combination gains"),
+    "lad": (103, "transmission.encompassing: firm bootstrap of the LAD encompassing coefficients"),
+    "cash_pool": (104, "plan2.cash_hybrid: firm bootstrap of the density-combination skill"),
+    "cross_spec": (105, "cross_spec.compare: year-block bootstrap of the v3 vs v2-pre test"),
+}
+
+
+def rng(name: str) -> np.random.Generator:
+    return np.random.default_rng(SEEDS[name][0])
+
+
+def seeds_table() -> dict:
+    """The seeds and bootstrap sizes of this run (research.json `seeds`)."""
+    return {
+        "seeds": {k: {"seed": v[0], "used_by": v[1]} for k, v in SEEDS.items()},
+        "B": {"B": B, "B_PANEL": B_PANEL, "B_FAMILY": B_FAMILY, "B_LAD": B_LAD},
+    }
+
 
 # name -> (column, sign): risk = sign * value
 BENCH = {
@@ -81,17 +123,20 @@ def _clusters(firms: np.ndarray) -> list[np.ndarray]:
     return np.split(order, np.flatnonzero(np.diff(codes[order])) + 1)
 
 
-def boot(stat, cols: list[np.ndarray], firms: np.ndarray | None = None, b: int = B) -> np.ndarray:
-    """Bootstrap a statistic of aligned arrays, resampling rows or whole firms."""
+def boot(
+    stat, cols: list[np.ndarray], firms: np.ndarray | None = None, b: int = B, seed: int | None = None
+) -> np.ndarray:
+    """Bootstrap a statistic of aligned arrays, resampling rows or whole firms (own Generator, see SEEDS)."""
+    g = np.random.default_rng(SEEDS["boot"][0] if seed is None else seed)
     n = len(cols[0])
     groups = _clusters(firms) if firms is not None else None
     out = np.empty(b)
     for k in range(b):
         if groups is None:
-            idx = RNG.integers(0, n, n)
+            idx = g.integers(0, n, n)
         else:
-            pick = RNG.integers(0, len(groups), len(groups))
-            idx = np.concatenate([groups[g] for g in pick])
+            pick = g.integers(0, len(groups), len(groups))
+            idx = np.concatenate([groups[i] for i in pick])
         out[k] = stat(*(c[idx] for c in cols))
     return out
 
@@ -104,6 +149,16 @@ def p_two_sided(x: np.ndarray) -> float:
     """Bootstrap p-value for H0: statistic = 0 (share of resamples on the other side of zero, doubled)."""
     x = x[np.isfinite(x)]
     return float(min(1.0, 2 * min((x <= 0).mean(), (x >= 0).mean()))) if len(x) else np.nan
+
+
+def p_centered(est: float, x: np.ndarray) -> float:
+    """Bootstrap p-value for H0: statistic = 0 from the recentred distribution, (1 + #{|x* - est| >= |est|}) / (B + 1).
+
+    Never exactly zero, unlike `p_two_sided` (kept for continuity with revision 2)."""
+    x = x[np.isfinite(x)]
+    if not len(x) or not np.isfinite(est):
+        return np.nan
+    return float((1 + np.sum(np.abs(x - est) >= abs(est))) / (len(x) + 1))
 
 
 def pct(x: np.ndarray) -> np.ndarray:
@@ -135,7 +190,15 @@ def paired(stat, a: np.ndarray, b: np.ndarray, y: np.ndarray, firms: np.ndarray 
     """Paired bootstrap of stat(a, y) - stat(b, y) on the observations where both predictors exist."""
     m = np.isfinite(a) & np.isfinite(b) & np.isfinite(y)
     d = boot(lambda u, v, t: stat(u, t) - stat(v, t), [a[m], b[m], y[m]], None if firms is None else firms[m], b=b_)
-    return {"diff": float(np.nanmean(d)), "ci": ci(d), "p": p_two_sided(d), "n": int(m.sum())}
+    est = float(stat(a[m], y[m]) - stat(b[m], y[m])) if m.sum() else np.nan
+    return {
+        "diff": float(np.nanmean(d)),
+        "ci": ci(d),
+        "p": p_two_sided(d),
+        "n": int(m.sum()),
+        "est": est,
+        "p_centered": p_centered(est, d),
+    }
 
 
 def _cv_composite(R: pd.DataFrame, sector: pd.Series, y: np.ndarray, k: int = 10) -> np.ndarray:
@@ -144,7 +207,7 @@ def _cv_composite(R: pd.DataFrame, sector: pd.Series, y: np.ndarray, k: int = 10
     X = pd.concat([X, pd.get_dummies(sector, drop_first=True, dtype=float)], axis=1)
     X.insert(0, "const", 1.0)
     A, n = X.to_numpy(float), len(X)
-    fold = np.random.default_rng(7).permutation(n) % k
+    fold = rng("cv_folds").permutation(n) % k
     pred = np.full(n, np.nan)
     for f in range(k):
         tr, te = fold != f, fold == f
@@ -156,6 +219,191 @@ def _cv_composite(R: pd.DataFrame, sector: pd.Series, y: np.ndarray, k: int = 10
 def resid_on_sector(x: np.ndarray, sector: np.ndarray) -> np.ndarray:
     s = pd.Series(x)
     return (s - s.groupby(sector).transform("mean")).to_numpy()
+
+
+# ---------------------------------------------------------------- multiple comparisons (REVISION_PLAN_3 2.1)
+# All three take a vector of statistics and a (B x K) matrix of the same statistics on bootstrap resamples, so the
+# resampling scheme (firm, year block, firm x year) and the statistic (mean or median loss) are the caller's choice.
+# Standard errors are the bootstrap root-mean-square deviation around the point estimate.
+def _boot_se(theta: np.ndarray, star: np.ndarray) -> np.ndarray:
+    se = np.sqrt(np.mean((star - theta) ** 2, axis=0))
+    return np.where(se > 0, se, np.nan)
+
+
+def _finite_rows(star: np.ndarray, cols: np.ndarray | list[int] | None = None) -> np.ndarray:
+    """Resamples finite in the columns in use (`cols`, default all). A column that is not in use (a model without a
+    loss, an undefined hypothesis) may be NaN in every row; filtering on it would leave no resample at all."""
+    star = np.atleast_2d(np.asarray(star, float))
+    use = star if cols is None else star[:, cols]
+    return star[np.isfinite(use).all(axis=1)]
+
+
+def stepm(theta: np.ndarray, star: np.ndarray, side: str = "two-sided", alpha: float = 0.05) -> dict:
+    """Romano and Wolf (2005) studentized stepdown, adjusted p-values as in Romano and Wolf (2016).
+
+    H0_k: theta_k = 0. `side`: "two-sided", "less" (H1: theta_k < 0) or "greater". t*_bk = (theta*_bk - theta_k) / se_k
+    is the null distribution; hypotheses are visited from the largest statistic down, the p-value of the j-th is the
+    share of resamples whose maximum over the hypotheses not yet rejected reaches it, made monotone."""
+    theta = np.asarray(theta, float)
+    star = _finite_rows(star, np.flatnonzero(np.isfinite(theta)))
+    se = _boot_se(theta, star)
+    t = theta / se
+    tn = (star - theta) / se
+    sign = {"two-sided": None, "less": -1.0, "greater": 1.0}[side]
+    s, null = (np.abs(t), np.abs(tn)) if sign is None else (sign * t, sign * tn)
+    nb, k = null.shape
+    order = np.argsort(-np.nan_to_num(s, nan=-np.inf), kind="stable")
+    p_adj, p_raw, running = np.full(k, np.nan), np.full(k, np.nan), 0.0
+    for j, h in enumerate(order):
+        if not np.isfinite(s[h]):
+            continue
+        p_raw[h] = (1 + np.sum(null[:, h] >= s[h])) / (nb + 1)
+        mx = np.nanmax(null[:, order[j:]], axis=1)
+        running = max(running, (1 + np.sum(mx >= s[h])) / (nb + 1))
+        p_adj[h] = running
+    return {"t": t, "se": se, "p_raw": p_raw, "p_adj": p_adj, "reject": p_adj <= alpha, "B": int(nb)}
+
+
+def spa(d: np.ndarray, star: np.ndarray, n: int) -> dict:
+    """Hansen (2005) test for superior predictive ability. d_k = loss(benchmark) - loss(model k), so d_k > 0 means
+    model k is better; H0: no model is better than the benchmark (max_k E d_k <= 0).
+
+    Returns the consistent p-value and the lower and upper bounds (the upper is White's reality check). The recentring
+    g_c keeps a model at the boundary unless its standardized mean is below -sqrt(2 log log n)."""
+    d = np.asarray(d, float)
+    star = _finite_rows(star, np.flatnonzero(np.isfinite(d)))
+    se = _boot_se(d, star)
+    t = d / se
+    stat = max(float(np.nanmax(t)), 0.0) if np.isfinite(t).any() else 0.0
+    thr = np.sqrt(2 * np.log(np.log(max(n, 16))))
+    centre = {
+        "consistent": np.where(t >= -thr, d, 0.0),
+        "lower": np.maximum(d, 0.0),
+        "upper": d,
+    }
+    out: dict = {"t": t, "stat": stat, "B": int(len(star))}
+    for k, g in centre.items():
+        tb = np.maximum(np.nanmax((star - g) / se, axis=1), 0.0)
+        out[f"p_{k}"] = float((1 + np.sum(tb >= stat)) / (len(star) + 1))
+    return out
+
+
+def mcs(loss: np.ndarray, star: np.ndarray, names: list[str], alpha: float = 0.10) -> dict:
+    """Model confidence set (Hansen, Lunde and Nason 2011), T_max statistic, elimination rule e_max.
+
+    At each step the statistic of model i is its loss minus the average loss of the surviving set, standardized; if
+    the bootstrap p-value of the largest is below alpha that model goes. Elimination continues to the last model so
+    every model gets its MCS p-value (the running maximum); the set is the models with p_MCS >= alpha."""
+    loss = np.asarray(loss, float)
+    alive = [i for i in range(len(names)) if np.isfinite(loss[i])]
+    star = _finite_rows(star, alive)
+    p_mcs: dict[str, float] = {}
+    order: list[str] = []
+    running = 0.0
+    while len(alive) > 1:
+        L, Ls = loss[alive], star[:, alive]
+        dbar = L - L.mean()
+        dstar = Ls - Ls.mean(axis=1, keepdims=True)
+        se = _boot_se(dbar, dstar)
+        t = dbar / se
+        if not np.isfinite(t).any():  # the survivors are indistinguishable (identical losses): none can go
+            break
+        tb = np.nanmax((dstar - dbar) / se, axis=1)
+        p = (1 + np.sum(tb >= np.nanmax(t))) / (len(star) + 1)
+        running = max(running, float(p))
+        worst = alive[int(np.nanargmax(t))]
+        p_mcs[names[worst]] = running
+        order.append(names[worst])
+        alive.remove(worst)
+    for i in alive:
+        p_mcs[names[i]] = 1.0
+        order.append(names[i])
+    return {
+        "alpha": alpha,
+        "included": [k for k in names if p_mcs.get(k, 0.0) >= alpha],
+        "p_mcs": p_mcs,
+        "elimination_order": order,
+        "B": int(len(star)),
+    }
+
+
+# ---------------------------------------------------------------- clustered inference with few clusters
+def cluster_ols(y: np.ndarray, X: np.ndarray, groups: list[np.ndarray], level: float = 0.95) -> dict:
+    """OLS with one- or two-way cluster-robust covariance (Cameron, Gelbach and Miller 2011): V = V_1 + V_2 - V_12,
+    each with the G/(G-1) (N-1)/(N-K) correction. Inference uses t(G-1), G the smaller cluster count, because with a
+    dozen cutoff years normal critical values over-reject. A two-way V that is not positive semi-definite is repaired
+    by setting its negative eigenvalues to zero, and flagged."""
+    y = np.asarray(y, float)
+    X = np.asarray(X, float).reshape(len(y), -1)
+    n, k = X.shape
+    beta = np.linalg.lstsq(X, y, rcond=None)[0]
+    u = y - X @ beta
+    bread = np.linalg.pinv(X.T @ X)
+    sc = X * u[:, None]
+
+    def meat(codes: np.ndarray) -> tuple[np.ndarray, int]:
+        G = int(codes.max()) + 1
+        S = np.column_stack([np.bincount(codes, weights=sc[:, j], minlength=G) for j in range(k)])
+        c = G / max(G - 1, 1) * (n - 1) / max(n - k, 1)
+        return c * (S.T @ S), G
+
+    codes = [pd.factorize(pd.Series(np.asarray(g)))[0] for g in groups]
+    M, G = meat(codes[0])
+    Gs = [G]
+    if len(codes) == 2:
+        M2, G2 = meat(codes[1])
+        M12, _ = meat(pd.factorize(pd.Series(list(zip(codes[0], codes[1], strict=True))))[0])
+        M = M + M2 - M12
+        Gs.append(G2)
+    V = bread @ M @ bread
+    V = (V + V.T) / 2
+    w, Q = np.linalg.eigh(V)
+    psd = bool(w.min() >= -1e-12 * max(np.max(np.abs(w)), 1e-300))
+    if not psd:
+        V = (Q * np.clip(w, 0, None)) @ Q.T
+    se = np.sqrt(np.clip(np.diag(V), 0, None))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t = beta / se
+    G = min(Gs)
+    df = max(G - 1, 1)
+    return {
+        "params": beta,
+        "se": se,
+        "t": t,
+        "p": 2 * t_dist.sf(np.abs(t), df),
+        "G": G,
+        "n_clusters": Gs,
+        "df": df,
+        "t_crit": float(t_dist.ppf(0.5 + level / 2, df)),
+        "psd": psd,
+        "n": n,
+    }
+
+
+def two_way_mean(d: np.ndarray, firms: np.ndarray, years: np.ndarray) -> dict:
+    """Diebold-Mariano test of mean(d) = 0 with firm x year clustered standard errors and t(G-1) critical values;
+    the firm-only clustered version alongside."""
+    d = np.asarray(d, float)
+    m = np.isfinite(d)
+    d, f, y = d[m], np.asarray(firms)[m], np.asarray(years)[m]
+    if len(d) < 3:
+        return {"n": int(len(d))}
+    one = np.ones((len(d), 1))
+    tw = cluster_ols(d, one, [f, y])
+    fo = cluster_ols(d, one, [f])
+    return {
+        "mean": float(tw["params"][0]),
+        "se": float(tw["se"][0]),
+        "t": float(tw["t"][0]),
+        "p": float(tw["p"][0]),
+        "G": tw["G"],
+        "t_crit": tw["t_crit"],
+        "psd": tw["psd"],
+        "se_firm": float(fo["se"][0]),
+        "t_firm": float(fo["t"][0]),
+        "p_firm": float(fo["p"][0]),
+        "n": int(len(d)),
+    }
 
 
 # ---------------------------------------------------------------- loading
@@ -175,35 +423,85 @@ def bankruptcy_dates() -> dict[int, list[pd.Timestamp]]:
     f = DATA / "universe_edgar.csv"
     if not f.exists():
         return {}
+    return {c: petitions(d) for c, d in bankruptcy_filings().items()}
+
+
+def bankruptcy_filings() -> dict[int, list[pd.Timestamp]]:
+    """CIK -> every Item 1.03 8-K date in the EDGAR census (petitions, confirmations, emergence)."""
+    f = DATA / "universe_edgar.csv"
+    if not f.exists():
+        return {}
     u = pd.read_csv(f, dtype={"bankruptcy_8k": str})
     return {
-        int(c): petitions([pd.Timestamp(x) for x in str(d).split(";")])
+        int(c): [pd.Timestamp(x) for x in str(d).split(";")]
         for c, d in zip(u["cik"], u["bankruptcy_8k"], strict=True)
         if isinstance(d, str) and d
     }
 
 
+def _data_legacy() -> bool:
+    """FINTWIN_DATA_LEGACY=1 restores the revision-2 data layer (one comparison run, REVISION_PLAN_3 0.3). The one
+    definition of the switch (exactly "1"), shared with the data layer and the backtests."""
+    from ..data.edgar import data_legacy
+
+    return data_legacy()
+
+
+def cases(dates: list[pd.Timestamp], gap_days: int = 1095) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """Group Item 1.03 filings into cases: (petition, last filing of the case).
+
+    A filing belongs to the current case when it comes within `gap_days` of the case's *previous* filing: the
+    revision-2 rule measured the gap from the petition, so a confirmation or emergence 8-K more than three years into
+    a long case opened a phantom second case. FINTWIN_DATA_LEGACY=1 restores that rule."""
+    out: list[list[pd.Timestamp]] = []
+    for d in sorted(dates):
+        ref = None if not out else (out[-1][0] if _data_legacy() else out[-1][1])
+        if ref is None or (d - ref).days > gap_days:
+            out.append([d, d])
+        else:
+            out[-1][1] = d
+    return [(a, b) for a, b in out]
+
+
 def petitions(dates: list[pd.Timestamp], gap_days: int = 1095) -> list[pd.Timestamp]:
     """Item 1.03 is also filed for plan confirmations and other steps of the same case: keep the first filing of each
-    case, a filing more than three years after the previous one starting a new case."""
-    out: list[pd.Timestamp] = []
-    for d in sorted(dates):
-        if not out or (d - out[-1]).days > gap_days:
-            out.append(d)
-    return out
+    case (see `cases`)."""
+    return [a for a, _ in cases(dates, gap_days)]
 
 
-def bk_event(dates: list[pd.Timestamp], origin: str, days: int = 730) -> float:
-    """1 if a bankruptcy 8-K follows the cutoff within `days`; NaN if one was filed in the two years before it."""
+def in_bankruptcy(spans: list[tuple[pd.Timestamp, pd.Timestamp]], origin: str) -> bool:
+    """True when the cutoff falls between a case's petition and its last 8-K: the firm is still in Chapter 11 and is
+    neither a survivor nor a new filer."""
+    o = pd.Timestamp(origin)
+    return any(a <= o <= b for a, b in spans if b > a)
+
+
+def bk_event(
+    dates: list[pd.Timestamp],
+    origin: str,
+    days: int = 730,
+    spans: list[tuple[pd.Timestamp, pd.Timestamp]] | None = None,
+) -> float:
+    """1 if a bankruptcy petition follows the cutoff within `days`; NaN if one was filed in the two years before it,
+    or (with `spans`) if the cutoff falls inside a case that is still running."""
     o = pd.Timestamp(origin)
     if any(o - pd.Timedelta(days=730) < d <= o for d in dates):
+        return np.nan
+    if spans and not _data_legacy() and in_bankruptcy(spans, origin):
         return np.nan
     return float(any(o < d <= o + pd.Timedelta(days=days) for d in dates))
 
 
+def _spans(dates: list[pd.Timestamp], raw: list[pd.Timestamp] | None) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """Case spans for the petitions `dates`, from the raw filings when available (a petition without raw filings is
+    a one-day case)."""
+    by_start = {a: (a, b) for a, b in cases(raw)} if raw else {}
+    return [by_start.get(d, (d, d)) for d in dates]
+
+
 def load(cache: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     xs, panel, fc, errors = [], [], [], {}
-    mem, bkd = membership(), bankruptcy_dates()
+    mem, bkd, raw = membership(), bankruptcy_dates(), bankruptcy_filings()
     for f in sorted(cache.glob("*.json")):
         r = json.loads(f.read_text(encoding="utf-8"))
         if r.get("errors"):
@@ -212,17 +510,19 @@ def load(cache: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
         flags = {k: (cik in v) if cik is not None else False for k, v in mem.items()}
         gics = next((v[cik] for v in mem.values() if cik in v), None)
         dates = bkd.get(cik, []) if cik is not None else []
+        spans = _spans(dates, raw.get(cik)) if dates else []
         c = r.get("covid")
         if c:
             row = {
                 "ticker": c["ticker"],
+                "cluster": cluster_of(c["ticker"], cik),
                 "cik": cik,
                 "name": c["name"],
                 "sector": c["sector"] or "Unknown",
                 "gics": gics,
                 "bankrupt": r.get("bankrupt_2020", False),
                 **flags,
-                "bk_2020": bk_event(dates, "2020-02-20", 680),  # filings to the end of 2021
+                "bk_2020": bk_event(dates, "2020-02-20", 680, spans=spans),  # filings to the end of 2021; D8 (S3)
             }
             row |= {f"grid_{k}": v for k, v in (c.get("depth_grid") or {}).items()}
             row["st"] = c.get("structural") or {}
@@ -239,12 +539,14 @@ def load(cache: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
         for pr in r.get("panel", []):
             row = {
                 "ticker": r["ticker"],
+                "cluster": cluster_of(r["ticker"], cik),
                 "cik": cik,
                 "year": int(pr["origin"][:4]),
                 "industry": (c or {}).get("sector") or _industry(r["ticker"]),
                 **flags,
-                "y_bk8": bk_event(dates, pr["origin"]),
-                "y_bk4": bk_event(dates, pr["origin"], 365),
+                "y_bk8": bk_event(dates, pr["origin"], spans=spans),
+                "y_bk4": bk_event(dates, pr["origin"], 365, spans=spans),
+                "in_bankruptcy": in_bankruptcy(spans, pr["origin"]),
                 "st": pr.get("structural") or {},
             }
             row |= {f"dg_{k}": v for k, v in (pr.get("depth_grid") or {}).items()}
@@ -257,8 +559,17 @@ def load(cache: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
             row |= pr["features"]
             row |= {f"y_{k}": v for k, v in (pr.get("outcome") or {}).items()}
             panel.append(row)
+        n_bad = 0
         for fr in r.get("forecasts", []):
-            fc.append({"ticker": r["ticker"], **fr})
+            q = fr.get("q")
+            # a quantile list with a non-finite value (a diverged simulation in a shard written before the engine
+            # check of 12-11-2026) would turn every conformal factor of its variable into NaN: an error, not a row
+            if isinstance(q, list) and not np.isfinite(np.asarray(q, float)).all():
+                n_bad += 1
+                continue
+            fc.append({"ticker": r["ticker"], "cluster": cluster_of(r["ticker"], cik), **fr})
+        if n_bad:
+            errors.setdefault(r["ticker"], {})["forecasts"] = f"{n_bad} forecasts with non-finite quantiles dropped"
     return pd.DataFrame(xs), pd.DataFrame(panel), pd.DataFrame(fc), errors
 
 
@@ -274,7 +585,9 @@ def _secondary_pvalues(res: dict) -> dict[str, float]:
     out: dict[str, float] = {}
     tp = res.get("transmission", {}).get("panel", {})
     for var in ("cfo", "fcf"):
-        h = tp.get(var, {}).get("hybrid", {})
+        # pre-spec 2.1: winsorization limits from the training years only (E6); `hybrid` (all-year limits) is the
+        # revision-2 continuity number and never enters the Holm family (12-11-2026 review, S4)
+        h = tp.get(var, {}).get("hybrid_train", {})
         for k in ("N3+T1_vs_N3+N1", "N3+T1_vs_N3+N5", "N3+T1_vs_N3+N6"):
             if k in h:
                 out[f"hybrid_{var}_{k}"] = h[k]["p"]
@@ -294,10 +607,7 @@ def _secondary_pvalues(res: dict) -> dict[str, float]:
 def _industry(key: str) -> str:
     from ..universe import classify
 
-    try:
-        return classify(key)[0] or "Unknown"
-    except Exception:
-        return "Unknown"
+    return classify(key)[0] or "Unknown"
 
 
 # ---------------------------------------------------------------- COVID cross-section
@@ -487,9 +797,11 @@ def _raw(p: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
             X["h_base"], X["pb_base"], X["h_rec"] = -p["h_base"], p["pb_base"], -p["h_rec"]
         elif k == "formula":
             X["formula"] = -_col(p, "health_t0")
-        else:
+        elif k in BENCH:
             col, sign = BENCH[k]
             X[k] = sign * _col(p, col)
+        else:  # a plain column of the frame (the exploratory rivals' features)
+            X[k] = _col(p, k)
     return X
 
 
@@ -521,7 +833,7 @@ def _fit_predict(train: pd.DataFrame, test: pd.DataFrame, ytr: np.ndarray, cols:
 
 def panel_section(p: pd.DataFrame) -> dict:
     ev = _events(p)
-    firms = p["ticker"].to_numpy()
+    firms = unit(p).to_numpy()
     R = risk_frame(p, "h_base", "pb_base")
     R["twin_rec"] = -p["h_rec"].astype(float)
     R["twin_no_loops"] = -p["h_base_no_loops"].astype(float)
@@ -549,13 +861,9 @@ def panel_section(p: pd.DataFrame) -> dict:
                     entry["twin_minus"] = paired(auc, twin, x, y, firms, B_PANEL)
             uni[k] = entry
         res["univariate"] = uni
+        in_year = {yr: (p["year"] == yr).to_numpy() & m for yr in out["years"]}
         res["auc_by_year"] = {
-            k: {
-                int(yr): auc(
-                    R[k].to_numpy(float)[(p["year"] == yr).to_numpy() & m], y[(p["year"] == yr).to_numpy() & m]
-                )
-                for yr in out["years"]
-            }
+            k: {int(yr): auc(R[k].to_numpy(float)[sel], y[sel]) for yr, sel in in_year.items()}
             for k in ("twin", "formula", "altman_z2", "icr", "fcf_margin", "static_stress")
             if k in uni
         }
@@ -621,7 +929,7 @@ def _clustered_logit(p: pd.DataFrame, y: np.ndarray) -> dict:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             m = sm.Logit(y, sm.add_constant(pd.concat([X, yr], axis=1))).fit(
-                disp=False, cov_type="cluster", cov_kwds={"groups": pd.factorize(p["ticker"])[0]}
+                disp=False, cov_type="cluster", cov_kwds={"groups": pd.factorize(unit(p))[0]}
             )
         return {
             k: {"coef": float(m.params[k]), "z": float(m.tvalues[k]), "p": float(m.pvalues[k])} for k in X.columns
@@ -639,17 +947,27 @@ def forecast_section(fc: pd.DataFrame) -> dict:
 
     out = {}
     for var, g in fc.groupby("var"):
+        n_all = int(len(g))
         g = g[g["crps_ets"].notna() & g["scale"].gt(0)].copy()
-        res: dict = {"n": int(len(g)), "n_firms": int(g["ticker"].nunique())}
+        # n is the ETS-matched sample (forecasts whose ETS fit succeeded); n_all every twin forecast of the variable
+        res: dict = {
+            "n": int(len(g)),
+            "n_ets_matched": int(len(g)),
+            "n_all": n_all,
+            "n_firms": int(g["ticker"].nunique()),
+        }
         for base in ("rw", "ets"):
             c_t, c_b = g["crps_twin"] / g["scale"], g[f"crps_{base}"] / g["scale"]
             d = (c_t - c_b).to_numpy(float)
             # Diebold-Mariano style test on scaled CRPS differentials, with standard errors clustered two ways: by
             # firm (repeated forecasts) and by origin (common shocks such as 2020)
-            firm_ids, origin_ids = pd.factorize(g["ticker"])[0], pd.factorize(g["origin"])[0]
+            firm_ids, origin_ids = pd.factorize(unit(g))[0], pd.factorize(g["origin"])[0]
             groups = np.column_stack([firm_ids, origin_ids]) if origin_ids.max() > 0 else firm_ids
             m = sm.OLS(d, np.ones(len(d))).fit(cov_type="cluster", cov_kwds={"groups": groups})
+            # with about a dozen origins the normal p-value above over-rejects; t(G-1) and a PSD check
+            dm = two_way_mean(d, firm_ids, origin_ids) if origin_ids.max() > 0 else {}
             res[base] = {
+                "dm_tG1": dm,
                 "skill_pooled": float(1 - g["crps_twin"].sum() / g[f"crps_{base}"].sum()),
                 "skill_scaled": float(1 - c_t.mean() / c_b.mean()),
                 "share_better": float((g["crps_twin"] < g[f"crps_{base}"]).mean()),
@@ -670,30 +988,123 @@ def forecast_section(fc: pd.DataFrame) -> dict:
     return out
 
 
-def main(cache: Path) -> dict:
+def provenance() -> dict:
+    """Versions, code and data identity of the run: enough for the paper to state them."""
+    import hashlib
+    import platform
+    import subprocess
+
+    import scipy
+    import statsmodels
+
+    root = Path(__file__).resolve().parents[2]  # engine/
+
+    def sha256(f: Path) -> str | None:
+        return hashlib.sha256(f.read_bytes()).hexdigest() if f.exists() else None
+
+    sha = os.environ.get("GITHUB_SHA")
+    if not sha:
+        try:
+            sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, timeout=10, check=True
+            ).stdout.strip()
+        except Exception:  # noqa: BLE001 - not a git checkout
+            sha = None
+    snap = root / "snapshot" / "manifest.json"
+    try:
+        digest = json.loads(snap.read_text(encoding="utf-8")).get("digest") if snap.exists() else None
+    except ValueError:
+        digest = None
+    label: str | None
+    try:
+        from .experiments import spec_label
+
+        label = spec_label()
+    except Exception:  # noqa: BLE001
+        label = os.environ.get("FINTWIN_SPEC")
+    return {
+        "python": sys.version,
+        "platform": platform.platform(),
+        "versions": {
+            "numpy": np.__version__,
+            "pandas": pd.__version__,
+            "scipy": scipy.__version__,
+            "statsmodels": statsmodels.__version__,
+        },
+        "git_sha": sha,
+        "uv_lock_sha256": sha256(root / "uv.lock"),
+        "snapshot_digest": digest,
+        "spec": label,
+        "env": {k: v for k, v in sorted(os.environ.items()) if k.startswith("FINTWIN_")},
+        "run_id": os.environ.get("GITHUB_RUN_ID"),
+    }
+
+
+def _safe(fn, *args) -> dict:
+    """One evaluation section; a failure is recorded in its place rather than stopping the merge."""
+    try:
+        return fn(*args)
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+def _error_paths(node, path: str = "") -> list[str]:
+    """Paths of every `{"error": ...}` entry left by `_safe` and the other per-section handlers."""
+    if not isinstance(node, dict):
+        return []
+    found = [f"{path or '/'}: {node['error']}"] if isinstance(node.get("error"), str) else []
+    for k, v in node.items():
+        found += _error_paths(v, f"{path}/{k}")
+    return found
+
+
+def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_errors: Path | None = None) -> dict:
+    """`b_family` (default B_FAMILY, env FINTWIN_B_FAMILY) is the bootstrap size of the pre-specified comparison
+    family; a dry run passes a small number. `out`: where to write research.json (default OUT), one file per
+    specification. `cfo_errors`: where to write the firm-year CFO errors of the twin, read by `cross-spec`."""
     from . import calibration, distress, transmission
 
+    b_family = B_FAMILY if b_family is None else int(b_family)
     xs, panel_all, fc, errors = load(cache)
-    RAW = "real_cum_fcf" if "real_cum_fcf" in xs else "real_burn"
-    ABN = "real_abn_cum_fcf" if "real_abn_cum_fcf" in xs else "real_abn_burn"
+    raw_col = "real_cum_fcf" if "real_cum_fcf" in xs else "real_burn"
+    abn_col = "real_abn_cum_fcf" if "real_abn_cum_fcf" in xs else "real_abn_burn"
+    # firm-years whose cutoff falls inside a running Chapter 11 case are neither survivors nor new filers
+    n_in_bk = int(panel_all["in_bankruptcy"].sum()) if "in_bankruptcy" in panel_all else 0
+    if n_in_bk and not _data_legacy():
+        panel_all = panel_all[~panel_all["in_bankruptcy"].astype(bool)].reset_index(drop=True)
     xs, panel = size_screen(xs), size_screen(panel_all)
+    # family pass (WP6): a group's bankruptcy counts once per family and cutoff
+    panel, dedup_panel = dedupe_events(panel, ["y_bk8", "y_bk4"], "year")
+    xs, dedup_xs = dedupe_events(xs, ["bk_2020"], None)
     samples = {
         "edgar": np.ones(len(xs), bool),
         "sp2020": xs["sp2020"].to_numpy(bool),
         "sp_today": xs["sp_today"].to_numpy(bool),
     }
+    sp = panel[panel["sp_today"] | panel["sp2020"]]
     res: dict = {
         "n_files": len(list(cache.glob("*.json"))),
         "samples": {
             "covid": {k: int(v.sum()) for k, v in samples.items()},
             "panel_firm_years": int(len(panel)),
             "panel_firms": int(panel["ticker"].nunique()) if len(panel) else 0,
+            "panel_in_bankruptcy_excluded": 0 if _data_legacy() else n_in_bk,
+            "unit": "family" if family_pass() else "firm",
+            "family_events_removed": {**dedup_panel, **dedup_xs},
+            # units the tests drop silently (non-finite twin health): must be 0 or reported
+            "panel_health_missing": int(pd.to_numeric(panel.get("h_base"), errors="coerce").isna().sum())
+            if len(panel)
+            else 0,
+            "covid_health_missing": int(pd.to_numeric(xs.get("h_pandemic"), errors="coerce").isna().sum())
+            if len(xs)
+            else 0,
         },
+        "seeds": seeds_table() | {"B_FAMILY_used": b_family},
         # cumulative FCF over 2020Q1-2021Q2 (raw, and relative to the run-rate); the worst-cumulative versions, which
         # for firms with positive cash flow reduce to the first quarter, are kept as a robustness check
-        "covid": {k: covid_section(xs[v].reset_index(drop=True), RAW) for k, v in samples.items() if v.sum() >= 30},
+        "covid": {k: covid_section(xs[v].reset_index(drop=True), raw_col) for k, v in samples.items() if v.sum() >= 30},
         "covid_abnormal": {
-            k: covid_section(xs[v].reset_index(drop=True), ABN) for k, v in samples.items() if v.sum() >= 30
+            k: covid_section(xs[v].reset_index(drop=True), abn_col) for k, v in samples.items() if v.sum() >= 30
         },
         "covid_worst": {
             k: covid_section(xs[v].reset_index(drop=True), "real_burn") for k, v in samples.items() if v.sum() >= 30
@@ -702,25 +1113,51 @@ def main(cache: Path) -> dict:
         "bankruptcy_panel": distress.bankruptcy_panel(panel, B_PANEL),
         "exposure": distress.exposure(xs, B),
         "panel": panel_section(panel),
-        "panel_sp": panel_section(sp.reset_index(drop=True))
-        if len(sp := panel[panel["sp_today"] | panel["sp2020"]]) >= 300
-        else {},
+        "panel_sp": panel_section(sp.reset_index(drop=True)) if len(sp) >= 300 else {},
         "transmission": {
-            "panel": transmission.section(panel, B_PANEL),
+            "panel": transmission.section(panel, B_PANEL, b_family=b_family),
             "covid": transmission.section(xs, B, panel=False),
         },
         "forecasts": forecast_section(fc),
         "calibration": calibration.section(fc, panel),
         "errors": errors,
     }
+    # revision 3 evaluation sections
+    res["density"] = _safe(calibration.density_section, panel)
+    liq = _safe(distress.liquidity_frame, cache)
+    if isinstance(liq, pd.DataFrame):
+        # family pass: a joint petition or default labels every co-registrant (Hertz Corp / Hertz Global, round 2)
+        labels = [c for c in liq if c.startswith(("ce", "y_short", "bk", "acc", "delist"))]
+        liq, dedup_liq = dedupe_events(liq, labels, "year")
+        res["samples"]["family_events_removed_liquidity"] = dedup_liq
+        res["liquidity"] = _safe(distress.liquidity_section, liq, B)
+        res["credit_events"] = _safe(distress.credit_section, liq, B)
+    else:
+        res["liquidity"] = res["credit_events"] = liq
+    res["decision_scores"] = _safe(distress.event_scores, panel)
+    res["forecast_dm_by_horizon"] = _safe(calibration.dm_by_horizon, fc)
+    res["provenance"] = provenance()
     from . import plan2
 
     res["plan2"] = plan2.section(panel_all, panel, fc, B_PANEL)
+    # exploratory, after the pre-specification (WP6, a reader): non-accounting rivals; firm units only
+    if not family_pass():
+        from . import rivals
+
+        res["exploratory_rivals"] = _safe(rivals.section, panel)
     res["plan2"]["verdicts"] = plan2.verdicts(res)
     res["plan2"]["holm"] = plan2.holm(_secondary_pvalues(res))
-    from ..export import _clean
+    for line in _error_paths(res):  # a failed section must not pass as a finished run
+        print(f"WARNING section failed: {line}", file=sys.stderr, flush=True)
+    from ..clean import _clean
+    from .cross_spec import cfo_errors_frame
 
-    OUT.write_text(json.dumps(_clean(res), indent=1), encoding="utf-8")
+    if cfo_errors is not None:  # the same screened panel the tests used
+        Path(cfo_errors).parent.mkdir(parents=True, exist_ok=True)
+        cfo_errors_frame(transmission.frame(panel)).to_csv(cfo_errors, index=False)
+    dest = Path(out) if out is not None else OUT
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(_clean(res), indent=1), encoding="utf-8")
     v = res["transmission"]["panel"].get("verdict", {})
     print(json.dumps(res["samples"]), "\nverdict:", json.dumps(v, default=str))
     return res

@@ -1,6 +1,6 @@
 // Record a short demo of the Stress Lab as frames, then stitch with ffmpeg into docs/demo.gif.
 // usage: node demo_gif.mjs http://localhost:4173/
-import puppeteer from "puppeteer-core";
+import { launch } from "./lib.mjs";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync } from "node:fs";
 
@@ -8,7 +8,7 @@ const base = process.argv[2] ?? "http://localhost:4173/";
 const FR = "frames";
 rmSync(FR, { recursive: true, force: true });
 mkdirSync(FR);
-const browser = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+const browser = await launch();
 const page = await browser.newPage();
 await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
 await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);

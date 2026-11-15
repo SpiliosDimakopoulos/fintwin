@@ -1,0 +1,227 @@
+\section{Additional tables}\label{app:tables}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Calibrated parameters}
+\label{tab:params}
+\begin{tabular}{lp{0.5\linewidth}l}
+\toprule
+Parameter & Estimate & Window \\
+\midrule
+Seasonal factors $S_q$ & median ratio to centred 4-quarter moving average & last 32 quarters \\
+Trend growth $\mu$ & median log growth, shrunk 50\% toward 1.2\%/quarter & last 12 quarters \\
+AR coefficient $\phi$, volatility $\sigma_g$ & OLS; median absolute deviation of residuals & last 32 quarters \\
+Tail index & Student-$t$ maximum likelihood on standardized residuals & growth residuals \\
+Cyclicality $\beta$ & regression of revenue on real-time nominal GDP growth, shrunk 50\% toward 1.5 & last 40 quarters \\
+Recession entry and exit & NBER recessions since 1947 & FRED \\
+Fixed costs $F$, variable ratio $v$ & v3: posterior of a regression of cash costs on revenue (four-quarter changes), prior s.d.\ $\tau$ walk-forward; v2: penalized regression, prior 35\% (v2-pre) or 5\% (v2-rev) fixed & last 16 quarters \\
+Fixed-cost adjustment $\lambda$ & v3: partial adjustment to permanent revenue changes, walk-forward & --- \\
+Margin shock $m_t$ & AR(1) of cost-regression residuals; correlation with demand & last 16 quarters \\
+DSO, DIO, DPO, deposit days & averages of balance to revenue or costs & last 4 quarters \\
+Depreciation, capex, SBC ratios & medians & last 8 quarters \\
+Coupon & interest expense over debt & last 4 quarters \\
+Rollover share & two-year debt trend relative to maturities & last 8 quarters \\
+Discretionary financing volatility & robust s.d.\ of quarterly debt changes & last 20 quarters \\
+Maturity ladder & XBRL maturity schedule, else six-year average life & latest 10-K \\
+Credit facility & XBRL facility size, else 8\% of revenue (assumption) & latest filing \\
+Minimum cash & half the 10th-percentile cash balance & last 12 quarters \\
+Short-rate dynamics & Vasicek fit to the 3-month Treasury bill & since 2000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Forecast encompassing (v3)}
+\label{tab:encompassing}
+\input{tables/encompassing.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Departures: OLS of (realized $-$ four-quarter margin) on each model's departure from the same rule. Levels: OLS of realized cash flow on the forecasts themselves \citep{fair1990}. All variables winsorized at the 1st and 99th percentiles; year effects; standard errors clustered by firm; $t$-statistics in parentheses. $^{*}$, $^{**}$, $^{***}$: $p<0.10, 0.05, 0.01$.
+\end{minipage}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\footnotesize
+\caption{Out-of-sample combinations, implementation of the earlier evaluation (v3)}
+\label{tab:hybrid}
+\input{tables/hybrid.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Each combination's weight ($\lambda$ in the table) is chosen on earlier years. Errors in percentage points of trailing revenue (mean: winsorized at full-sample bounds). Differences: firm-clustered bootstrap CI. This implementation is kept for continuity; where its verdicts differ from the pre-specified implementation in the text (winsorization at training-year bounds, firm$\times$year Diebold--Mariano and year-block bootstrap), the latter governs.
+\end{minipage}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Transmission by firm characteristics and by revenue shock}
+\label{tab:heterogeneity}
+\input{tables/heterogeneity.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Terciles of each characteristic at the cutoff; revenue over the window relative to trailing revenue. Incremental $\rho$ as in Table~\ref{tab:transmission}. The simulator's incremental correlation against the timing regression is \HetLevLowTwinReg{} in the lowest leverage tercile and \HetLevHighTwinReg{} in the highest; among the \HetDownN{} firm-years with revenue more than 10\% below the trailing level, its correlation against the four-quarter margin (\HetDownTwin) is below the 16-quarter margin's (\HetDownSixteen).
+\end{minipage}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Bankruptcy petitions (8-K Item 1.03), all non-financial US-GAAP filers}
+\label{tab:bankruptcy}
+\input{tables/bankruptcy.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+AUC with firm-clustered 95\% CI. Panel: baseline health score at each cutoff; 2020: stress health score on 20 February 2020. Already weak: bottom quintile of Altman's Z$''$ in the cutoff year or negative trailing FCF margin.
+\end{minipage}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Distress events over the next eight quarters, 2014--2024}
+\label{tab:panel}
+\input{tables/panel.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Twin: baseline health score. Out-of-sample logits trained for each test year on cutoffs at least three years earlier; ``Benchmarks'' contains all thirteen benchmarks and the formula, ``+ Twin'' adds the simulator's baseline health, breach probability and recession-scenario health. $\Delta$: firm-clustered CI.
+\end{minipage}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Liquidity events given the realized revenue}
+\label{tab:decisions}
+\input{tables/decisions.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Twin: share of simulated paths with the event. Static runway: the trailing FCF margin on realized revenue, minus payouts and unrefinanced maturities (same inputs). Out-of-sample: ridge logits on within-year percentile ranks, trained on cutoffs up to $Y-3$; ``Rule + scores'' combines the static runway, the health formula and the FCF margin. $\Delta$: firm-clustered bootstrap CI.
+\end{minipage}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\footnotesize
+\begin{threeparttable}
+\caption{Feedback loops evaluated on the events they are meant to produce}
+\label{tab:loops}
+\input{tables/loops.tex}
+\begin{tablenotes}\footnotesize
+\item AUC of the event probability of the full simulator and of the simulator with one loop switched off. Stars: paired difference with the full simulator.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Liquidity events at other thresholds (given realized revenue)}
+\label{tab:thresholds}
+\input{tables/thresholds.tex}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Holm-adjusted $p$-values of the secondary comparisons (winsorization limits from all years; see the limitations)}
+\label{tab:holm}
+\input{tables/holm.tex}
+\end{table}
+
+\clearpage
+\section{Supplementary material (for online publication)}\label{app:online}
+
+\subsection{Examples}\label{app:examples}
+In 2020, Amazon's revenue over the next eight quarters averaged \ExAmznRev{} above its trailing level; the 16-quarter margin implied cumulative operating cash flow of \ExAmznRule{} of trailing revenue, the simulator \ExAmznTwin, and the company reported \ExAmznReal. For General Electric in 2016 (margin \ExGeRule, simulator \ExGeTwin, realized \ExGeReal) and for Ford and General Motors in 2020 the simulator moved away from the realized value: revenue changes of \ExFordRev{} and \ExGmRev{} made it predict \ExFordTwin{} and \ExGmTwin{}, while the companies reported \ExFordReal{} and \ExGmReal{} (margin: \ExFordRule, \ExGmRule). Their consolidated cash flows include captive finance operations that a revenue-driven model does not represent. Among firm-years of firms with more than \$2 billion of revenue and departures larger than 8 points, the simulator's departure has the sign of the realized one \ExRightSign{} of the time.
+
+\subsection{Sensitivity to assumed parameters}
+Several parameters are judgment calls rather than estimates: the credit line assumed when none is tagged, the prior on the fixed-cost share and its weight, the shrinkage of trend growth and cyclicality, the coverage thresholds of the market-access cliff, the speed of restructuring and the rating-spread table. Table~\ref{tab:sens} varies each in turn. The incremental correlation against the four-quarter margin ranges from \SensIncrLo{} to \SensIncrHi, and the bankruptcy AUC, on the firm-years of the transmission test, from \SensBkLo{} to \SensBkHi. With a fixed-share prior of 20\% the median error is \SensMaeLow{} points and with 50\% it is \SensMaeHigh. When all eight assumptions vary jointly (a Saltelli design of \SobPoints{} points, each recalibrating the simulator for \SobN{} random firm-years; Table~\ref{tab:sobolass}), the median error ranges from \SobMaeMin{} to \SobMaeMax{} and the incremental correlation from \SobIncrMin{} to \SobIncrMax{}. The \SobTopLabel{} alone has a total-effect index of about \SobTopST{} for the error's variance, against \SobRestST{} for all other assumptions together. At the specified values, the same firm-years give a median error of \SobSpecMae{} and an incremental correlation of \SobSpecIncr. Rating spreads come from the version of Damodaran's table published before each cutoff, recovered from the Internet Archive; using the 2026 table instead changes nothing. GDP enters as the vintage published on each cutoff.
+
+\begin{table}[!htbp]
+\centering\footnotesize
+\caption{Sensitivity to assumed parameters}
+\label{tab:sens}
+\input{tables/sensitivity.tex}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Global (Sobol) sensitivity of the transmission result to the assumed parameters}
+\label{tab:sobolass}
+\input{tables/sobol_assumptions.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+First-order ($S_1$) and total ($S_T$) Sobol indices of the median absolute error and of the incremental correlation against the four-quarter margin, over a joint uniform design with scrambled sequences; bootstrap CI over the base samples. Indices are truncated to $[0, 1]$ and first-order indices to the total index.
+\end{minipage}
+\end{table}
+
+\subsection{Four-quarter forecasts and calibration}
+For S\&P~500 members (today's, a sample selected on survival, and those of 2020), the simulator's four-quarter predictive distributions of revenue improve on a seasonal random walk by \FcRevRw{} and on exponential smoothing \citep{hyndman2008} by \FcRevEts{} in scaled CRPS ($t$ = \FcRevRwT{} and \FcRevEtsT; Table~\ref{tab:fc}). For cash, both benchmarks are better (\FcCashRw{} and \FcCashEts). Blending the simulator into the random walk for cash, with the weight chosen on earlier origins, \CashHybVerdict{} the rule of the earlier evaluation only trivially: the skill is \CashHybSkill{} (CI \CashHybLo--\CashHybHi).
+
+Raw 90\% intervals are too narrow: they cover \CalRevRaw{} of revenue outcomes and \CalCashRaw{} of cash outcomes. Online conformal rescaling \citep{vovk2005}, using only errors whose target quarter ended at least 90 days before the forecast origin, restores coverage to \CalRevConf{} and \CalCashConf{} on average (Table~\ref{tab:cal}, Figure~\ref{fig:cal}), but not in the stress year: for quarters from 2020Q2 to 2021Q1, conformal revenue intervals cover only \CalRevStress. For cash, the raw intervals do not widen for smaller firms ($t$ = \CalCashWidthSizeT{} for size in a regression of interval width) although their errors are larger ($t$ = \CalCashErrSizeT). Rescaling by size and volatility tercile gives \CalCondCash{} coverage for cash and \CalCondRev{} for revenue, and \CalCondCashOk{} the 85--95\% target in every group for cash; adaptive conformal inference \citep{gibbs2021} reaches \CalAciCash{} and \CalAciRev{} (Table~\ref{tab:cal2}). Neither fixes the regime break: in 2020Q2--2021Q1 revenue coverage is \CalCondRevStress{} and \CalAciRevStress.
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\setlength{\tabcolsep}{3.5pt}
+\begin{threeparttable}
+\caption{Four-quarter probabilistic forecasts}
+\label{tab:fc}
+\input{tables/forecasts.tex}
+\begin{tablenotes}\footnotesize
+\item Skill: $1-\overline{\mathrm{CRPS}}_{\text{twin}}/\overline{\mathrm{CRPS}}_{\text{benchmark}}$, CRPS scaled by mean quarterly revenue. Better: share of pairs where the simulator's CRPS is lower. DM $t$: Diebold--Mariano statistic clustered by firm and origin (negative: simulator better).
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Calibration of 90\% predictive intervals}
+\label{tab:cal}
+\input{tables/calibration.tex}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Coverage of 90\% intervals with group-conditional and adaptive conformal calibration}
+\label{tab:cal2}
+\input{tables/calibration2.tex}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering\includegraphics[width=\linewidth]{figures/calibration.pdf}
+\caption{Coverage of raw and conformally rescaled 90\% intervals by forecast origin.}
+\label{fig:cal}
+\end{figure}
+
+\subsection{2020 and two other downturns}
+Table~\ref{tab:covid} repeats the 2020 cross-section for the \CovAllN{} filers alive on 20 February 2020 and for the \CovSpN{} members of the S\&P~500 on that date. The simulator's stress score ranks raw cash burn (\CovAllTwin{} in the full sample, \CovSpTwin{} in the S\&P), the FCF margin ranks it better (\CovAllFcf, \CovSpFcf), and no predictor's correlation with abnormal burn exceeds 0.2 in absolute value. Giving each firm the median realized revenue shock of its industry peers (Table~\ref{tab:exposure}; median depth \ExpDepth), the simulator ranks raw burn at \ExpTwinRaw{} against \ExpUniformRaw{} under the uniform freeze; in a rank regression with the FCF margin and the health formula, clustered by industry, its coefficient for abnormal burn has $t$ = \ExpTwinAbnT, and the formula's $t$ = \ExpFormulaAbnT. Table~\ref{tab:episodes} applies the same design to the eight quarters after the 2015, 2020 and 2022 cutoffs (\EpiFifteenClusters--\EpiTwentyTwoClusters{} industry clusters). Because the shocks are realized, these regressions decompose outcomes; they are not forecasts.
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{2020--21 cash burn, predictors frozen on 20 February 2020}
+\label{tab:covid}
+\input{tables/covid.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Spearman correlation between each risk-oriented predictor and realized burn severity. Raw burn: cumulative FCF over the quarters reported between mid-January 2020 and mid-July 2021 as a share of trailing revenue, sign reversed; abnormal burn: the same after subtracting each company's pre-2020 run-rate.
+\end{minipage}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Fragility and exposure in 2020}
+\label{tab:exposure}
+\input{tables/exposure.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Industry shock: leave-one-out median of peers' worst year-on-year revenue change in 2020--21 (2-digit SIC with at least five peers, else Fama--French industry); realized information, a decomposition. Rank regression: OLS of percentile ranks, $t$-statistics clustered by industry.
+\end{minipage}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Fragility given exposure in three downturns}
+\label{tab:episodes}
+\input{tables/episodes.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Rank regression of burn severity over the eight quarters after the cutoff on the percentile ranks of the industry's leave-one-out realized revenue shock, the simulator's stress score at that shock, the trailing FCF margin and the health formula; $t$-statistics clustered by 2-digit SIC industry.
+\end{minipage}
+\end{table}
+
+\subsection{Implementation}
+The Python reference engine (NumPy) performs calibration, experiments and exports. A TypeScript port runs in a Web Worker, so the public dashboard needs no server; golden runs exported from Python with identical pre-drawn shocks must agree to a relative tolerance of $10^{-9}$. The balance-sheet identity is checked by property-based tests, the data pipeline including 52/53-week fiscal calendars is tested end to end on synthetic XBRL, and a synthetic test checks that the transmission statistics reject a predictor that is merely smoother than the base rule. The revision-3 run read the frozen snapshot on x86 servers; each result records the code digest, the lock file (\texttt{\LockDigest}) and the snapshot digest.

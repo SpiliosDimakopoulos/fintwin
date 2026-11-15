@@ -1,0 +1,12 @@
+\begin{tabular}{lrrrrrrr}
+\toprule
+ & \multicolumn{2}{c}{Median abs.\ error} & Elasticity & Incr.\ $\rho$ & Enc.\ $t$ & Bankr. & Mean CRPS \\
+\cmidrule(lr){2-3}
+Specification & Simulator & 16q margin & ratio & vs 16q & (firm$\times$year) & AUC & (simulator) \\
+\midrule
+v2-pre (prior 35\%) & 11.1 & 6.7 & 2.18 & 0.22 & 8.7 & 0.87 & 26 \\
+v2-rev (prior 5\%) & 8.8 & 6.7 & 1.24 & 0.23 & 8.7 & 0.87 & 24 \\
+v3, default $\tau$, $\lambda$ & 8.1 & 6.7 & 0.88 & 0.24 & 10.3 & 0.87 & 132 \\
+v3, walk-forward $\tau$, $\lambda$ & 8.1 & 6.7 & 0.67 & 0.23 & 8.4 & 0.87 & 207 \\
+\bottomrule
+\end{tabular}

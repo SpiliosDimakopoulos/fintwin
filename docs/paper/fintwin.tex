@@ -1,4 +1,4 @@
-\documentclass[11pt]{article}
+\documentclass[preprint,12pt,authoryear]{elsarticle}
 \usepackage[margin=1in]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
@@ -13,40 +13,45 @@
 \usepackage[font=small,labelfont=bf]{caption}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,calc}
-\usepackage[round,authoryear]{natbib}
 \usepackage[colorlinks=true,linkcolor=black,citecolor={blue!55!black},urlcolor={blue!55!black}]{hyperref}
 \setlist{nosep,leftmargin=1.4em}
-\setstretch{1.08}
+\setstretch{1.15}
 \input{numbers.tex}
 \input{research_numbers.tex}
+\input{rev3_numbers.tex}
 \newcommand{\twin}{FinTwin}
-
-\title{\textbf{Does Simulation Add Information Beyond Persistence?\\A Financial Digital Twin Tested on a Survivorship-Free Panel of SEC Filers}}
-\author{Spilios Dimakopoulos\thanks{Independent researcher. E-mail: \href{mailto:spiliosdimakk@gmail.com}{spiliosdimakk@gmail.com}. Code and data: \url{https://github.com/SpiliosDimakopoulos/fintwin}, archived at \href{https://doi.org/10.5281/zenodo.23434606}{doi:10.5281/zenodo.23434606}. I thank the researchers who commented on the first version; the null tests, the census of bankruptcies and the survivorship-free sample in this version respond to their comments.}}
-\date{October 2026 (revised)}
+\journal{International Journal of Forecasting}
 
 \begin{document}
-\maketitle
+\begin{frontmatter}
+\title{Does Filing-Based Cash-Flow Simulation Beat Persistence?\\A Pre-Specified Benchmark on a Survivorship-Free Panel of SEC Filers}
+\author{Spilios Dimakopoulos\corref{cor1}}
+\ead{spiliosdimak@gmail.com}
+\cortext[cor1]{Corresponding author.}
+% TODO(author): Elsevier requires a postal address and country for the affiliation.
+\address{Independent researcher}
 
 \begin{abstract}
-\noindent Financial digital twins simulate how a company's cash, debt and margins respond to a shock. We ask whether the simulation adds information that simple persistence rules do not. \twin{} is a system-dynamics model calibrated for each company from point-in-time SEC XBRL filings. We test it on a survivorship-free universe of \UniverseN{} non-financial filers (\PanFirmYears{} firm-years, 2014--2024) with a census of bankruptcy filings. The primary test gives each twin the revenue that actually followed and predicts eight quarters of operating cash flow. In levels the twin is less accurate than every simple rule: its median error is \TrMaeTone{} percentage points of revenue, against \TrMaeNthree{} for a 16-quarter cash-flow margin, because its cash flow responds to revenue \ElastCfoRatio{} times as strongly as firms' does. A statistic from the first version of this paper (\TrIncrTwin) is exceeded by the 16-quarter margin alone (\TrIncrSixteen): it measured mean reversion, not transmission. The twin's departures from the rules do carry information that none of six rules has: their correlation with the residual of the 16-quarter margin is \TrTwinVsSixteen{} (95\% CI \TrTwinVsSixteenLo--\TrTwinVsSixteenHi), and they keep a significant coefficient in encompassing regressions ($t$ = \TrEncTwinTTwoWay{} with firm and year clustering). Out of sample this information is worth little. Adding \TrLambdaLo--\TrLambdaHi{} of it to the 16-quarter margin lowers the error by \TrHybGainPct, but a cash-revenue regression added the same way does almost as well; for free cash flow, the twin's advantage over the best such combination is not significant after a correction for multiple comparisons. In ranking firms the simulation adds nothing: the twin's score predicts bankruptcy within two years with an AUC of \BkPanTwin, and its own scoring formula, applied to the opening balance sheet without simulation, reaches \BkPanFormula. Given each industry's realized revenue shock, the twin's fragility is associated with abnormal cash burn in the 2015--16, 2020 and 2022 downturns, a decomposition rather than a forecast. Filing-based simulation mostly encodes persistence; the information it adds is real in sample but too small to improve forecasts reliably.
-
-\medskip\noindent\textbf{Keywords:} digital twin; system dynamics; corporate liquidity; cash-flow prediction; bankruptcy prediction; stress testing; XBRL; forecast encompassing.
-
-\noindent\textbf{JEL:} G32, G33, G17, C53, C63, M41.
+\noindent Simulation models of the firm promise conditional forecasts: how a revenue path turns into cash, and how likely a liquidity shortfall is under a stated shock. We test whether one such model, \twin{}, calibrated for each firm from point-in-time SEC XBRL filings, forecasts better than persistence. On a survivorship-free universe of \UniverseN{} non-financial US-GAAP filers (2014--2024) and a frozen data snapshot, we compare an earlier specification with a corrected one under decision rules committed to a public repository before the runs. Given the realized revenue path, the corrections lower the median error of eight-quarter operating cash flow from \SOneMedVtwoR{} to \SOneMedVthreeR{} percentage points of trailing revenue, in every year, but leave a few explosive firm-years, and the corrected model is still less accurate than a 16-quarter cash-flow margin (\TrMaeNthree{} points). Its response to revenue is \ElastRatioExact{} of the realized one, outside the pre-specified range of 0.8--1.25. Its departures from the margin are significant in squared-loss encompassing regressions; adding a fifth of them to the margin lowers the winsorized mean absolute error by \GainPct, a gain that disappears on raw absolute loss and that a model confidence set does not separate from simpler combinations. Its predictive distributions are far too narrow (a 90\% interval covers \DenCov{} of outcomes), and its probability of a liquidity shortfall has a Brier skill of \ShortBss{} against a logit on three opening ratios. Its health score ranks bankruptcies as well as, but no better than, its own formula without simulation. For this simulator, simulation mostly encodes persistence and does not deliver calibrated uncertainty.
 \end{abstract}
+
+\begin{keyword}
+forecast evaluation \sep cash-flow forecasting \sep density forecasts \sep stress testing \sep forecast encompassing \sep corporate liquidity \sep XBRL
+\JEL C53 \sep G17 \sep G32 \sep G33 \sep M41
+\end{keyword}
+\end{frontmatter}
 
 \section{Introduction}\label{sec:intro}
 
-A corporate stress test asks a conditional question: \emph{if} revenue falls by a third for a year and debt markets close, does the company run out of cash, and when? Credit analysts usually answer it with ratios (leverage, coverage, liquidity) or with accounting distress scores \citep{beaver1966,altman1968,ohlson1980,zmijewski1984}. A simulation model promises more: it represents the mechanisms through which a shock becomes a cash shortfall (fixed costs, working capital, maturing debt, credit lines, the loss of market access) and runs them forward. System dynamics provides the language for such models \citep{forrester1961,sterman2000}, and engineering calls a simulation that is kept synchronized with its physical counterpart a digital twin \citep{grieves2017,tao2019,kritzinger2018}.
+A corporate stress test asks a conditional question: \emph{if} revenue falls by a third for a year and debt markets close, does the company run out of cash, and when? Credit analysts usually answer it with ratios or accounting distress scores \citep{beaver1966,altman1968,ohlson1980,zmijewski1984}. A simulation model promises more. It represents the mechanisms through which a shock becomes a cash shortfall (fixed costs, working capital, maturing debt, credit lines, the loss of market access) and runs them forward over many paths, so that it gives both a point forecast and a distribution. System dynamics provides the language for such models \citep{forrester1961,sterman2000}; engineering calls a simulation kept synchronized with its physical counterpart a digital twin \citep{grieves2017,tao2019,kritzinger2018}. We ask whether one such model, \twin{}, forecasts better than persistence. For the model we test, the answer is no for distributions and stress probabilities, and only marginally, under mean loss, for point forecasts.
 
-This paper asks whether the simulation adds information. A model that runs a stock-and-flow structure over hundreds of Monte Carlo paths is expensive to build and to explain. If a trailing cash-flow margin, a regression of cash on revenue or an accounting score computed from the same filings predicts as well, the structure is ornament. The first version of this paper reported that it did add information: fed the revenue that actually followed, the twin's departures from a four-quarter margin rule correlated with the realized departures at 0.30, and the correlation was positive in every year. Readers of that version pointed out that the statistic rewards any predictor that is smoother than the rule, because profitability mean-reverts \citep{fama2000} and the twin's costs are estimated over 16 quarters. They were right: a 16-quarter margin, with no simulation at all, scores \TrIncrSixteen{} on the same statistic.
+The paper makes three contributions. First, it is a benchmark of a structural forecasting model against persistence with decision rules committed before the runs: a ladder of simple rivals, encompassing tests under two losses, combinations with year-by-year weights, a family of comparisons controlled with the stepwise method of \citet{romano2005}, the model confidence set \citep{hansen2011} and a test for superior predictive ability \citep{hansen2005}, and density and event scores against statistical rivals. We report every specification and every failed test, including corrections that worked on their own terms but left the conclusion unchanged. Second, it provides an open, survivorship-free, point-in-time panel of all non-financial US-GAAP XBRL filers with a census of bankruptcy petitions and a frozen snapshot, on which other fundamental models can be tested without hindsight. Third, it shows where the value of such a simulator is not: in calibrated uncertainty or early warning.
 
-This version therefore tests the twin against stronger rivals. Section~\ref{sec:framework} sets out how the twin relates to distress scores, structural credit models, financial-planning models and top-down stress tests, and states three hypotheses. The data cover every non-financial SEC filer with at least \$50 million of revenue, including those that later disappeared, and every bankruptcy petition these firms filed (Section~\ref{sec:data}). The primary test (Section~\ref{sec:design}) is a single one: given the realized revenue path, predict cumulative operating cash flow over eight quarters. The twin is compared with six simple rules that see the same revenue: margins over 4, 8 and 16 quarters, an industry-shrunk margin, and per-firm regressions of cash flow on revenue with and without working-capital timing. We fixed the decision rule for accepting the transmission claim, and committed it to the repository, before running the test.
+\twin{} is calibrated for each company from its own point-in-time filings and is open source. An earlier evaluation found that its apparent skill came mostly from persistence: a statistic that seemed to show information beyond a four-quarter margin rule was matched by a 16-quarter margin with no simulation at all, because profitability mean-reverts \citep{fama2000}. A review of the code then found implementation errors in the cost model, the cash-flow residual, the shock process and the data layer. Correcting errors after seeing results invites the suspicion of tuning. We therefore committed the corrections, the specifications to report and the decision rules to the repository before changing any code, ran every specification on one frozen data snapshot, and report the old and corrected specifications side by side.
 
-The results are mixed. In levels the twin is less accurate than every simple rule (Section~\ref{sec:transmission}): its fixed-cost structure makes it overreact to revenue changes. Its departures from the rules nevertheless contain information, in a regression sense, that none of the rules has. Out of sample that information is worth little. A forecast that adds a small fraction of the departures to the 16-quarter margin is about \TrHybGainPct{} more accurate than the margin alone, but most of that gain is the familiar benefit of combining two forecasts: a simple regression rule added in the same way achieves almost as much. For free cash flow (FCF), where the twin does best, its advantage over the best combination with a simple rule does not survive a correction for multiple comparisons. In ranking firms by distress (Section~\ref{sec:ranking}), the twin's score is as good as the best accounting score and no better than its own scoring formula evaluated without simulation. This also holds for the hard task of telling which already-weak firms will file. The feedback loops do not change rankings. Two of them are the only channel through which the model produces some liquidity events at all (the market-access cliff for cash depletion, cash conservation for payout and capex cuts), and the twin's event probabilities add a little to simple rules in predicting liquidity events (Section~\ref{sec:decisions}). The 2020 shock is now one cutoff among eleven. Once each firm is given its industry's realized revenue shock, the twin's fragility is associated with abnormal cash burn in three downturns; because the shock is realized, this is a decomposition, not a forecast (Section~\ref{sec:covid}). After conformal rescaling, probabilistic forecasts are well calibrated on average but not in the stress year (Section~\ref{sec:forecasts}). Of the model's assumed parameters, only the prior on fixed costs matters (Section~\ref{sec:sensitivity}).
+The evaluation has two pillars. \emph{Pillar A}, point transmission, gives each model the revenue the company actually reported over the eight quarters after a cutoff and asks it for cumulative operating cash flow; the rivals are six simple rules that see the same revenue. \emph{Pillar B}, distribution and stress, scores the simulator's predictive distributions with the CRPS and probability integral transforms and its shortfall probabilities with the Brier score and its decomposition, against statistical rivals estimated on the same earlier years. The corrections succeed on their own pre-specified terms, lowering the typical error in every year, but they leave a few explosive firm-years and do not make the simulator better than a 16-quarter margin. Its information beyond that margin is visible only under squared or winsorized loss. It fails both pillar-B tests.
 
-The paper makes three contributions. First, it shows how easily a simulation model's apparent skill can come from persistence, and it provides a ladder of simple rules, an encompassing test \citep{chong1986,fair1990} and an out-of-sample combination \citep{bates1969} that separate the two. Second, it provides an open, survivorship-free, point-in-time panel of all non-financial XBRL filers with a census of bankruptcy petitions, on which fundamental models can be tested without hindsight. Third, it gives a measured answer to what a filing-based financial twin is for: scenario analysis of a specified shock, with its output shrunk toward persistence, rather than early warning.
+Section~\ref{sec:framework} relates the simulator to other models of corporate fragility and states the hypotheses. Sections~\ref{sec:data} and~\ref{sec:model} describe the data, the model and the specifications, Section~\ref{sec:design} the pre-specification and the tests, Sections~\ref{sec:pillarA} and~\ref{sec:pillarB} the two pillars, Section~\ref{sec:secondary} the secondary evidence, and Section~\ref{sec:discussion} what the results mean. Appendix~\ref{app:tables} holds further tables, and Appendix~\ref{app:online} the material of the earlier evaluation that is now secondary.
 
 \input{sections/framework.tex}
 
@@ -59,7 +64,6 @@ The paper makes three contributions. First, it shows how easily a simulation mod
   arr/.style={-{Stealth[length=2.2mm]}, thick, black!65},
   lab/.style={font=\footnotesize, fill=white, inner sep=0.8pt},
   loop/.style={font=\bfseries, black!75, circle, draw=black!40, inner sep=1.5pt}]
-% layout: a 3 x 4 grid; every loop is a closed cycle with the sign product shown in the caption
 \node[var] (fixed) at (0, 2.4) {Fixed costs};
 \node[var] (rev) at (-4.6, 0) {Revenue};
 \node[var] (ebit) at (0, 0) {EBIT and\\interest coverage};
@@ -70,19 +74,15 @@ The paper makes three contributions. First, it shows how easily a simulation mod
 \node[var] (cash) at (0, -4.8) {Cash};
 \node[var] (payouts) at (4.6, -4.8) {Payouts and\\capex};
 \draw[arr] (rev) -- node[lab, above]{$+$} (ebit);
-% R1: coverage -> rating -> interest -> coverage
 \draw[arr] (ebit) -- node[lab, above]{$+$} (rating);
 \draw[arr] (rating) -- node[lab, right]{$-$} (interest);
 \draw[arr] (interest) -- node[lab, above, pos=0.45]{$-$} (ebit);
-% R2: coverage -> access -> refinancing -> cash -> (revolver) interest -> coverage
 \draw[arr] (ebit) -- node[lab, above, pos=0.45]{$+$} (access);
 \draw[arr] (access) -- node[lab, left]{$+$} (refi);
 \draw[arr] (refi) -- node[lab, above]{$+$} (cash);
 \draw[arr] (cash) -- node[lab, above, pos=0.4]{$-$} (interest);
-% B1: cash -> payouts and capex -> cash
 \draw[arr] (cash.15) to[bend left=12] node[lab, above]{$+$} (payouts.165);
 \draw[arr] (payouts.195) to[bend left=12] node[lab, below]{$-$} (cash.345);
-% B2: margin -> fixed-cost cuts -> margin
 \draw[arr] (ebit.105) to[bend left=30] node[lab, left]{$+$} (fixed.255);
 \draw[arr] (fixed.285) to[bend left=30] node[lab, right]{$-$} (ebit.75);
 \draw[arr, dashed] (ebit) -- node[lab, right, pos=0.35]{$+$} (cash);
@@ -91,391 +91,238 @@ The paper makes three contributions. First, it shows how easily a simulation mod
 \node[loop] at (2.3, -5.55) {B1};
 \node[loop] at (1.25, 1.25) {B2};
 \end{tikzpicture}
-\caption{The four feedback loops in causal-loop notation. A ``$+$'' (``$-$'') link means that the variables move in the same (opposite) direction; a loop is reinforcing (R) when the product of its signs is positive and balancing (B) when it is negative. R1, leverage--spread spiral: lower coverage worsens the rating, which raises interest and lowers coverage further. R2, market-access cliff: lower coverage reduces the share of maturities that can be refinanced, so cash falls, revolver drawings raise interest, and coverage falls further. B1, cash conservation: payouts and capex are cut as cash falls. B2, delayed restructuring: fixed costs are cut as margins fall. The dashed link (operating cash flow) is not part of a loop. The full model also contains working capital, customer deposits, the debt-maturity ladder, taxes and the recession regime.}
+\caption{The four feedback loops in causal-loop notation. A ``$+$'' (``$-$'') link means that the variables move in the same (opposite) direction; a loop is reinforcing (R) when the product of its signs is positive and balancing (B) when it is negative. R1, leverage--spread spiral; R2, market-access cliff; B1, cash conservation; B2, delayed restructuring. The dashed link (operating cash flow) is not part of a loop.}
 \label{fig:loops}
 \end{figure}
 
 \section{Evaluation design}\label{sec:design}
 
-\subsection{The primary test: transmission}
-For every firm and every cutoff (15 February 2014--2024), the twin is calibrated on the filings available at the cutoff. We then replace the twin's simulated revenue with the revenue the company actually reported over the following eight quarters, run 500 paths and take the median path of quarterly operating cash flow (and of FCF). The outcome is cumulative operating cash flow over the eight quarters as a percentage of revenue in the four quarters before the cutoff. This isolates transmission --- how a given revenue path becomes cash --- from the scenario, which no filing can predict. Every rival sees the same realized revenue, quarter by quarter:
+\subsection{Pre-specification and its history}\label{sec:prespec}
+The decision rule for the transmission hypothesis H2 was committed before the first full-sample run of the earlier evaluation (commit \texttt{460cdda}) and is unchanged. The plan for this evaluation (\texttt{docs/REVISION\_PLAN\_3.md}, commit \texttt{70c4b17}, 28 October 2026) was committed before any of its code changes or runs. It lists the corrections, the specifications, the ladder, the tests of both pillars and their success criteria, and what the evaluation does not attempt. Two supplements followed, each before the results they govern. The first (commit \texttt{6d5ea9c}, the same day) fixed the definition of a realized shortfall, the merger exclusion and the walk-forward grids. The second (commit \texttt{6ca96b7}, 10 November) was written after a timing probe of 60 firms that produced no test statistics; it added the confirmatory test of v3 against v2-pre, defined the ladder on the firm-years of a fixed sample of 1{,}000 firms, and kept the Monte Carlo design unchanged. A dry run of the whole pipeline on 300 firms and three cutoffs checked that every test ran; by the plan's rule its statistics changed no rule or constant.
+
+Several things happened after the plan and before any full-sample statistic existed, and we list them because a reader cannot verify them from the plan alone.
+\begin{itemize}
+\item \emph{Further code corrections.} Three rounds of code review between 11 and 12 November (commits \texttt{c1f3d1e}, \texttt{ab47c5d}, \texttt{5ca86d2}) added guards against non-finite values, corrected the annual leg of F2, and left zero-revenue quarters out of the seasonal factors (one firm's base revenue had been inflated 24-fold). They were made after the first dry run's statistics on 300 firms had been computed; a second dry run passed before the full run.
+\item \emph{The B2 cell.} The plan names one shortfall test without saying which of its eight cells (two labels, two horizons, two scenario versions) decides. Implementing it on 12 November we chose the eight-quarter Recession cell of the shortfall label. The code comment justifies this as the only cell with enough cutoff years; that is not accurate, since the four-quarter Recession cell has \ShortBlocksFour{} year blocks against \ShortBlocksEight. An internal planning note had named the realized-shock version. A rule added in the same commit gives no verdict for cells with fewer than five year blocks, which excludes the realized-shock cells. All eight cells have negative skill (Table~\ref{tab:shortfall}).
+\item \emph{The 2015 shock.} The plan lists realized shocks at the February 2015, 2020 and 2022 cutoffs. The 2015 cutoff drops out of the realized-shock cells, because the rivals have no earlier observable labels to train on.
+\item \emph{Exploratory additions.} After a reader's comment we added, outside every confirmatory test, rivals that use no accounting data, and a pass in which co-registrants that share filings count as one firm.
+\end{itemize}
+Two choices predate this evaluation and condition it. The 16-quarter margin N3, which serves as the benchmark of the family, the combinations and the density test, was adopted as a base in the earlier evaluation after its first results showed it to be the most accurate rule; that evaluation's pre-specified base was the four-quarter margin N1. The ridge penalty of the out-of-sample logits is also inherited.
+
+The full run took place on 13--14 November 2026 on x86 servers, every stage on the same architecture. Each result records the shard code digest (\texttt{\ShardDigest}), the analysis digest (\texttt{\AnalysisDigest}), the lock file (\texttt{\LockDigest}) and the snapshot digest. Earlier attempts at the full run were lost before their outputs were retrieved and produced no statistics. A few outputs that the plan lists are in the replication files but not in the paper: the reliability curves, the interval score, the per-firm Monte Carlo standard errors, the second point-forecast definition for v2-pre, and the model confidence sets for mean loss and for FCF.
+
+\subsection{Pillar A: transmission}
+For every firm and every cutoff (15 February 2014--2024), the simulator is calibrated on the filings available at the cutoff. We replace its simulated revenue with the revenue the company actually reported over the following eight quarters and run 500 paths; the point forecast is the median of the paths' cumulative operating cash flow (and of FCF). The outcome is cumulative operating cash flow over the eight quarters as a percentage of revenue in the four quarters before the cutoff. This is a conditional evaluation: it measures how a given revenue path becomes cash, not whether the model can forecast revenue. Every rival sees the same realized revenue, quarter by quarter:
 \begin{enumerate}[label=N\arabic*]
-\item the trailing four-quarter cash-flow margin times revenue (the rule used in the first version);
+\item the trailing four-quarter cash-flow margin times revenue;
 \item the same over eight quarters;
-\item the same over 16 quarters, the window of the twin's cost regression;
-\item the four-quarter margin shrunk toward the leave-one-out median margin of the firm's industry in the same year, with the weight chosen each year to minimize errors on earlier years only;
+\item the same over 16 quarters, the window of the simulator's cost regression;
+\item the four-quarter margin shrunk toward the leave-one-out median margin of the firm's industry in the same year, with the weight chosen each year on earlier years;
 \item a per-firm regression of quarterly cash flow on revenue over 16 quarters (a fixed and a variable part: operating leverage without simulation);
 \item the same regression with the change in revenue added (working-capital timing).
 \end{enumerate}
-\noindent T0 is the twin with its four feedback loops switched off; T1 is the full twin. N5 and N6 are simpler dynamic financial models: a fixed and a variable cost, and working-capital timing, without simulation. N6 also answers the point that the twin, unlike a margin rule, sees the timing of revenue: so does N6.
+\noindent T0 is the simulator with its four feedback loops switched off and T1 the full simulator. In tables, ``Twin'' denotes the simulator.
 
-We report four statistics. \emph{Errors in levels}: median and mean absolute error (outcomes winsorized at the 1st and 99th percentiles for the mean). \emph{Incremental correlation}: the Spearman correlation between a model's departure from a base rule and the realized departure from it, computed against every base, not only the weakest. \emph{Encompassing}: an OLS regression of the realized departure from N1 on the departures of the twin, N3, N4 and N6, with year effects and firm-clustered errors; a significant twin coefficient means its forecast contains information the others do not \citep{chong1986,fair1990}. \emph{Out-of-sample combination}: for test year $Y$, the prediction $\text{N}k+\lambda(\text{T1}-\text{N}k)$ with $\lambda$ chosen on years before $Y$ \citep{bates1969}, compared with N$k$ alone and with the same combination built from a simple rule.
+\paragraph{Confirmatory tests} (i) \emph{v3 against v2-pre} (S1): the statistic is the difference between the median absolute errors of the two specifications on the firm-years that both forecast. The decision uses a $t(G-1)$ interval over the $G$ yearly differences of medians; the test succeeds if its upper 95\% bound is below zero. A year-block bootstrap and a Diebold--Mariano test of the mean difference with firm$\times$year clustering accompany it. (ii) \emph{H2}, by the rule of the earlier evaluation: the incremental Spearman correlation of (T1 $-$ base) with (realized $-$ base) has a 95\% interval above zero against each of N3, N4 and N6, and T1's coefficient in an encompassing regression of the realized departure from N1 on the departures of T1, N3, N4 and N6 is significant at 5\%. (iii) \emph{Elasticity}: the ratio of the simulator's to the realized slope of cash flow on the revenue change lies in $[0.8, 1.25]$. The plan states that beating the 16-quarter margin is not required and that a failure to do so is reported as it is.
 
-\paragraph{Decision rule.} H2 is accepted only if the twin's incremental correlation against each of N3, N4 and N6 has a 95\% confidence interval above zero and its encompassing coefficient is significant at 5\%. The rule was committed to the repository before the full-sample run (commit \texttt{460cdda}). An earlier draft of the rule also required the best simple rule to reach less than 80\% of the twin's statistic against N1. We replaced it before the run because a synthetic test showed that it rejects a twin with genuine information whenever the four-quarter margin is very noisy. That draft was never committed, so only the final rule can be verified in the repository history.
+\paragraph{Encompassing and combinations} Encompassing regressions are reported with two-way clustered standard errors and $t(G-1)$ critical values, and under absolute loss: a pairwise absolute-loss encompassing test and a median (LAD) regression of the outcome on the forecasts in levels \citep{fair1990}. Combinations add a fraction $w$ of one forecast's departure to a base, $\text{N3}+w(\text{T1}-\text{N3})$, with $w$ chosen each test year on earlier years and outcomes winsorized only at bounds from those years. Gains are tested with a Diebold--Mariano test under firm$\times$year clustering and a year-block bootstrap that re-estimates $w$ in each resample. Because the combination nests its base, the Diebold--Mariano test is conservative here \citep{clark2001}.
 
-\paragraph{Second round.} After the first results we added a second set of tests and committed their decision rules before running them (commit \texttt{7a5d9b1}). They cover a revised specification, the timing and thresholds of liquidity events, other downturns, the mechanism behind the FCF result, group-conditional and adaptive calibration, two-way clustering and small firms. The rules for H1 and H3 were among them; because they were written after the first round's bankruptcy and loop results had been seen, we treat those two evaluations as descriptive. After that run we found and corrected one implementation error: the adaptive-conformal update was applied per forecast instead of per batch of yearly forecasts. After a further round of comments we changed six implementation choices and reran every test: out-of-sample logits are trained only on cutoffs whose eight-quarter outcomes were known (up to $Y-3$ instead of $Y-1$); a bankruptcy event is the first Item 1.03 filing of a case rather than any such filing; the 2020 outcome is cumulative rather than worst-point FCF; the conformal recalibration uses errors reported at least 90 rather than 75 days before the origin; the exposure regressions cluster errors by industry and control for the health formula; and the encompassing regressions are also reported with two-way clustering. No decision rule was changed.
+\paragraph{The family} The pre-specified family has 16 comparisons: the simulator, the margin plus the simulator, the margin plus the four-quarter margin and the margin plus the regression, each against N3, for operating cash flow and FCF, under median and mean absolute error. We control its familywise error with the studentized stepwise method of \citet{romano2005} ($B=\FamB$, firm$\times$year bootstrap) and report Holm's adjustment for continuity. Over all 19 forecasters we compute the model confidence set at $\alpha=0.10$ \citep{hansen2011} and Hansen's test for superior predictive ability against N3. Both were developed for mean loss differentials; for median loss we apply the same bootstrap, and those results are heuristic.
 
-\paragraph{Specifications added after the run.} Three analyses were added after the first full-sample results and are exploratory: (i) the combinations built on the 16-quarter margin; (ii) the unconstrained encompassing regression in levels; and (iii) the combinations of the 16-quarter margin with each simple rule, which control for the gains that any combination of forecasts delivers \citep{bates1969,clemen1989,timmermann2006}. The pre-specified combination used the four-quarter margin; we chose the 16-quarter margin as a base because it turned out to be the most accurate rule.
+\subsection{Pillar B: distribution and stress}
+\paragraph{Density test (B1 in the plan)} The same runs give each firm-year a predictive distribution of eight-quarter cash flow given realized revenue. Its rivals are a Gaussian and an empirical distribution of the residuals of the 16-quarter margin, estimated on cutoffs up to $Y-3$. We compute the CRPS of each and the PIT histogram, and test the CRPS differences with a Diebold--Mariano test under firm$\times$year clustering. Success requires the simulator's CRPS to be lower than a rival's with $p<0.05$.
 
-\subsection{Secondary tests}
-\emph{Liquidity decisions.} The same runs give the share of paths on which cash falls below half its opening level, net new borrowing exceeds 5\% of revenue, dividends are cut by half or capital expenditure by a quarter. They are compared with the realized events and with a static runway calculation that uses the same inputs: the trailing FCF margin applied to the realized revenue, minus the current payout run-rate and the maturities the company does not usually refinance. Each loop is switched off in turn.
+\paragraph{Shortfall test (B2)} The forecast is the share of paths on which cash plus undrawn committed credit falls below zero within $k\in\{4,8\}$ quarters, under the Recession preset or, for 2020 and 2022, under each firm's industry's realized revenue shock. A realized shortfall is a credit event (an 8-K Item 1.03, 2.04 or 3.01; an acceleration or delisting notice filed with a completed acquisition or change of control is excluded) or cash below 25\% of its opening level together with an increase in total debt above 5\% of trailing revenue. The second label uses credit events alone. Rivals are a logit on opening cash to revenue, debt to assets and FCF margin, and Altman's Z$''$, both trained only on labels observable at the cutoff. Scores are the Brier and log scores with Murphy's decomposition. Success requires a Brier skill score above zero against the logit with a year-block interval that excludes zero. Firm-years inside a bankruptcy are excluded. As the plan specifies, the Recession version scores a scenario-conditional probability against outcomes in years that were mostly not recessions; the realized-shock version is the conditional counterpart.
 
-\emph{Ranking.} Without the realized revenue, the twin's baseline health score at each cutoff is compared with the accounting benchmarks for five events over the next eight quarters: a bankruptcy petition, severe raw and abnormal cash burn (cumulative FCF below $-10\%$ of revenue, raw or after subtracting the firm's own trailing run-rate), a fall in interest coverage below 1.5$\times$, and a dividend cut. The \emph{health formula} --- the twin's scoring rule applied to the opening balance sheet --- isolates what the simulation adds to the score's ingredients. Its runway component is computed without simulation: cash and undrawn credit lines divided by one quarter of fixed costs, interest and the share of maturing debt that coverage would not allow to be refinanced. The hard version of the bankruptcy test restricts the sample to firms that are already weak: the bottom quintile of Altman's Z$''$ in the cutoff year or a negative FCF margin.
-
-\emph{Benchmarks.} Altman's Z$''$ \citep{altman2006}, Ohlson's O-score, Zmijewski's score, interest coverage, net debt to EBITDA, cash to revenue, the current ratio, revenue volatility, the estimated fixed-cost share, size, a static stress test of the demand-freeze scenario, and the two persistence benchmarks: the trailing FCF margin and capital expenditure over revenue. All are computed from the same vintage as the twin and oriented so that higher means riskier.
+\paragraph{Credit-event check (B3, secondary)} The AUC of the simulator's baseline health score and breach probabilities for a bankruptcy petition and for the broader credit-event label.
 
 \subsection{Inference}
-Bootstrap confidence intervals resample firms (500 resamples in the panel, 2{,}000 in cross-sections); comparisons between predictors are paired. Out-of-sample logits are ridge-penalized and, for test year $Y$, trained on cutoffs up to $Y-3$, whose eight-quarter outcomes were known by $Y$; percentile ranks are computed within each cutoff year. Common shocks within a year enter the regressions as year effects. With eleven cutoffs, however, the intervals do not account for further cross-sectional dependence and may be somewhat narrow. A pigeonhole bootstrap that resamples firms and years independently gives the twin's incremental correlation against the 16-quarter margin a confidence interval of \TwoWayLo--\TwoWayHi, and encompassing regressions are also reported with standard errors clustered by firm and year \citep{cameron2008}. We run many comparisons. Only the tests governed by the decision rules above are confirmatory; Appendix Table~\ref{tab:holm} reports Holm-adjusted $p$-values for the secondary comparisons.
+Common shocks within a year matter for every test, and there are at most eleven cutoffs. We therefore cluster by firm and year \citep{cameron2011}, use $t(G-1)$ critical values with $G$ the number of years, report whether two-way variance matrices are positive semi-definite, and use year-block bootstraps where the decision depends on few years. With eight or eleven blocks these bootstraps have few distinct resamples, so we also report sign tests over years. The incremental correlations of the H2 rule are firm-clustered only, as in the earlier evaluation. Out-of-sample logits are trained, for test year $Y$, on cutoffs up to $Y-3$. Only the tests named above are confirmatory; S1 and the two pillar-B tests are single tests outside the family of 16. Monte Carlo seeds are common to all firms and specifications, so simulation noise is common across the comparisons.
 
-\section{Results: transmission}\label{sec:transmission}
+\section{Pillar A: transmission}\label{sec:pillarA}
 
-\subsection{Levels}
-Table~\ref{tab:transmission} and Figure~\ref{fig:ladder} report the \TrN{} firm-years (\TrFirms{} firms) with eight quarters of realized data. Accuracy in levels falls almost monotonically with model complexity. The 16-quarter margin is the most accurate model, with a median absolute error of \TrMaeNthree{} percentage points of revenue; the four-quarter margin reaches \TrMaeNone, the regressions \TrMaeNfive{} and \TrMaeNsix, and the twin \TrMaeTone. Removing the feedback loops changes little (\TrMaeTzero). The twin's error comes mostly from overreaction: its cost structure, estimated with a prior that 35\% of costs are fixed, turns revenue changes into larger cash changes than firms experience (Section~\ref{sec:sensitivity}).
+\subsection{The corrected specification against the earlier one}
+Table~\ref{tab:specs} reports the headline numbers of the three specifications, with v3 shown under both its default and its walk-forward hyper-parameters, on the same \SpecN{} firm-years. The confirmatory test compares v3 with v2-pre on the \SOneN{} firm-years that both forecast. The median absolute error falls from \SOneMedVtwo{} to \SOneMedVthree{} percentage points of revenue (difference \SOneStat); the $t(\SOneG-1)$ interval of the yearly differences is \SOneLo{} to \SOneHi, the year-block interval \SOneBlockLo{} to \SOneBlockHi, and the difference is negative in all \SOneNeg{} years. The test \SOneVerdict. The v3 model with default hyper-parameters gives a similar difference (\SOneDefStat).
 
-The test needs eight reported quarters after the cutoff, so it conditions on survival. \AttrShare{} of the firm-years qualify, but only \AttrShareBk{} of those followed by a bankruptcy petition, against \AttrShareNonBk{} of the others. Reweighting the surviving firm-years by the inverse of their estimated probability of survival (a logit on the cutoff's FCF margin, size, health score, Altman's Z$''$, leverage, revenue volatility and year) changes the median errors little (twin \AttrTwinIpw, 16-quarter margin \AttrSixteenIpw): the ranking of the models does not depend on the selection, but the transmission results say little about firms in their last quarters before failure.
+\begin{table}[t]
+\centering\scriptsize
+\caption{The specifications on the same firm-years}
+\label{tab:specs}
+\input{tables/rev3_specs.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Errors: median absolute error of eight-quarter operating cash flow, percentage points of trailing revenue. Elasticity ratio: the model's over the realized slope of cash flow on the revenue change (pre-specified range 0.8--1.25). Incr.\ $\rho$: incremental Spearman correlation against the 16-quarter margin. Enc.\ $t$: the simulator's $t$-statistic in the encompassing regression, two-way clustered. Bankruptcy AUC: baseline health score, petition within eight quarters. Mean CRPS: density test, operating cash flow. v3 is the pre-specified model with walk-forward hyper-parameters.
+\end{minipage}
+\end{table}
+
+\paragraph{The tails} The improvement is in the typical error, not in the mean. The mean absolute difference is \SOneDmMean{} points in v3's disfavour (Diebold--Mariano $p=\SOneDmP$). Table~\ref{tab:tails} shows why: the corrections leave the 99th percentile of the error unchanged but produce a few explosive firm-years. Under v3, \TailThousandVthree{} firm-years have an absolute error above 1{,}000 points of trailing revenue, against \TailThousandVtwopre{} under v2-pre, and the largest (\TailTopName, \TailTopYear) is \TailTopErr{} points. The 20 largest increases account for \TailTopShare{} of the mean difference; without the 0.1\% largest differences, the mean difference is \TailTrimDiff{} points in v3's favour. The cases are of two kinds. Most are firms whose revenue at the cutoff was close to zero and then jumped, such as biotechnology companies with collaboration payments and cruise lines in 2021. In these the correction F3 misfires. F3 moves fixed costs a fraction $\lambda$ per quarter toward a target proportional to revenue, with the ratio of fixed costs to base revenue at the cutoff as the factor of proportion. For a firm whose fixed costs are hundreds of times its base revenue, a one-off revenue spike sets a fixed-cost target hundreds of times too high, and the costs stay after revenue falls back. In the largest case the ratio is about 300, a single collaboration payment raised quarterly revenue several thousandfold, and the simulated cash flow of the following quarters is a loss of hundreds of thousands of percent of trailing revenue (\texttt{engine/scripts/diagnose\_tail.py} reproduces this). The plan specified F3 with a flag for acquisitions but with no bound on the target and no test of whether a revenue change is permanent. The other cases (Caleres, Union Carbide) also have large errors under v2-pre and point to problems in the data. We did not correct either kind after seeing them, because a bound chosen now would be a new, post-hoc specification; it belongs to the next version of the model, to be evaluated on new data. Every mean-based statistic below is affected by these cases, and we say where.
+
+\begin{table}[t]
+\centering\scriptsize
+\caption{The tails of the absolute errors of eight-quarter operating cash flow}
+\label{tab:tails}
+\input{tables/rev3_tails.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Absolute error in percentage points of trailing four-quarter revenue, all firm-years with an error in the specification. Lower panel: the firm-years with the largest increase in absolute error from v2-pre to v3.
+\end{minipage}
+\end{table}
+
+\paragraph{The ladder} Table~\ref{tab:ladder} adds the corrections one at a time on the firm-years of a fixed sample of 1{,}000 firms (\LadN{} firm-years). It is descriptive, by the plan. Of the fall in the median error from \LadPreExact{} to \LadThreeDef, the consistent residual and tax (F5) contributes about a third and the posterior cost prior (F1) \LadOneDrop{} points, about half. The earlier specification shrank every firm's costs toward a 35\% fixed share with a weight that did not depend on how much its revenue had varied. The corrections to the data layer change the sample more than the errors: the legacy layer gives \LadLegacy{} on \LadLegacyN{} firm-years.
+
+\begin{table}[t]
+\centering\scriptsize
+\caption{The ladder of corrections (descriptive; firm-years of a fixed sample of 1{,}000 firms)}
+\label{tab:ladder}
+\input{tables/rev3_ladder.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Corrections added cumulatively in the pre-specified order. The legacy data layer row uses the earlier loader, so its firm-years differ.
+\end{minipage}
+\end{table}
+
+\subsection{Levels and the response to revenue}
+The corrections do not change the ranking of the models in levels (Table~\ref{tab:transmission}, Figure~\ref{fig:ladder}). The 16-quarter margin is the most accurate model, with a median absolute error of \TrMaeNthree{} percentage points; the four-quarter margin reaches \TrMaeNone, the regressions \TrMaeNfive{} and \TrMaeNsix, and the simulator \TrMaeTone{} (\TrMaeTzero{} without loops). The rules need 16 quarters of cash flow and therefore forecast fewer firm-years than the simulator; in the family, which uses common firm-years, the simulator is worse than the margin by \FamTwinMedDiff{} points of median error (Romano--Wolf $p=\FamTwinMedRw$).
+
+The direction of the simulator's errors has changed. In a regression of each eight-quarter total on the revenue change, v2-pre's cash flow responded \ElastVtwopre{} times as strongly as firms' does: its fixed-cost prior turned revenue changes into cash changes that were too large. Under v3 the ratio is \ElastRatioExact{} (simulator \ElastCfoTwin, realized \ElastCfoReal), \ElastVerdict{} the pre-specified range, so the elasticity criterion fails. It is close to the boundary and sensitive to the sample: with the default hyper-parameters the ratio is \ElastVthreedef{}, and with walk-forward choices on the ladder sample \LadElastWf, both inside the range; the criterion carries no interval. The walk-forward rule chose weak cost priors (prior s.d.\ \SelTauMode{} in most years, no prior in the first) and fixed costs that adjust to permanent revenue changes at a rate of \SelLamMin--\SelLamMax. It selected them by median error, which they lower slightly on the full sample (\FullThreeDef{} to \FullThreeWf) but not on the ladder sample (\LadThreeDef{} to \LadThreeWf). Together they make costs too variable, so the model now underreacts.
 
 \begin{figure}[t]
 \centering\includegraphics[width=\linewidth]{figures/ladder.pdf}
-\caption{Median absolute error of eight models of cumulative operating cash flow over the eight quarters after each cutoff, given the realized revenue path; \TrN{} firm-years, 2014--2024.}
+\caption{Median absolute error of eight models of cumulative operating cash flow over the eight quarters after each cutoff, given the realized revenue path (v3); \TrN{} firm-years, 2014--2024. ``Twin'' denotes the simulator.}
 \label{fig:ladder}
 \end{figure}
 
 \begin{table}[t]
 \centering\scriptsize
-\caption{Transmission: realized revenue given to the twin and to six simple rules}
+\caption{Transmission: realized revenue given to the simulator and to six simple rules (v3)}
 \label{tab:transmission}
 \input{tables/transmission.tex}
 \par\smallskip
 \begin{minipage}{\linewidth}\footnotesize
-Outcome: cumulative operating (free) cash flow over the eight quarters after the cutoff, percentage points of trailing revenue. Errors: median and winsorized mean absolute error. $\rho$: Spearman correlation with the realized outcome. Incremental $\rho$: correlation of (model $-$ base) with (realized $-$ base); firm-clustered bootstrap CI.
+Outcome: cumulative operating (free) cash flow over the eight quarters after the cutoff, percentage points of trailing revenue. Errors: median and winsorized mean absolute error, each model on the firm-years it forecasts. $\rho$: Spearman correlation with the realized outcome. Incremental $\rho$: correlation of (model $-$ base) with (realized $-$ base); firm-clustered bootstrap CI.
 \end{minipage}
 \end{table}
+
+The test needs eight reported quarters after the cutoff, so it conditions on survival. \AttrShare{} of the firm-years qualify, but only \AttrShareBk{} of those followed by a bankruptcy petition, against \AttrShareNonBk{} of the others. Reweighting by the inverse of the estimated probability of survival changes the median errors little (simulator \AttrTwinIpw, 16-quarter margin \AttrSixteenIpw): the ranking of the models does not depend on the selection, but the transmission results say little about firms in their last quarters before failure.
 
 \subsection{Information beyond the rules}
-The first version's statistic, the incremental correlation against the four-quarter margin, is \TrIncrTwin{} for the twin (95\% CI \TrIncrTwinLo--\TrIncrTwinHi), close to the 0.30 reported then. Every simple rule scores almost as well, and the 16-quarter margin scores higher (\TrIncrSixteen, CI \TrIncrSixteenLo--\TrIncrSixteenHi): against a noisy base, any less noisy estimate of the persistent margin looks informative. The original statistic therefore cannot distinguish the twin from a smoother estimate of the margin.
+Against the four-quarter margin the simulator's incremental correlation is \TrIncrTwin{} (95\% CI \TrIncrTwinLo--\TrIncrTwinHi), and the 16-quarter margin's is \TrIncrSixteen: against a noisy base, any less noisy estimate of the persistent margin looks informative. Against the stronger bases the simulator still carries information. Its incremental correlation with the residual of the 16-quarter margin is \TrTwinVsSixteen{} (CI \TrTwinVsSixteenLo--\TrTwinVsSixteenHi), of the shrunk margin \TrTwinVsShrunk{} and of the regression with timing \TrTwinVsReg. In the encompassing regression (Table~\ref{tab:encompassing}) its $t$-statistic is \TrEncTwinT{} with firm clustering and \TrEncTwinTTwoWay{} with firm and year clustering. By the pre-specified rule, H2 \TrVerdict, as it does in every specification (Table~\ref{tab:specs}).
 
-Against the stronger bases the twin still carries information. Its incremental correlation with the residual of the 16-quarter margin is \TrTwinVsSixteen{} (CI \TrTwinVsSixteenLo--\TrTwinVsSixteenHi), with the residual of the shrunk margin \TrTwinVsShrunk{} (CI \TrTwinVsShrunkLo--\TrTwinVsShrunkHi), and with the residual of the regression with timing \TrTwinVsReg{} (CI \TrTwinVsRegLo--\TrTwinVsRegHi). These numbers alone are not decisive. The four-quarter margin itself has an incremental correlation of \TrFourVsSixteen{} against the 16-quarter margin, because two noisy estimates of the same margin are partly independent; this is why the encompassing regression is the confirmatory test. When the twin, the 16-quarter margin, the shrunk margin and the timing regression enter the same regression (Table~\ref{tab:encompassing}), each keeps a significant coefficient; the twin's $t$-statistic is \TrEncTwinT{} for operating cash flow (\TrEncTwinTTwoWay{} with errors clustered by firm and year) and \TrEncFcfTwinT{} for FCF. By the pre-specified rule, H2 \TrVerdict. Because every term in that regression is measured relative to the four-quarter margin, the rule's noise enters the dependent variable and every regressor with the same sign, and the rule's own weight is restricted to one minus the sum of the others. The unconstrained form \citep{fair1990}, which regresses realized cash flow on all five forecasts in levels, gives the same answer: the twin's coefficient is \TrEncLevTwinCoef{} with $t$ = \TrEncLevTwinT{} (\TrEncLevFcfTwinT{} for FCF). In that regression the four-quarter margin's weight is close to zero and insignificant once the 16-quarter margin is included, the signature of mean reversion. With two-way clustering the twin's $t$-statistic is \TrEncLevelsTwinTTwoWay. Pairwise encompassing tests \citep{harvey1998} reject that the 16-quarter margin encompasses the twin ($t$ = \TrHlnSixteenOverTwin) and that the timing regression does (\TrHlnRegOverTwin), but they also reject the reverse (\TrHlnTwinOverSixteen{} and \TrHlnTwinOverReg): each forecast contains information the other lacks, and neither should be used alone.
-
-\begin{table}[t]
-\centering\scriptsize
-\caption{Forecast encompassing}
-\label{tab:encompassing}
-\input{tables/encompassing.tex}
-\par\smallskip
-\begin{minipage}{\linewidth}\footnotesize
-Departures: OLS of (realized $-$ four-quarter margin) on each model's departure from the same rule. Levels: OLS of realized cash flow on the forecasts themselves \citep{fair1990}. All variables winsorized at the 1st and 99th percentiles; year effects; standard errors clustered by firm; $t$-statistics in parentheses. $^{*}$, $^{**}$, $^{***}$: $p<0.10, 0.05, 0.01$.
-\end{minipage}
-\end{table}
+The encompassing evidence rests on squared loss and winsorized data. A second implementation of the two-way variance, with the $t(G-1)$ adjustment, gives $t=\EncTGOne$ against a critical value of \EncTGOneCrit; its variance matrix is \EncTGOnePsd, so this number should be read with care. Under absolute loss on unwinsorized data the evidence is not detectable. The pairwise test that the 16-quarter margin encompasses the simulator gives $t=\EncAbsSixteen$ (one-sided $p=\EncAbsSixteenP$), but neither direction rejects, so with the heavy tails of Table~\ref{tab:tails} the test has little power. In a median regression of the outcome on all five forecasts the simulator's coefficient is \EncLadCoef{} ($t=\EncLadT$), while the timing regression keeps a significant weight ($t=\EncLadRegT$). The five forecasts are highly collinear, and a median regression can put a zero weight on one of them even when it is informative. We read these results as saying that the simulator's departures are informative about the mean of cash flow, and that we cannot show they are informative about the typical firm.
 
 \subsection{How much it is worth}
-Information that is significant in a regression of about \TrNRound{} observations need not be worth much. Table~\ref{tab:hybrid} measures it out of sample. Combining the 16-quarter margin with a fraction $\lambda$ of the twin's departure, with $\lambda$ chosen each year on earlier years only, lowers the mean absolute error from \TrHybSixteen{} to \TrHybSixteenTwin{} percentage points of revenue, a gain of \TrHybGain{} (CI \TrHybGainLo--\TrHybGainHi), or \TrHybGainPct{} of the error (\TrFcfHybGainPct{} for FCF). Combining forecasts usually helps even when the second forecast is worse, because their errors are imperfectly correlated \citep{bates1969,clemen1989,timmermann2006}. The relevant comparison is therefore with the 16-quarter margin combined in the same way with a simple rule. For operating cash flow, that comparison removes most of the gain. The margin combined with the cash-revenue regression reaches \TrHybSixteenRegFive{} (an improvement of \TrHybRegFiveGainPct), and the twin's combination is better by only \TrHybVsRegFive{} ($p\TrHybVsRegFiveP$, not significant at 5\%); against the margin combined with the four-quarter margin, it is better by \TrHybVsFour{} ($p\TrHybVsFourP$). For FCF, the twin's combination is better than the best combination with a simple rule, the 16-quarter margin with the four-quarter margin, by \TrFcfVsBestNull{} percentage points (CI \TrFcfVsBestNullLo--\TrFcfVsBestNullHi, $p\TrFcfVsBestNullP$), and better than the combinations with the regressions by more. After a Holm correction across the secondary comparisons, only the FCF advantages over the regression combinations remain significant (Appendix Table~\ref{tab:holm}): the FCF result is suggestive, not established. We had conjectured that this advantage comes from capital expenditure (capex), which the twin cuts under stress and the cash rules do not. Combining capex and operating cash flow separately rejects that conjecture: capex accounts for only \FcfCapexShare{} of the gain, and most of the gain appears only when the two are combined. The estimated weight is small and stable, between \TrLambdaLo{} and \TrLambdaHi{} in every year for operating cash flow and between 0.10 and 0.20 for FCF: the direction of the twin's departures is informative, their size is not. For a company with \$10 billion of revenue, the gain over the 16-quarter margin is about \$\TrHybDollar{} million in the predicted cash flow of the next two years. The part attributable to the simulation rather than to combining is a fraction of that: relevant at most for a liquidity plan built on a stated revenue scenario, and negligible for a credit decision.
+Adding a fraction $w$ of the simulator's departure to the 16-quarter margin, with $w$ between \LamMin{} and \LamMax{} in every year, lowers the winsorized mean absolute error by \GainPct{} (year-block CI \GainLo--\GainHi). The gain is positive in \GainPos{} of \GainYears{} years (sign test $p=\GainSignP$; Diebold--Mariano $p=\GainDmP$); for FCF it is \GainFcfPct. On raw absolute errors, however, the combination is worse than the margin by \GainRawMean{} points on average ($p=\GainRawP$), because of the explosive firm-years. Combining forecasts helps even when the second forecast is worse \citep{bates1969,clemen1989,timmermann2006}, so the relevant comparison is with the margin combined in the same way with a simple rule. Against the margin combined with the cash-revenue regression, the simulator's combination is better by \GainRegPct{} of the error (CI \GainRegLo--\GainRegHi). Against the margin combined with the four-quarter margin it is better by \GainFourPct, but the interval includes zero (\GainFourLo--\GainFourHi) and the gain is positive in only \GainFourPos{} of \GainYears{} years. The loops contribute almost nothing: the combination built from the loop-free simulator is only \GainLoopsPct{} worse. An implementation of the combinations from the earlier evaluation (Appendix Table~\ref{tab:hybrid}) gives different verdicts on these two comparisons; it uses full-sample winsorization bounds and a firm-clustered bootstrap, and the pre-specified implementation reported here governs.
+
+In the family of 16 (Table~\ref{tab:family}), \FamRejects{} comparisons reject at 5\% after the Romano--Wolf correction. The simulator alone is worse than the margin in all four cells. The margin plus the simulator is better than the margin under mean absolute error (by \FamCombMeanDiff{} points, $p=\FamCombMeanRw$) but not under median absolute error (\FamCombMedDiff, $p=\FamCombMedRw$); the margin plus the regression is also better under mean error ($p=\FamRegMeanRw$). Hansen's test rejects that no member of the family beats the margin under mean error ($p=\SpaCfoMean$ for operating cash flow, \SpaFcfMean{} for FCF) but not under median error ($p=\SpaCfoMed$ and \SpaFcfMed). The model confidence set for the median error of operating cash flow contains \McsSize{} of the 19 forecasters. It excludes the simulator alone ($p_{\mathrm{MCS}}=\McsTwinP$) and contains the 16-quarter margin and every combination built on it. The simulator's combination is the last model standing ($p_{\mathrm{MCS}}=\McsCombP$), but at this level the data cannot distinguish it from the margin alone or from the margin's other combinations.
 
 \begin{table}[t]
-\centering\footnotesize
-\caption{Out-of-sample combinations}
-\label{tab:hybrid}
-\input{tables/hybrid.tex}
+\centering\scriptsize
+\caption{The pre-specified family of 16 comparisons against the 16-quarter margin}
+\label{tab:family}
+\input{tables/rev3_family.tex}
 \par\smallskip
 \begin{minipage}{\linewidth}\footnotesize
-Test years 2015--2024; each combination's $\lambda$ is chosen on earlier years. Errors in percentage points of trailing revenue (mean: winsorized). Differences: firm-clustered bootstrap CI.
+$\Delta$: difference in median or mean absolute error (percentage points of revenue), positive when the forecast is worse than the margin; common firm-years. Combinations use year-by-year weights chosen on earlier years. CI and $p$: firm$\times$year bootstrap; Romano--Wolf: studentized stepwise familywise $p$-value; Holm: for continuity.
 \end{minipage}
 \end{table}
 
-\paragraph{Examples.} The size of the departures explains the small weight. In 2020, Amazon's revenue over the next eight quarters averaged \ExAmznRev{} above its trailing level; the 16-quarter margin implied cumulative operating cash flow of \ExAmznRule{} of trailing revenue, the twin \ExAmznTwin, and the company reported \ExAmznReal. The twin had the direction right for General Electric in 2016 (rule \ExGeRule, twin \ExGeTwin, realized \ExGeReal) and wrong for Ford and General Motors in 2020. There, revenue changes of \ExFordRev{} and \ExGmRev{} made the twin predict operating cash flow of \ExFordTwin{} and \ExGmTwin{}, while the companies reported \ExFordReal{} and \ExGmReal{} (rules: \ExFordRule, \ExGmRule). Their consolidated cash flows include captive finance operations that a revenue-driven model does not represent. Among firm-years of firms with more than \$2 billion of revenue and departures larger than 8 points, the twin's departure has the sign of the realized one \ExRightSign{} of the time.
+\section{Pillar B: distribution and stress}\label{sec:pillarB}
 
-\subsection{Where it helps}
-Is the twin more useful for highly leveraged firms, firms with high fixed costs or large maturities, or in severe revenue contractions? Table~\ref{tab:heterogeneity} gives little support for this. The twin's incremental correlation against the timing regression does not rise with leverage (\HetLevLowTwinReg{} in the lowest tercile, \HetLevHighTwinReg{} in the highest) and differs little across terciles of fixed costs and maturities. Among the \HetDownN{} firm-years with revenue more than 10\% below the trailing level, the twin's incremental correlation against the four-quarter margin (\HetDownTwin) is lower than the 16-quarter margin's (\HetDownSixteen). By cutoff year (Figure~\ref{fig:structural}), the twin's statistic against the four-quarter margin is below the 16-quarter margin's in most years, while its statistic against the timing regression is stable around 0.4.
+\subsection{Density of cash flow given revenue}
+Table~\ref{tab:density} reports the density test on \DenN{} firm-years. The simulator fails against both rivals. Its mean CRPS for operating cash flow is \DenCrpsTwin, against \DenCrpsGauss{} for the Gaussian and \DenCrpsEmp{} for the empirical residual distribution. Neither difference is significant, because the CRPS differences are extremely heavy-tailed and a single year (\DenWorstYear, mean difference \DenWorstDiff) dominates them. By year, the simulator has the lower mean CRPS than the Gaussian in \DenBetterGauss{} of \DenYears{} years, but the Gaussian rival is itself badly calibrated: most of its PIT values fall in the two middle deciles. The empirical rival is the informative comparison, and the simulator beats it in only \DenBetterEmp{} of \DenYears{} years.
+
+The PIT histogram shows what is wrong. \DenPitTails{} of outcomes fall in the outer deciles of the simulator's distribution (\DenPitLow{} in the lowest, \DenPitHigh{} in the highest), against 20\% for a calibrated forecast and \DenPitEmpTails{} for the empirical rival, and its 90\% interval covers \DenCov{} of outcomes (\DenCovFcf{} for FCF). Given the realized revenue, the only uncertainty left in the model is in costs, working capital and financing, and its shock processes put far too little there. The mean CRPS also rises from \CrpsVtwopre{} under v2-pre to \CrpsVthree{} under v3 (Table~\ref{tab:specs}), largely through the explosive firm-years of Table~\ref{tab:tails}. The distributions that the simulator reports describe its simulated paths; they are not calibrated forecasts. Online conformal rescaling of the four-quarter intervals, reported in Appendix~\ref{app:online}, restores average coverage but not in the stress year.
 
 \begin{table}[t]
 \centering\scriptsize
-\caption{Transmission by firm characteristics and by revenue shock}
-\label{tab:heterogeneity}
-\input{tables/heterogeneity.tex}
+\caption{Density test: predictive distributions of eight-quarter cash flow given realized revenue}
+\label{tab:density}
+\input{tables/rev3_density.tex}
 \par\smallskip
 \begin{minipage}{\linewidth}\footnotesize
-Terciles of each characteristic at the cutoff; revenue over the window relative to trailing revenue. Incremental $\rho$ as in Table~\ref{tab:transmission}; errors in percentage points of trailing revenue.
+CRPS in percentage points of trailing revenue. Rivals: Gaussian and empirical distributions of the residuals of the 16-quarter margin, estimated on cutoffs up to $Y-3$. DM $t$: Diebold--Mariano statistic of the CRPS difference (positive: simulator worse), clustered by firm and year. Years sim.\ better: test years in which the simulator's mean CRPS is lower. Verdict: the pre-specified rule ($p<0.05$ in the simulator's favour).
 \end{minipage}
 \end{table}
 
-\begin{figure}[t]
-\centering\includegraphics[width=\linewidth]{figures/structural.pdf}
-\caption{Incremental correlation by cutoff year: the twin and the 16-quarter margin against the four-quarter margin, and the twin against the cash-revenue regression with timing.}
-\label{fig:structural}
-\end{figure}
+\subsection{Liquidity shortfall}
+Table~\ref{tab:shortfall} reports the shortfall test. In the decisive cell (eight quarters, Recession preset; \ShortN{} firm-years, \ShortEv{} shortfalls), the simulator's Brier score is \ShortBrierTwin{} against \ShortBrierLogit{} for the logit, a Brier skill score of \ShortBss{} with a year-block interval of \ShortBssLo{} to \ShortBssHi. The test \ShortVerdict. All eight cells, including the realized-shock version and the credit-event label, have negative skill (\ShortCellsMin{} to \ShortCellsMax).
 
-\subsection{Why the twin overreacts, and a revised specification}
-The twin's errors have a direction. In a regression of each eight-quarter total on the revenue change, the twin's operating
-cash flow responds \ElastCfoTwin{} percentage points per point of revenue change, against \ElastCfoReal{} in reality, a ratio of
-\ElastCfoRatio. EBITDA shows the same excess (\ElastEbitdaRatio{} times); capital expenditure shows none (\ElastCapexRatio). The
-overreaction comes from operating leverage: the cost regression is shrunk toward a prior that 35\% of costs are fixed, and firms'
-costs are more variable than that.
-
-The sensitivity analysis of the first round had already shown that a 20\% prior lowers the error, so the revised specification was designed with that knowledge. Its rule allowed it only if it was selected without the test year and lowered the
-twin's error without lowering its bankruptcy AUC by more than 0.01. We choose the prior each year from a grid
-(5\%--50\%, and no prior) using earlier cutoffs whose outcomes were known, so the test years are \RevFirstYear--2024 (\RevTestN{} firm-years). On them the original specification has a median error of \RevMaeBase{} (\TrMaeTone{} over all years) and a bankruptcy AUC of \RevAucBase{} (on the firm-years of the transmission test, which exclude most firms that failed; \BkPanTwin{} on the full census). The median error then falls from \RevMaeBase{} to \RevMaeNew{} (difference
-\RevDiff, CI \RevDiffLo--\RevDiffHi) and the bankruptcy AUC moves from \RevAucBase{} to \RevAucNew; the revised
-specification is \RevAccepted{} and is now the software's default. Selecting the prior within each industry gives the
-same error (\RevIndMae). The selected prior is 5\%, the smallest share in the grid, in every year; over all years no prior at all does slightly worse
-(\RevNone{} against \RevFive{} with 5\%), so the best prior lies between none and 5\%: the right amount of shrinkage toward fixed costs is closer to none than to the original prior. Even revised,
-the twin remains less accurate in levels than the 16-quarter margin: the correction removes the overreaction, not the
-advantage of persistence.
-
-\section{Results: liquidity decisions and feedback loops}\label{sec:decisions}
-Ranking correlations are not what a risk manager uses. Table~\ref{tab:decisions} asks whether, given the revenue that followed, the twin predicts the decisions and events that a liquidity plan addresses. Its event probabilities are weak predictors in absolute terms (AUC 0.56--0.68), comparable with the static runway rule and the opening-balance-sheet score. Out of sample, they add a little to a logit of those rivals: \DecCashDelta{} in AUC for cash falling below half, \DecDebtDelta{} for new borrowing, \DecDivDelta{} for dividend cuts and \DecCapexDelta{} for capital-expenditure cuts, all with confidence intervals above zero.
-
-Table~\ref{tab:loops} evaluates each loop on these outcomes. The result is mechanical but informative about the model's structure. Without the market-access cliff (R2), the twin's cash practically never falls below half its opening level, because the treasury always refinances up to its target; the cash-depletion AUC falls from \DecCashTwin{} to \DecCashNoRtwo. Without cash conservation (B1), dividends are never cut and capital expenditure is cut less often (AUC \DecCapexNoBone{} against \DecCapexTwin). The spread spiral (R1) and delayed restructuring (B2) change no AUC by more than 0.01, although some of these tiny differences are statistically significant; removing B1 slightly improves the prediction of cash depletion and new borrowing. Two of the four loops are therefore necessary for the model to produce some liquidity events at all; the other two are close to inert over an eight-quarter horizon. None of them changes the ranking of firms (Section~\ref{sec:ranking}).
-
-The loops also matter for timing. Ranking firms by the twin's probability of a cash depletion within eight quarters
-gives a concordance index for the time to the event of \TimCashTwin, against \TimCashNoLoops{} without loops (difference
-\TimCashDiff, CI \TimCashDiffLo--\TimCashDiffHi) and \TimCashStatic{} for the static runway; for new borrowing the loops
-change nothing (\TimDebtTwin{} against \TimDebtNoLoops). The results hold at other thresholds for each event (Appendix
-Table~\ref{tab:thresholds}). By the rule written for it --- a gain from the loops in at least two of the four events and in
-the timing of at least one --- H3 is \HThreeVerdict. The verdict is weaker than the word suggests. The rule was written after the first round's results, and for cash depletion the comparator, the twin without loops, never produces the event (AUC \TimCashNoLoops), so the gains in level and in timing for that event are mechanical. At a threshold of 70\% of opening cash, where the loop-free twin does produce the event, it predicts it slightly better than the full twin (Appendix Table~\ref{tab:thresholds}). We read H3 as a statement about the model's structure, not as evidence of predictive value.
+The rival is not strong. The logit's Brier score improves on the climatological forecast (\ShortClim) by only \ShortLogitClimBss, so failing against it means, in effect, failing against the base rate. The decomposition locates the failure in calibration. The simulator's resolution (\ShortRes) equals the logit's (\ShortResLogit), so it separates firms as well as three ratios do, but its reliability term (\ShortRel) is large. Its average probability is \ShortMeanP{} against a realized rate of \ShortBase{}; \ShortLowBinShare{} of firm-years receive a probability below 10\%, and \ShortLowBinRate{} of those suffer a shortfall. Its log score (\ShortLogTwin, against \ShortLogLogit{} for the logit) depends on how near-zero probabilities are bounded and confirms the miscalibration. We have not tested why most shortfalls happen to firms whose simulated paths keep liquidity. Two explanations are possible: the model's treasury refinances maturities and draws credit lines that firms did not or could not use, and the label is dominated by delisting notices (Item 3.01 accounts for \CeEvDelist{} of the \CeEv{} credit events), which need not follow from a lack of cash. A label restricted to petitions, accelerations and the cash criterion would separate the two; we leave it to future work.
 
 \begin{table}[t]
 \centering\scriptsize
-\caption{Liquidity events given the realized revenue}
-\label{tab:decisions}
-\input{tables/decisions.tex}
+\setlength{\tabcolsep}{3pt}
+\caption{Shortfall test: probability that cash plus undrawn credit falls below zero}
+\label{tab:shortfall}
+\resizebox{\linewidth}{!}{\input{tables/rev3_shortfall.tex}}
 \par\smallskip
 \begin{minipage}{\linewidth}\footnotesize
-Twin: share of simulated paths with the event. Static runway: the trailing FCF margin on realized revenue, minus payouts and unrefinanced maturities (same inputs). Out-of-sample: ridge logits on within-year percentile ranks, trained on cutoffs up to $Y-3$; ``Rule + scores'' combines the static runway, the health formula and the FCF margin. $\Delta$: firm-clustered bootstrap CI.
+Forecast: share of paths with cash plus undrawn committed credit below zero within the horizon. Shortfall label: credit event (8-K Item 1.03, 2.04, 3.01) or cash below 25\% of opening with debt up by more than 5\% of trailing revenue; credit-event label: the 8-K items alone. Industry shock: cutoffs 2020 and 2022. Logit: opening cash/revenue, debt/assets and FCF margin; logit and Altman Z$''$ trained on labels observable at the cutoff. BSS: Brier skill score $1-\mathrm{BS}_{\text{sim}}/\mathrm{BS}_{\text{logit}}$. Rel./res.: the simulator's reliability and resolution \citep{murphy1973}. The decisive cell is the shortfall label, eight quarters, Recession preset.
 \end{minipage}
 \end{table}
 
-\begin{table}[t]
-\centering\footnotesize
-\begin{threeparttable}
-\caption{Feedback loops evaluated on the events they are meant to produce}
-\label{tab:loops}
-\input{tables/loops.tex}
-\begin{tablenotes}\footnotesize
-\item AUC of the event probability of the full twin and of the twin with one loop switched off. Stars: paired difference with the full twin.
-\end{tablenotes}
-\end{threeparttable}
-\end{table}
-
-\section{Results: ranking firms}\label{sec:ranking}
-Table~\ref{tab:bankruptcy} reports the bankruptcy test on the census. Across \BkPanN{} firm-years, \BkPanEv{} of which are followed by a petition within eight quarters (at \BkPanFirms{} distinct companies), the twin's baseline score has an AUC of \BkPanTwin, against \BkPanFormula{} for its own formula on the opening balance sheet (difference \BkPanFormulaDiff, $p\BkPanFormulaP$), \BkPanOhlson{} for Ohlson's O-score and \BkPanAltman{} for Altman's Z$''$. Size, which separated the 2020 bankruptcies from S\&P members in the first version, now reaches only \BkPanSize. The hard task is telling which weak firms will fail: \BkWeakShare{} of the petitions come from the \BkWeakN{} firm-years that were already weak. Among them the twin reaches \BkWeakTwin{} and the formula \BkWeakFormula{} ($p\BkWeakFormulaP$ for the difference); Altman's Z$''$ falls to \BkWeakAltman. The same pattern holds within four quarters (\BkFourEv{} events; twin \BkFourTwin, formula \BkFourFormula, Ohlson \BkFourOhlson) and for the \BkTwentyEv{} petitions after 20 February 2020 (twin \BkTwentyTwin, formula \BkTwentyFormula). The twin's score is a good distress score; the simulation behind it adds nothing to the ranking.
+\subsection{Credit events}
+As a ranking of firms the simulator's health score is better than the probabilities the shortfall test scores (Table~\ref{tab:credit}). It predicts a bankruptcy petition within eight quarters with an AUC of \BkAucTwin, against \BkAucZ{} for Altman's Z$''$, and the broader credit event with \CeAucTwin{} (CI \CeAucTwinLo--\CeAucTwinHi) against \CeAucZ{} (CI \CeAucZLo--\CeAucZHi); the second pair of intervals overlaps. The health score, however, ranks no better than Ohlson's O-score or than its own formula applied to the opening balance sheet without simulation (Section~\ref{sec:secondary}). This sample (\BkNThree{} firm-years, \BkEvThree{} petitions) excludes firm-years inside a bankruptcy and differs slightly from the census sample of Section~\ref{sec:secondary}.
 
 \begin{table}[t]
 \centering\scriptsize
-\caption{Bankruptcy petitions (8-K Item 1.03), all non-financial filers}
-\label{tab:bankruptcy}
-\input{tables/bankruptcy.tex}
+\setlength{\tabcolsep}{4pt}
+\caption{Credit-event check: AUC of credit events within the horizon}
+\label{tab:credit}
+\resizebox{\linewidth}{!}{\input{tables/rev3_credit.tex}}
 \par\smallskip
 \begin{minipage}{\linewidth}\footnotesize
-AUC with firm-clustered 95\% CI. Panel: baseline health score at each cutoff; 2020: stress health score on 20 February 2020. Already weak: bottom quintile of Altman's Z$''$ in the cutoff year or negative trailing FCF margin.
+Simulator health: baseline health score (sign reversed), with firm-clustered 95\% CI. Breach probabilities: baseline and Recession preset, eight quarters. Credit event: 8-K Items 1.03, 2.04 or 3.01, excluding those filed with a completed acquisition or change of control.
 \end{minipage}
 \end{table}
 
-Table~\ref{tab:panel} gives the other events. For severe cash burn the twin reaches \PanTwinAuc, below the trailing FCF margin (\PanFcfAuc), and adds \PanOosDelta{} out of sample to a logit of all benchmarks and the formula. For abnormal burn, the deterioration that a stress test claims to anticipate, it has no skill (\PanAbnTwinAuc), and adding it to the benchmarks slightly lowers the out-of-sample AUC. Fundamentals-based fragility, the twin's included, largely measures persistent cash-flow habits.
+\section{Secondary evidence}\label{sec:secondary}
 
-\begin{table}[t]
-\centering\scriptsize
-\caption{Distress events over the next eight quarters, 2014--2024}
-\label{tab:panel}
-\input{tables/panel.tex}
-\par\smallskip
-\begin{minipage}{\linewidth}\footnotesize
-Twin: baseline health score. Out-of-sample logits trained for each test year on cutoffs at least three years earlier; ``Benchmarks'' contains all thirteen benchmarks and the formula, ``+ Twin'' adds the twin's baseline health, breach probability and recession-scenario health. $\Delta$: firm-clustered CI.
-\end{minipage}
-\end{table}
+\paragraph{Ranking firms (H1, descriptive)} On the census, across \BkPanN{} firm-years with \BkPanEv{} petitions within eight quarters at \BkPanFirms{} companies, the simulator's baseline score has an AUC of \BkPanTwin, its own scoring formula applied to the opening balance sheet without simulation \BkPanFormula{} (difference \BkPanFormulaDiff, $p\BkPanFormulaP$), Ohlson's O-score \BkPanOhlson{} and Altman's Z$''$ \BkPanAltman{} (Table~\ref{tab:bankruptcy}). Among the \BkWeakN{} firm-years that were already weak, which account for \BkWeakShare{} of petitions, the simulator reaches \BkWeakTwin{} and the formula \BkWeakFormula{} ($p\BkWeakFormulaP$ unadjusted, \HolmWeak{} after Holm's adjustment; Table~\ref{tab:holm}). For severe cash burn the simulator reaches \PanTwinAuc, below the trailing FCF margin (\PanFcfAuc), and for abnormal burn it has no skill (\PanAbnTwinAuc). H1, that the stress score ranks distress better than the trailing FCF margin and its own formula, is rejected.
 
-\section{Downturns: 2020 and two others}\label{sec:covid}
-The first version built its ranking evidence on the COVID-19 shock. No early-warning system can be expected to foresee an exogenous pandemic. The shock is now one cutoff among eleven, and we use it to answer a question that the uniform scenario could not: is the failure to rank the shock a failure of the model, or a lack of information about exposure? Table~\ref{tab:covid} repeats the cross-section for the \CovAllN{} filers alive on 20 February 2020 and for the \CovSpN{} members of the S\&P~500 on that date. The pattern of the first version holds without survivorship: the twin's stress score ranks raw cash burn (\CovAllTwin{} in the full sample, \CovSpTwin{} in the S\&P), the FCF margin ranks it better (\CovAllFcf, \CovSpFcf), and no predictor's correlation with abnormal burn exceeds 0.2 in absolute value.
+\paragraph{Feedback loops (H3, descriptive)} Given realized revenue, the simulator's event probabilities add to a logit of a static runway rule and the scores \DecCashDelta{} in AUC for cash falling below half, \DecDebtDelta{} for new borrowing and \DecCapexDelta{} for capex cuts, with intervals above zero, and \DecDivDelta{} for dividend cuts, with an interval that touches zero (Table~\ref{tab:decisions}). Two loops are the only channel through which the model produces some events at all: without the market-access cliff its cash practically never falls below half (AUC \DecCashNoRtwo{} against \DecCashTwin), and without cash conservation dividends are never cut. By the rule written for it, H3 is \HThreeVerdict, but for those events the comparator never produces the event, so the gain is mechanical; at a 70\% cash threshold, where the loop-free model does produce it, it predicts slightly better (Table~\ref{tab:thresholds}). We read H3 as a statement about the model's structure.
 
-\begin{table}[t]
-\centering\scriptsize
-\caption{2020--21 cash burn, predictors frozen on 20 February 2020}
-\label{tab:covid}
-\input{tables/covid.tex}
-\par\smallskip
-\begin{minipage}{\linewidth}\footnotesize
-Spearman correlation between each risk-oriented predictor and realized burn severity. Raw burn: cumulative FCF over the quarters reported between mid-January 2020 and mid-July 2021 (2020Q1--2021Q2 for calendar-year firms) as a share of trailing revenue, sign reversed; abnormal burn: the same after subtracting each company's pre-2020 run-rate from every quarter.
-\end{minipage}
-\end{table}
+\paragraph{Downturns as decompositions} Given each industry's realized revenue shock in the 2015, 2020 and 2022 downturns, the simulator's fragility score is associated with abnormal cash burn in rank regressions that control for the shock, the FCF margin and the health formula ($t=\EpiFifteenTRobust$, \EpiTwentyTRobust{} and \EpiTwentyTwoTRobust{} with industry clustering), so the rule of the earlier evaluation, a $t$-statistic above 2 in 2015 and 2022, is met. Because the shock is realized, this is a decomposition, not a forecast: once the hit is known, the simulated fragility is associated with who bleeds most, but filings cannot say whom a downturn will hit (Appendix~\ref{app:online}).
 
-Table~\ref{tab:exposure} gives each firm the median realized revenue shock of its industry peers (leave-one-out, 2-digit SIC; median depth \ExpDepth) instead of the uniform freeze. Read at that depth, the twin ranks raw burn better (\ExpTwinRaw{} against \ExpUniformRaw). For abnormal burn, the industry shock alone and the twin at the shock have the same modest correlation (\ExpOnlyAbn{} and \ExpTwinAbn). In a rank regression that also contains the FCF margin and the health formula, with errors clustered by industry, the twin's stress score at the industry shock is significant ($t$ = \ExpTwinAbnT), while the formula, which sees the same balance sheet without simulation, has a negative coefficient ($t$ = \ExpFormulaAbnT). Because the shock is realized, the regression decomposes the outcome rather than forecasting it: given the exposure, the simulated fragility is associated with who suffered more than usual; what filings cannot supply is the exposure.
-
-The same design applies to any downturn in the panel. Table~\ref{tab:episodes} gives each firm its industry's realized
-revenue shock over the eight quarters after three February cutoffs: 2015 (the commodity bust), 2020 and 2022 (the rate
-shock). The 2022 episode is a downturn for some industries rather than for the economy: the median industry shock is \EpiTwentyTwoDepth, against \EpiTwentyDepth{} in 2020. The design reads the twin's score under a generic demand shock of that depth and regresses abnormal burn on the shock,
-the twin, the FCF margin and the health formula, with errors clustered by industry (\EpiFifteenClusters--\EpiTwentyTwoClusters{} clusters). The twin's $t$-statistic is
-\EpiFifteenTRobust, \EpiTwentyTRobust{} and \EpiTwentyTwoTRobust; by the pre-specified rule (above 2 in 2015 and 2022) the finding
-\EpiVerdict. The formula's coefficient is negative in all three. For 2020 the numbers differ from those of Table~\ref{tab:exposure}, which measures the shock as the worst year-on-year revenue change and the burn over 2020Q1--2021Q2, while this design uses the eight quarters after the cutoff for both. A filing-based twin cannot say whom a downturn will hit; once the hit is known, its fragility measure is associated with who bleeds most.
-
-\begin{table}[t]
-\centering\scriptsize
-\caption{Fragility given exposure in three downturns}
-\label{tab:episodes}
-\input{tables/episodes.tex}
-\par\smallskip
-\begin{minipage}{\linewidth}\footnotesize
-Rank regression of burn severity over the eight quarters after the cutoff on the percentile ranks of the industry's
-leave-one-out realized revenue shock, the twin's stress score at that shock, the trailing FCF margin and the health
-formula; $t$-statistics clustered by 2-digit SIC industry. The shock uses realized information: this is a decomposition, not a forecast.
-\end{minipage}
-\end{table}
-
-\begin{table}[t]
-\centering\scriptsize
-\caption{Fragility and exposure in 2020}
-\label{tab:exposure}
-\input{tables/exposure.tex}
-\par\smallskip
-\begin{minipage}{\linewidth}\footnotesize
-Industry shock: leave-one-out median of peers' worst year-on-year revenue change in 2020--21 (2-digit SIC with at least five peers, else Fama--French industry); it uses realized information and is a decomposition, not a forecast. Rank regression: OLS of the percentile rank of burn severity on percentile ranks, $t$-statistics clustered by industry.
-\end{minipage}
-\end{table}
-
-\section{Forecasts and calibration}\label{sec:forecasts}
-For S\&P~500 members (today's, a sample selected on survival, and those of 2020), the twin's four-quarter predictive distributions of revenue improve on a seasonal random walk by \FcRevRw{} and on exponential smoothing by \FcRevEts{} in scaled CRPS ($t$ = \FcRevRwT{} and \FcRevEtsT; Table~\ref{tab:fc}). For cash, both benchmarks are better (\FcCashRw{} and \FcCashEts). Blending the twin into the random walk for cash, with the weight chosen on earlier origins, \CashHybVerdict{} the pre-specified rule only trivially. The skill is \CashHybSkill{} (CI \CashHybLo--\CashHybHi) because the selected weight falls from \CashLamHi{} to \CashLamLo{} after 2018: the best cash forecast is the random walk.
-
-Raw 90\% intervals are too narrow: they cover \CalRevRaw{} of revenue outcomes and \CalCashRaw{} of cash outcomes. Online conformal rescaling restores coverage to \CalRevConf{} and \CalCashConf{} on average (Table~\ref{tab:cal}, Figure~\ref{fig:cal}). It uses only errors whose target quarter ended at least 90 days before the forecast origin; by then most quarters, including fourth quarters reported in 10-Ks, have been filed. The question is whether this holds where it matters. It holds across horizons and firm sizes, but not in the stress year: for quarters from 2020Q2 to 2021Q1, conformal revenue intervals cover only \CalRevStress. The recalibration learns the average error of quiet years and cannot anticipate a regime break. For cash, the raw intervals do not widen for smaller firms ($t$ = \CalCashWidthSizeT{} for size in a regression of interval width) although their errors are larger ($t$ = \CalCashErrSizeT): the uncertainty model is too homogeneous across firms.
-
-We tested two remedies against a pre-specified target of 85--95\% coverage in every group (Appendix
-Table~\ref{tab:cal2}). Rescaling by size and volatility tercile, with factors learned from reported errors, gives
-\CalCondCash{} coverage for cash and \CalCondRev{} for revenue; it \CalCondCashOk{} the target for cash and
-\CalCondRevOk{} it for revenue. Adaptive conformal inference \citep{gibbs2021} reaches \CalAciCash{} and \CalAciRev{} and
-\CalAciRevOk{} the target for revenue. Neither fixes the regime break: for the 2020Q2--2021Q1 quarters revenue coverage
-is \CalCondRevStress{} with group scaling and \CalAciRevStress{} with adaptive conformal inference, which can only react after the
-errors are reported.
-
-\begin{table}[t]
-\centering\scriptsize
-\setlength{\tabcolsep}{3.5pt}
-\begin{threeparttable}
-\caption{Four-quarter probabilistic forecasts}
-\label{tab:fc}
-\input{tables/forecasts.tex}
-\begin{tablenotes}\footnotesize
-\item Skill: $1-\overline{\mathrm{CRPS}}_{\text{twin}}/\overline{\mathrm{CRPS}}_{\text{benchmark}}$, CRPS scaled by mean quarterly revenue. Better: share of pairs where the twin's CRPS is lower. DM $t$: Diebold--Mariano statistic clustered by firm and origin (negative: twin better).
-\end{tablenotes}
-\end{threeparttable}
-\end{table}
-
-\begin{table}[t]
-\centering\scriptsize
-\caption{Calibration of 90\% predictive intervals}
-\label{tab:cal}
-\input{tables/calibration.tex}
-\end{table}
-
-\begin{figure}[t]
-\centering\includegraphics[width=\linewidth]{figures/calibration.pdf}
-\caption{Coverage of raw and conformally rescaled 90\% intervals by forecast origin.}
-\label{fig:cal}
-\end{figure}
-
-\section{Sensitivity and hindsight}\label{sec:sensitivity}
-Several parameters are judgment calls rather than estimates: the credit line assumed when none is tagged, the prior on the fixed-cost share and its weight, the shrinkage of trend growth and cyclicality, the coverage thresholds of the market-access cliff, the speed of restructuring, and the rating-spread table. Table~\ref{tab:sens} varies each in turn. The incremental correlation against the four-quarter margin ranges from \SensIncrLo{} to \SensIncrHi, and the bankruptcy AUC, on the firm-years of the transmission test, from \SensBkLo{} to \SensBkHi. The one assumption that matters is the fixed-cost prior: with a prior of 20\% instead of 35\% the twin's median error falls to \SensMaeLow{} points, with 50\% it rises to \SensMaeHigh. The data prefer less operating leverage than the model assumes; this is the source of the overreaction seen in Section~\ref{sec:transmission}. \ifdefined\SobN When all eight assumptions vary jointly over wide ranges (a Saltelli design of
-\SobPoints{} points, each recalibrating the twin for \SobN{} random firm-years; Appendix Table~\ref{tab:sobolass}), the
-median error ranges from \SobMaeMin{} to \SobMaeMax{} and the incremental correlation against the four-quarter margin from
-\SobIncrMin{} to \SobIncrMax{}. The \SobTopLabel{} alone has a total-effect index of about \SobTopST{} for the error's
-variance, against \SobRestST{} for all other assumptions together. At the specified values, the same firm-years give a median error of \SobSpecMae{} and an incremental correlation of \SobSpecIncr.\fi We report the specified model and do not retune it on the test sample.
-
-Hindsight enters in three places; the first two are now removed, and the third can only be disclosed. GDP enters as the vintage published on each cutoff. Rating spreads come from the version of Damodaran's table published before each cutoff, recovered from the Internet Archive; for 2014 and 2021, whose archived copies postdate February, we use the previous year's table. Using the 2026 table instead, as the software does, changes nothing (Table~\ref{tab:sens}). The model's structure and priors were designed in 2026 with knowledge of the 2014--2024 data, which no backtest can undo. The decision rule for H2 was fixed before the full-sample test, and the weekly rebuild of the public twin now accumulates genuinely prospective predictions.
-
-\begin{table}[t]
-\centering\footnotesize
-\caption{Sensitivity to assumed parameters}
-\label{tab:sens}
-\input{tables/sensitivity.tex}
-\end{table}
+\paragraph{Non-accounting rivals (exploratory)} Firm age, recent restatements and non-reliance filings, late-filing notices and the industry's base rate predict a petition with an AUC of \RivAucNonacc{} on \RivN{} test firm-years (\RivEv{} events), against \RivAucBench{} for the accounting benchmarks and \RivAucTwin{} for the simulator. Adding the simulator to both raises the AUC by \RivTwinBeyond{} (CI \RivTwinBeyondLo--\RivTwinBeyondHi). Counting co-registrants that share filings as one firm leaves the cash-flow comparisons unchanged, since it affects only event counts and clusters.
 
 \section{Discussion}\label{sec:discussion}
 
-\paragraph{The hypotheses.} H1 is rejected: the twin's stress and baseline scores do not rank distress better than the trailing FCF margin or than its own scoring formula without simulation. H2 is accepted by the pre-specified rule, but the information it establishes does not translate into a reliable out-of-sample gain. H3 meets the rule written for it only mechanically: two of the four loops are necessary for the model to produce liquidity events, and whether they improve their prediction cannot be separated from that. The rules for H1 and H3 were written after the first results, so both evaluations are descriptive.
+\paragraph{The verdicts} Of the pre-specified tests, S1 succeeds, H2 survives by its rule, and the elasticity criterion and both pillar-B tests fail. The corrections were bug fixes, and they improved the typical error in every year. They did not make the simulator better than persistence, they overshot the response to revenue, and in a few firm-years whose revenue jumped from almost nothing they made the errors explode.
 
-\paragraph{Statistical, predictive and decision value.} The three are different, and the evidence separates them. The twin's transmission mechanics are statistically informative beyond persistence (an encompassing $t$-statistic of \TrEncTwinTTwoWay{} with errors clustered by firm and year). Their predictive value is small. Added with a weight of \TrLambdaLo--\TrLambdaHi{} to the best simple rule, they lower its error by a few percent; a simple rule added in the same way delivers most of that gain, and the remaining advantage for FCF does not survive a correction for multiple comparisons. Any decision value would lie where a simple rule has no answer: the timing of a breach when maturities and credit lines interact, the amount of new borrowing a stated scenario requires, whether a dividend survives. On those questions the twin is a structured calculator whose inputs are estimated and audited from filings. We have not shown that this value is large: its event probabilities add between \DecDivDelta{} and \DecCapexDelta{} in AUC to a logit of the static runway and the scores.
+\paragraph{Point forecasts} The simulator's departures from a long-window margin carry information about mean cash flow, which a small weight on them recovers out of sample in winsorized data. The gain is a few percent of the mean absolute error. Part of it is the generic benefit of combining forecasts, it is absent under median loss and on raw losses, and the model confidence set does not separate it from the margin's other combinations. A user who wants to use the simulator for point forecasts could shrink it toward the 16-quarter margin with a weight of about 0.2; the evidence supports a gain of a few percent in mean absolute error, and no more.
 
-\paragraph{What the twin is for.} A filing-based twin is not an early-warning system: its ranking of firms is that of its own scoring formula. It is a tool for conditional analysis of a specified shock, and its output should be shrunk toward persistence. In practice, a cash forecast should start from the long-window margin and adjust a fraction of the way toward the simulation.
+\paragraph{Uncertainty} The simulator's distributions are too narrow and its shortfall probabilities miscalibrated. Its path distribution should therefore not be reported as a probability without recalibration against outcomes. Whether the problem lies in the shock processes, in the treasury rules or in the outcome labels is not settled here. The simulator can still do scenario arithmetic (how much new borrowing a stated revenue path requires, when maturities bind), but this paper does not test the accuracy of such statements.
 
-\paragraph{External validity.} The universe is US non-financial SEC filers with at least \$50 million of revenue. The pipeline depends on standardized, tagged, point-in-time disclosure, which exists in a comparable form only under SEC XBRL and, since 2020--21, the European Single Electronic Format for annual reports of listed companies (without quarterly data). Among the \SmallN{} firm-years of firms with \$10--50 million of revenue, the pattern is the same: the twin's bankruptcy AUC is \SmallAucTwin{} against \SmallAucFormula{} for its formula (\SmallBk{} petitions), and its median cash-flow error is \SmallMaeTwin{} against \SmallMaeSixteen{} for the 16-quarter margin. Private firms report less often and less consistently, which affects calibration more than structure: the stock-and-flow core and the accounting identity carry over, but parameters estimated from 16 quarters would have to come from fewer annual observations, with more weight on priors. Banks and insurers need a different balance-sheet model. Market-based inputs, which structural credit models use, are a natural extension for listed firms.
+\paragraph{External validity} The universe is non-financial SEC filers reporting in US GAAP and US dollars with at least \$50 million of revenue. The pipeline depends on standardized, tagged, point-in-time disclosure, which exists in comparable form only under SEC XBRL and, since 2020--21, the European Single Electronic Format for annual reports. Among the \SmallN{} firm-years of firms with \$10--50 million of revenue, the pattern is the same: the simulator's median cash-flow error is \SmallMaeTwin{} against \SmallMaeSixteen{} for the 16-quarter margin, and its bankruptcy AUC \SmallAucTwin{} against \SmallAucFormula{} for its formula (\SmallBk{} petitions). Banks and insurers need a different balance-sheet model. All results concern one simulator; other designs may do better.
 
-\paragraph{Limitations.} The transmission test uses realized revenue, so it cannot separate errors in the model's mechanics from noise in reported cash flow. Bankruptcy is observed only through 8-K filings; firms that stop filing before petitioning, or that are acquired in distress, are not counted. Outcomes for firms that disappear are missing, so the transmission and burn tests condition on survival for eight quarters, which only \AttrShareBk{} of the firm-years followed by a petition achieve. Industry codes (SIC, GICS) are the current ones, not point-in-time, and realized outcomes include later restatements. Some XBRL items are tagged idiosyncratically: \AudGapsNew{} gaps remain in the quarterly panels, and the last quarter of a panel matches the company's last filing for \AudLatest{} of companies, short of the 98\% we had set as a target for the data.
+\paragraph{Limitations} The transmission and density tests use realized revenue, so they cannot separate errors in the model's mechanics from noise in reported cash flow, and they condition on eight quarters of survival; the universe is survivorship-free, but these samples are not. Bankruptcy and credit events are observed only through 8-K filings; firms that stop filing before petitioning, distressed exchanges and going-concern opinions are not counted. Industry codes are current, not point-in-time, and realized outcomes, including the outcomes that train the logits, come from the latest data and include later restatements. \AudGapsNew{} gaps remain in the quarterly panels. Outcomes are scaled by trailing revenue, which inflates errors when revenue is close to zero. The model does not represent net operating losses or the interest-deduction limit, pensions, leases or captive finance operations, which matter for firms such as car makers. It uses no market inputs (returns, volatility, factor loadings), which structural credit models use, and its scenarios are named presets with sources rather than supervisory scenarios. Two inputs carry look-ahead that a code review found after the run. The recession regime is driven by the NBER dating as published today, cut at each cutoff, while NBER announces turning points 6--21 months late, so around turning points such as 2020 the simulated paths could use information that was not yet public. The winsorization limits behind the Holm-adjusted secondary $p$-values (Table~\ref{tab:holm}) are computed on all years, including the test year; the confirmatory family uses training-year limits. Both are corrected in the next version of the software. Its structure and priors were designed in 2026 with knowledge of the 2014--2024 data, which no backtest can undo; the weekly rebuild of the public model now accumulates prospective forecasts.
 
 \section{Conclusion}\label{sec:conclusion}
-We built a transparent, automatically calibrated simulation model of the firm and asked what it knows that simple rules do not. Most of what it appeared to know was persistence, and the test that first suggested otherwise measured mean reversion. What remains is small and specific: given a revenue path, the direction of the simulation's departures from a long-window cash-flow margin is informative in an encompassing regression, and adding a small fraction of them to the margin improves out-of-sample predictions slightly, by little more than a simple rule added in the same way. The simulation does not help to rank firms by distress. These answers come from a design to which any simulation model of the firm can be held: a ladder of simple rivals, an encompassing test and an out-of-sample combination, on a survivorship-free panel with a census of bankruptcy petitions. The data, code and tests are public so that other models can be held to it.
+We built a transparent, automatically calibrated simulation model of the firm, corrected its implementation under rules written before any corrected result existed, and asked what it forecasts that persistence does not. The corrected model has a smaller typical error than the earlier one but is still less accurate than a 16-quarter cash-flow margin, and a few of its forecasts explode. What it adds to that margin is a small improvement in winsorized mean absolute error, partly the generic benefit of combining forecasts. Its predictive distributions and shortfall probabilities are worse than simple statistical rivals. The design, with several specifications on a frozen snapshot, a ladder of simple rivals, encompassing under two losses, a controlled family of comparisons, and density and event scores against statistical rivals, can be applied to other simulation models of the firm. The data, code and tests are public.
 
 \section*{Data and code availability}
-All code, the point-in-time pipeline, the EDGAR universe and bankruptcy census, the research experiments and the scripts that generate every table, figure and number in this paper are at \url{https://github.com/SpiliosDimakopoulos/fintwin} under the MIT license and archived on Zenodo (\href{https://doi.org/10.5281/zenodo.23434606}{doi:10.5281/zenodo.23434606}). The experiments run on free GitHub-hosted runners (\texttt{.github/workflows/research.yml}). An interactive version of the twin is at \url{https://spiliosdimakopoulos.github.io/fintwin/}. All inputs are public: SEC EDGAR, FRED and the Philadelphia Fed Real-Time Data Set.
+All code, the point-in-time pipeline, the EDGAR universe and bankruptcy census, the frozen snapshot (digest \texttt{\SnapDigest}), the research experiments and the scripts that generate every table, figure and number in this paper are at \url{https://github.com/SpiliosDimakopoulos/fintwin} under the MIT license and archived on Zenodo:\\ \href{https://doi.org/10.5281/zenodo.23434606}{doi:10.5281/zenodo.23434606}.\\ The pre-specification is \texttt{docs/REVISION\_PLAN\_3.md}; its history is in the repository. An interactive version of the model is at \url{https://spiliosdimakopoulos.github.io/fintwin/}. All inputs are public: SEC EDGAR, FRED and the Philadelphia Fed Real-Time Data Set.
 
-\section*{Use of AI tools}
-Software development, data analysis and drafting were assisted by an AI coding assistant (Claude, Anthropic). The author designed the study, reviewed all code, results and text, and takes full responsibility for the content.
+\section*{Declaration of competing interest}
+The author declares no competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.
 
-\bibliographystyle{plainnat}
+\section*{Funding}
+This research did not receive any specific grant from funding agencies in the public, commercial, or not-for-profit sectors.
+
+\section*{CRediT authorship contribution statement}
+\textbf{Spilios Dimakopoulos:} Conceptualization, Methodology, Software, Data curation, Formal analysis, Investigation, Visualization, Writing -- original draft, Writing -- review \& editing.
+
+\section*{Declaration of generative AI and AI-assisted technologies in the writing process}
+During the preparation of this work the author used Claude (Anthropic) in order to assist with software development, data analysis and drafting of the text. After using this tool, the author reviewed and edited the content as needed and takes full responsibility for the content of the publication.
+
+\section*{Acknowledgements}
+I thank the researchers who commented on earlier versions of this work; the density and shortfall tests, the multiple-comparison procedures, the data checks and the non-accounting rivals respond to their comments.
+
+\bibliographystyle{elsarticle-harv}
 \bibliography{references}
 
 \appendix
-\section{Additional material}
-
-\begin{table}[h]
-\centering\scriptsize
-\caption{Calibrated parameters}
-\label{tab:params}
-\begin{tabular}{lp{0.5\linewidth}l}
-\toprule
-Parameter & Estimate & Window \\
-\midrule
-Seasonal factors $S_q$ & median ratio to centred 4-quarter moving average & last 32 quarters \\
-Trend growth $\mu$ & median log growth, shrunk 50\% toward 1.2\%/quarter & last 12 quarters \\
-AR coefficient $\phi$, volatility $\sigma_g$ & OLS; median absolute deviation of residuals & last 32 quarters \\
-Tail index & Student-$t$ maximum likelihood on standardized residuals & growth residuals \\
-Cyclicality $\beta$ & regression of revenue on real-time nominal GDP growth, shrunk 50\% toward 1.5 & last 40 quarters \\
-Recession entry and exit & NBER recessions since 1947 & FRED \\
-Fixed costs $F$, variable ratio $v$ & penalized regression of cash costs on revenue, prior 35\% fixed & last 16 quarters \\
-Margin shock $m_t$ & AR(1) of cost-regression residuals; correlation with demand & last 16 quarters \\
-DSO, DIO, DPO, deposit days & averages of balance to revenue or costs & last 4 quarters \\
-Depreciation, capex, SBC ratios & medians & last 8 quarters \\
-Coupon & interest expense over debt & last 4 quarters \\
-Rollover share & two-year debt trend relative to maturities & last 8 quarters \\
-Discretionary financing volatility & robust s.d.\ of quarterly debt changes & last 20 quarters \\
-Maturity ladder & XBRL maturity schedule, else six-year average life & latest 10-K \\
-Credit facility & XBRL facility size, else 8\% of revenue (assumption) & latest filing \\
-Minimum cash & half the 10th-percentile cash balance & last 12 quarters \\
-Short-rate dynamics & Vasicek fit to the 3-month Treasury bill & since 2000 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[h]
-\centering\scriptsize
-\caption{Liquidity events at other thresholds (given realized revenue)}
-\label{tab:thresholds}
-\input{tables/thresholds.tex}
-\end{table}
-
-\begin{table}[h]
-\centering\scriptsize
-\caption{Coverage of 90\% intervals with group-conditional and adaptive conformal calibration}
-\label{tab:cal2}
-\input{tables/calibration2.tex}
-\end{table}
-
-\begin{table}[h]
-\centering\scriptsize
-\caption{Holm-adjusted $p$-values of the secondary comparisons}
-\label{tab:holm}
-\input{tables/holm.tex}
-\end{table}
-
-\ifdefined\SobN
-\begin{table}[h]
-\centering\scriptsize
-\caption{Global (Sobol) sensitivity of the transmission result to the assumed parameters}
-\label{tab:sobolass}
-\input{tables/sobol_assumptions.tex}
-\par\smallskip
-\begin{minipage}{\linewidth}\footnotesize
-First-order ($S_1$) and total ($S_T$) Sobol indices of the median absolute error and of the incremental correlation
-against the four-quarter margin, over a joint uniform design of 64 base samples; bootstrap CI over the base samples. With so few base samples the estimators are noisy: indices are truncated to $[0, 1]$ and first-order indices to the total index.
-\end{minipage}
-\end{table}
-\fi
-
-\section{Implementation}
-The Python reference engine (NumPy) performs calibration, experiments and exports. A line-for-line TypeScript port runs in a Web Worker, so the public dashboard needs no server. Golden runs exported from Python with identical pre-drawn shocks must agree to $10^{-6}$; the balance-sheet identity is checked by property-based tests; the data pipeline, including 52/53-week fiscal calendars, is tested end to end on synthetic XBRL; and a synthetic test checks that the transmission statistics reject a predictor that is merely smoother than the base rule. The research sample (\UniverseN{} companies) is run in 16 shards on free GitHub-hosted runners.
+\input{sections/appendix.tex}
 
 \end{document}

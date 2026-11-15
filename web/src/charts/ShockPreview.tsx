@@ -25,7 +25,7 @@ export function ShockPreview({ knobs, T }: { knobs: Knobs; T: number }) {
           <polyline points={`0,${y(1)} ${pts.join(" ")}`} fill="none" stroke="var(--s2)" strokeWidth={1.75} strokeLinejoin="round" />
           <text x={0} y={H - 2} fontSize={9.5} fontFamily="var(--font-mono)" fill="var(--muted)">revenue vs plan</text>
           <text x={w} y={H - 2} fontSize={9.5} fontFamily="var(--font-mono)" fill="var(--muted)" textAnchor="end">
-            {[s.refi_access.some((a) => a === 0) && "markets shut", anySpread && "spreads", anyRate && "rates"].filter(Boolean).join(" · ")}
+            {shockParts.join(" · ")}
           </text>
         </svg>
       )}

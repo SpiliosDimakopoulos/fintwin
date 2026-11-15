@@ -1,0 +1,39 @@
+FinTwin: data sources and their terms
+=====================================
+
+The MIT licence in LICENSE covers the FinTwin source code only. The data that the code downloads, and the data files
+derived from it (web/public/data/, engine/fintwin/data/*.csv, the frozen research snapshot, docs/paper/research.json),
+come from the sources below. This note summarises where they come from; it is not legal advice, and the terms of each
+source, not this file, are authoritative. If you redistribute or build on the data, check the source's current terms.
+
+1. SEC EDGAR (company facts, filings, 8-K Item 1.03 bankruptcy notices)
+   Source: U.S. Securities and Exchange Commission, https://www.sec.gov. Filings and the XBRL "company facts" API are
+   public information. SEC asks automated users to identify themselves with a User-Agent and to stay under
+   10 requests per second (https://www.sec.gov/os/webmaster-faq#developers); FinTwin does both. Derived company-level
+   figures in this repository (calibrated parameters, simulated outputs, scores) are computed by FinTwin from those
+   filings and are not SEC data. No endorsement by the SEC is implied.
+
+2. FRED (Federal Reserve Bank of St. Louis): macro series (GDP, interest rates, NBER recession indicator and others)
+   Source: https://fred.stlouisfed.org. Each series has its own original source and terms (some series are third-party
+   data republished by FRED, with their own copyright notices). Series are fetched at run time through the public CSV
+   endpoint; the frozen snapshot and web/public/data contain only the values the model used. See the notes on each
+   series page at FRED and https://fred.stlouisfed.org/legal/ before redistributing a series.
+
+3. Philadelphia Fed Real-Time Data Set for Macroeconomists (GDP vintages as published on past dates)
+   Source: Federal Reserve Bank of Philadelphia, https://www.philadelphiafed.org/surveys-and-data/real-time-data-research.
+   Used so that nominal GDP is the value available on the forecast date, not today's revised one. Please cite the
+   dataset (Croushore and Stark, 2001) and check the Bank's terms of use before redistributing the series.
+
+4. Damodaran synthetic-rating tables (interest coverage to rating and default spread)
+   Source: Aswath Damodaran, NYU Stern, https://pages.stern.nyu.edu/~adamodar/. The January tables of past years are
+   read from copies archived by the Internet Archive (Wayback Machine). The tables are the author's work; the values
+   in engine/fintwin/model/ratings.py are used as inputs with attribution, not republished as a dataset. Contact the
+   author for any use beyond that.
+
+5. Index membership lists (engine/fintwin/data/sp500_*.csv, universe_sp500.csv)
+   Constituent tickers and CIKs of the S&P 500 on named dates, taken from public revisions of the Wikipedia constituents
+   table (text under CC BY-SA 4.0) and checked against SEC filings. "S&P 500" is a trademark of S&P Dow Jones Indices;
+   FinTwin is not affiliated with or endorsed by it.
+
+The FinTwin code is MIT-licensed (LICENSE). The numbers FinTwin computes are the author's results, to be cited as in
+CITATION.cff; the underlying source data keeps the terms of its source.

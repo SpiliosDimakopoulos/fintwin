@@ -53,6 +53,18 @@ describe("clampScenario (guardrail for model output)", () => {
     expect(out.knobs).toEqual({ sales_depth: 0.95, refi_freeze: 3 });
     expect(out.levers).toEqual({ issue_equity: true });
   });
+
+  it("ignores keys inherited from Object.prototype", () => {
+    expect(clampScenario({ knobs: { toString: 1, constructor: 2 } as never, levers: {} }).knobs).toEqual({});
+  });
+});
+
+describe("named scenarios", () => {
+  it("matches stagflation as a word prefix and 1970s only as a whole word", () => {
+    expect(parseScenario("a stagflationary decade").knobs.rate_bp).toBe(300);
+    expect(parseScenario("back to the 1970s").knobs.rate_bp).toBe(300);
+    expect(parseScenario("model x1970s").matched).toBe(false);
+  });
 });
 
 describe("model output mapping", () => {
@@ -61,5 +73,53 @@ describe("model output mapping", () => {
     const sc = toScenario({ revenue_drop_pct: 70, quarters_at_bottom: 3, debt_markets_closed_quarters: 20, interest_rate_change_bp: -150, keep_paying_dividends: true });
     expect(sc.knobs).toEqual({ sales_depth: 0.7, sales_duration: 3, refi_freeze: 8, rate_bp: -150 });
     expect(sc.levers).toEqual({ cut_payouts: false });
+  });
+
+  it("converts percent to a fraction and clamps it to the slider range", async () => {
+    const { toScenario } = await import("./llm");
+    expect(toScenario({ revenue_drop_pct: 40 }).knobs).toEqual({ sales_depth: 0.4 });
+    expect(toScenario({ revenue_drop_pct: 140 }).knobs).toEqual({ sales_depth: 0.95 });
+  });
+
+  it("sets a lever only when the model asks for the non-default", async () => {
+    const { toScenario } = await import("./llm");
+    expect(toScenario({}).knobs).toEqual({});
+    expect(toScenario({}).levers).toEqual({});
+    expect(toScenario({ keep_paying_dividends: false, allow_emergency_equity_raise: false }).levers).toEqual({});
+    expect(toScenario({ allow_emergency_equity_raise: true }).levers).toEqual({ issue_equity: true });
+  });
+});
+
+describe("interpretation guards (WEB M6)", () => {
+  it("reads a percentage cost increase as a change in the cost, converted to points of revenue", () => {
+    const r = parseScenario("wages up 5% for two years");
+    expect(r.knobs.cost_pp).toBe(3); // 5% x 60% of revenue
+    expect(r.knobs.cost_duration).toBe(8);
+    expect(r.understood.join(" ")).toMatch(/5% higher costs read as 3pp/);
+    expect(parseScenario("inflation up 10%", {}, 0.5).knobs.cost_pp).toBe(5);
+  });
+
+  it("keeps explicit percentage points of revenue as they are", () => {
+    expect(parseScenario("costs up 4 percentage points").knobs.cost_pp).toBe(4);
+    expect(parseScenario("wages up 5 points for 6 quarters").knobs.cost_pp).toBe(5);
+  });
+
+  it("does not treat a bare year 2020 as the pandemic scenario", () => {
+    expect(parseScenario("this is worse than 2020").matched).toBe(false);
+    expect(parseScenario("a 2020-style freeze").knobs.sales_depth).toBe(0.7);
+    expect(parseScenario("another 2020").knobs.sales_depth).toBe(0.7);
+    expect(parseScenario("covid again").knobs.sales_depth).toBe(0.7);
+  });
+
+  it("does not mistake common words or shouting for companies", () => {
+    const names = { MTCH: "Match Group, Inc.", TGT: "Target Corp", ALL: "Allstate Corp", IT: "Gartner Inc", CCL: "Carnival Corp" };
+    expect(findCompany("Revenue will match last year", names)).toBeUndefined();
+    expect(findCompany("What if the target is missed", names)).toBeUndefined();
+    expect(findCompany("what if ALL customers leave", names)).toBeUndefined();
+    expect(findCompany("IT spending falls 20%", names)).toBeUndefined();
+    expect(findCompany("WHAT IF CCL LOSES HALF ITS BOOKINGS", names)).toBeUndefined();
+    expect(findCompany("Stress $ALL with a recession", names)).toBe("ALL");
+    expect(findCompany("Carnival loses half its bookings", names)).toBe("CCL");
+    expect(findCompany("CCL loses half its bookings", names)).toBe("CCL");
   });
 });

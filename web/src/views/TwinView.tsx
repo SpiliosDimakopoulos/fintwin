@@ -5,7 +5,7 @@ import { Waterfall } from "../charts/Waterfall";
 import { loadMemo, type Company, type Index, type Memo, type Meta } from "../data";
 import { RATINGS } from "../engine/ratings";
 import { fixed, futureQuarters, money, moneyTick, pct, prettyName, quarterLabel } from "../format";
-import { HealthScale, IconArrow, IconExternal, Meter, Metric, MetricText, Section, Status } from "../ui";
+import { HealthScale, IconArrow, IconExternal, Meter, Metric, MetricText, ModelNote, rowClick, Section, Status } from "../ui";
 
 const PARAMS: [string, string, (p: Company["params"]) => string][] = [
   ["mu", "Trend revenue growth", (p) => `${pct(Math.exp(p.mu * 4) - 1, 1)} a year`],
@@ -45,7 +45,7 @@ export function TwinView({ c, meta, index, onStress, onMachine, onOpen, onRewind
             <h1 className="display h-l" style={{ margin: "10px 0 14px" }}>{prettyName(c.name)}</h1>
             {memo && <p className="lede">{memo.headline}</p>}
             <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
-              <button className="btn" style={{ background: "var(--ink)", color: "var(--page)", borderColor: "var(--ink)", display: "inline-flex", gap: 8, alignItems: "center" }}
+              <button className="btn btn-primary"
                 onClick={() => onStress("pandemic")}>Stress-test {c.ticker} <IconArrow /></button>
               <button className="btn" onClick={onRewind}>Rewind in time</button>
               <button className="btn" onClick={onMachine}>See the mechanics</button>
@@ -70,10 +70,12 @@ export function TwinView({ c, meta, index, onStress, onMachine, onOpen, onRewind
           foot={`${pct(base.p_downgrade_below_ig)} chance of junk in 3 years`} info="Mapped from trailing interest coverage with Damodaran's table for large non-financial firms (Jan 2026)." />
         <MetricText label="Breaking point" value={rev.p50 == null ? "none" : `−${pct(rev.p50)}`}
           foot={rev.p50 == null ? "funds itself through a 95% drop" : "revenue drop for 50% breach odds"}
-          info="Reverse stress test: the smallest revenue drop, held for three quarters, that gives even odds of running out of cash. Solved by bisection." />
+          info="Reverse stress test: the smallest revenue drop (held three quarters, the first at half depth) that gives even odds of running out of cash. Solved by bisection." />
         <Metric label="Coverage under 1.5×" value={base.p_icr_below_1_5 * 100} format={(v) => v.toFixed(0)} unit="%"
           foot="probability within 3 years" info="Below 1.5× interest coverage the synthetic rating is single-B or worse and the twin narrows access to new debt." />
       </div>
+
+      <ModelNote />
 
       {/* ---------- peers ---------- */}
       {index.companies[c.ticker] && (
@@ -89,7 +91,7 @@ export function TwinView({ c, meta, index, onStress, onMachine, onOpen, onRewind
 
       {/* ---------- analyst notes ---------- */}
       {memo && (
-        <Section eyebrow="Analyst notes" title="Reading the twin" note="Written by a rule-based analyst from this company's simulation results. No language model, so every figure comes straight from the model output.">
+        <Section eyebrow="Analyst notes" title="Reading the twin" note={`Written ${memo.generated_by === "deterministic" ? "by a rule-based analyst" : `by ${memo.generated_by ?? "an automated analyst"}`} from this company's simulation results; every figure is checked against the model output. A description of model results, not a credit opinion or investment advice.`}>
           <p className="prose" style={{ marginBottom: 28 }}>{memo.summary}</p>
           <div className="cols-2">
             <div>
@@ -109,7 +111,7 @@ export function TwinView({ c, meta, index, onStress, onMachine, onOpen, onRewind
                 <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }} className="sub">{memo.resilience.map((r, i) => <li key={i}>{r}</li>)}</ul>
               </div>
               <div>
-                <h3 className="eyebrow" style={{ marginBottom: 10 }}>Watch in the next filings</h3>
+                <h3 className="eyebrow" style={{ marginBottom: 10 }}>To check in the next filings</h3>
                 <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }} className="sub">{memo.watch_list.map((r, i) => <li key={i}>{r}</li>)}</ul>
               </div>
             </div>
@@ -127,8 +129,8 @@ export function TwinView({ c, meta, index, onStress, onMachine, onOpen, onRewind
                 const s = c.presets[k];
                 const d = s.health_score - base.health_score;
                 return (
-                  <tr key={k} className="clickable" onClick={() => onStress(k)}>
-                    <td><div style={{ fontWeight: k === "base" ? 500 : 400 }}>{v.label}</div><div className="muted">{v.desc}</div></td>
+                  <tr key={k} className="clickable" {...rowClick(() => onStress(k))}>
+                    <td><a className="row-link" href={`#stress/${c.ticker}/${k}`} style={{ fontWeight: k === "base" ? 500 : 400 }}>{v.label}</a><div className="muted">{v.desc}</div></td>
                     <td style={{ verticalAlign: "middle" }}>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 30px 46px", gap: 10, alignItems: "center" }}>
                         <Meter value={s.health_score} /><span className="num">{s.health_score.toFixed(0)}</span>
@@ -138,7 +140,7 @@ export function TwinView({ c, meta, index, onStress, onMachine, onOpen, onRewind
                     <td className="r" style={{ verticalAlign: "middle" }}>{pct(s.p_breach, s.p_breach > 0 && s.p_breach < 0.1 ? 1 : 0)}</td>
                     <td className="r" style={{ verticalAlign: "middle" }}>{pct(s.p_downgrade_below_ig)}</td>
                     <td className="r" style={{ verticalAlign: "middle" }}>{pct(s.p_icr_below_1_5)}</td>
-                    <td style={{ verticalAlign: "middle", color: "var(--muted)" }}><IconArrow /></td>
+                    <td style={{ verticalAlign: "middle", color: "var(--muted)" }} aria-hidden="true"><IconArrow /></td>
                   </tr>
                 );
               })}

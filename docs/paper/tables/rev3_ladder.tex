@@ -1,0 +1,14 @@
+\begin{tabular}{lrrrr}
+\toprule
+Rung & Firm-years & Simulator median abs.\ error & 16q margin & Elasticity ratio \\
+\midrule
+v2-pre, legacy data layer & 3{,}216 & 11.72 & 7.09 & 2.98 \\
+v2-pre & 2{,}981 & 11.45 & 6.81 & 2.45 \\
++ F5 (consistent CFO residual and tax) & 2{,}981 & 10.48 & 6.81 & 2.71 \\
++ F4 (missing D\&A) & 2{,}981 & 10.41 & 6.81 & 2.69 \\
++ F1 (posterior cost prior, default $\tau$) & 2{,}981 & 8.91 & 6.81 & 1.89 \\
++ F2 (annual operating leverage) & 2{,}981 & 8.85 & 6.81 & 1.68 \\
++ F3 and the rest = v3 (defaults) & 2{,}981 & 8.33 & 6.81 & 0.82 \\
+v3, walk-forward $\tau$ and $\lambda$ & 2{,}981 & 8.39 & 6.81 & 0.81 \\
+\bottomrule
+\end{tabular}

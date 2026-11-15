@@ -1,6 +1,6 @@
 import { scaleLinear } from "d3-scale";
 import { area, line } from "d3-shape";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useSize } from "../hooks";
 
 export type FanLayer = {
@@ -29,9 +29,24 @@ type Props = {
 
 const M = { top: 12, right: 12, bottom: 24, left: 46 };
 
+/** Text alternative: the median path and the 5-95% range at the end, per layer, plus the realised end value. */
+function fanAlt(p: Props): string {
+  const parts = [p.ariaLabel ?? "Fan chart of simulated outcomes"];
+  const last = p.futureLabels.length - 1;
+  for (const l of p.layers) {
+    if (last < 0 || !l.bands[2]?.length) continue;
+    const m = l.bands[2], k = Math.min(last, m.length - 1);
+    parts.push(`${l.label}: median ${p.format(m[0])} in ${p.futureLabels[0]} to ${p.format(m[k])} in ${p.futureLabels[k]}, 5-95% range at the end ${p.format(l.bands[0][k])} to ${p.format(l.bands[4][k])}`);
+  }
+  const r = p.realized?.filter((v): v is number => v != null);
+  if (r?.length) parts.push(`${p.realizedLabel ?? "Realised"}: ${p.format(r[r.length - 1])} at the end`);
+  return parts.join(". ");
+}
+
 export function FanChart(p: Props) {
   const [ref, width] = useSize<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
+  const clipId = `fan-clip-${useId().replace(/\W/g, "")}`;
   const H = p.height ?? 240;
   const hist = p.history ?? [];
   const nh = hist.length;
@@ -110,7 +125,7 @@ export function FanChart(p: Props) {
   return (
     <div className="chart" ref={ref}>
       {width > 0 && (
-        <svg width={w} height={H} role="img" aria-label={p.ariaLabel ?? "Fan chart of simulated outcomes"}>
+        <svg width={w} height={H} role="img" aria-label={fanAlt(p)}>
           {yt.map((t) => (
             <g key={t}>
               <line className="gridline" x1={M.left} x2={w - M.right} y1={y(t)} y2={y(t)} />
@@ -139,10 +154,18 @@ export function FanChart(p: Props) {
               <path d={bandArea(l.bands[1], l.bands[3])} fill={l.color} opacity={0.18} />
             </g>
           ))}
-          {p.samplePaths?.map((sp, i) => (
-            <path key={i} d={medLine(sp)} fill="none" stroke={p.layers[p.layers.length - 1]?.color} strokeWidth={1} opacity={0.32}
-              pathLength={1} className="draw-path" style={{ animationDelay: `${(i % 20) * 22}ms` }} />
-          ))}
+          {p.samplePaths && (
+            // sample paths often leave the 5-95% band that sets the y-domain, so keep them inside the plot area
+            <g>
+              <defs><clipPath id={clipId}><rect x={M.left} y={M.top} width={w - M.left - M.right} height={H - M.top - M.bottom} /></clipPath></defs>
+              <g clipPath={`url(#${clipId})`}>
+                {p.samplePaths.map((sp, i) => (
+                  <path key={i} d={medLine(sp)} fill="none" stroke={p.layers[p.layers.length - 1]?.color} strokeWidth={1} opacity={0.32}
+                    pathLength={1} className="draw-path" style={{ animationDelay: `${(i % 20) * 22}ms` }} />
+                ))}
+              </g>
+            </g>
+          )}
           {p.layers.map((l) => (
             <path key={l.label} d={medLine(l.bands[2])} fill="none" stroke={l.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
           ))}

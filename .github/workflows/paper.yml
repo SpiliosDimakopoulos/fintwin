@@ -1,0 +1,54 @@
+# Build the paper PDF from an immutable ref. Triggered by pushing a tag `paper-*` (e.g. paper-r3); never by a branch.
+# The tag, not main or a branch tip, defines what the paper describes: code, uv.lock, committed docs/paper/research.json.
+# The weekly data refresh (data.yml) only works on main and never changes anything this job reads.
+#
+# What it checks: the tables, figures and number macros regenerated from the committed research.json are identical to
+# the committed ones (the paper cannot drift from its numbers), the LaTeX builds, and the PDF is stored as an artifact
+# and attached to the GitHub release of the tag. It does NOT rerun the 5,309-firm research (days of CPU); that is
+# `make research` on an 8-vCPU machine, see REPRODUCE.md.
+name: paper
+on:
+  push:
+    tags: ["paper-*"]
+permissions: { contents: read }
+env:
+  OPENBLAS_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+jobs:
+  build:
+    runs-on: ubuntu-24.04   # fixed image, so the TeX Live version is fixed too (texlive 2023 in 24.04)
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
+      - name: TeX Live
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends latexmk texlive-latex-recommended texlive-latex-extra \
+            texlive-fonts-recommended texlive-science texlive-pictures texlive-bibtex-extra texlive-publishers lmodern
+      - run: uv sync --locked
+        working-directory: engine
+      - name: Regenerate tables, figures and numbers from the committed research.json
+        run: make paper-assets
+      - name: Fail on drift between the committed tables/numbers and the regenerated ones
+        # figures are PDFs with embedded timestamps, so only the text outputs are compared
+        run: git diff --exit-code -- docs/paper/numbers.tex docs/paper/research_numbers.tex docs/paper/rev3_numbers.tex docs/paper/abstract.txt docs/paper/tables
+      - name: Build the PDF
+        run: make paper-pdf
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with: { name: "fintwin-${{ github.ref_name }}", path: docs/paper/fintwin.pdf, retention-days: 90 }
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with: { name: "fintwin-${{ github.ref_name }}", path: out }
+      - name: Attach the PDF to the tag's release
+        env: { GH_TOKEN: "${{ github.token }}", TAG: "${{ github.ref_name }}" }
+        run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "$TAG" --notes "Paper build from tag $TAG." --prerelease
+          gh release upload "$TAG" out/fintwin.pdf -R "$GITHUB_REPOSITORY" --clobber

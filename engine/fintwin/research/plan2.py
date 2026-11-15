@@ -14,11 +14,18 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from ..stochastic.calibrate import SPECIFIED_FIXED_SHARE_PRIOR
 from . import stats as S
 from . import transmission as T
+from .units import unit
+
+B_CASH = 300  # firm bootstrap draws for the cash-hybrid skill interval
+# a large departure from the 16-quarter margin: more than 8 pp, at a firm with revenue above 2 bn
+LARGE_DEPARTURE_PP = 8
+LARGE_REVENUE = 2e9
 
 PRIORS = {
-    "baseline": 0.35,
+    "baseline": SPECIFIED_FIXED_SHARE_PRIOR,
     "fixed_prior_low": 0.20,
     "fixed_prior_high": 0.50,
     "prior_share_05": 0.05,
@@ -42,6 +49,7 @@ def frame(panel: pd.DataFrame) -> pd.DataFrame:
         m = st.get("m", {})
         rec: dict = {
             "ticker": r.ticker,
+            "cluster": getattr(r, "cluster", r.ticker),
             "year": r.year,
             "industry": getattr(r, "industry", ""),
             "rev_change": float(rev.sum() / 2 - 100),
@@ -66,13 +74,18 @@ def frame(panel: pd.DataFrame) -> pd.DataFrame:
         ):
             v = st.get(key)
             rec[k] = float(np.sum(np.asarray(v, float))) if v is not None else np.nan
+        # the twin's totals are the specification's point forecast (transmission.point); v2 sums kept as *_sm
+        for v in ("cfo", "fcf", "ebitda", "capex"):
+            rec[f"twin_{v}_sm"] = rec[f"twin_{v}"]
+            if st.get(f"twin_{v}") is not None:
+                rec[f"twin_{v}"] = T.point(st, f"twin_{v}")
         for var in ("cfo", "fcf"):
             mv = m.get(f"{var}16")
             rec[f"N3_{var}"] = float(mv) * rev.sum() if mv is not None else np.nan
         rec["N3_capex"] = rec["N3_cfo"] - rec["N3_fcf"]
         rec["N5_capex"] = rec["ols_cfo"] - rec["ols_fcf"]
         for name, v in (st.get("sens") or {}).items():
-            rec[f"S_{name}_cfo"] = float(np.sum(np.asarray(v["cfo"], float)))
+            rec[f"S_{name}_cfo"] = T.sens_point(v, "cfo", bool(st.get("e1")))
             rec[f"S_{name}_health"] = v.get("health")
         rec["S_baseline_cfo"], rec["S_baseline_health"] = rec["twin_cfo"], rec["h_base"]
         rc = st.get("realized_cont") or {}
@@ -94,7 +107,7 @@ def frame(panel: pd.DataFrame) -> pd.DataFrame:
         recs.append(rec)
     df = pd.DataFrame(recs)
     for c in df.columns:
-        if c not in ("ticker", "industry"):
+        if c not in ("ticker", "cluster", "industry"):
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
 
@@ -210,10 +223,10 @@ def cash_hybrid(fc: pd.DataFrame) -> dict:
     crps_h = np.array([crps_gaussian(a, s_, t) for a, s_, t in zip(pred[m], sd[m], y[m], strict=True)])
     crps_rw = g["crps_rw"].to_numpy(float)[m]
     crps_tw = g["crps_twin"].to_numpy(float)[m]
-    firms = g["ticker"].to_numpy()[m]
+    firms = unit(g).to_numpy()[m]
     s_ = sc[m]
-    d = S.boot(lambda a, b_: 1 - np.mean(a) / np.mean(b_), [crps_h / s_, crps_rw / s_], firms, b=300)
-    return {
+    d = S.boot(lambda a, b_: 1 - np.mean(a) / np.mean(b_), [crps_h / s_, crps_rw / s_], firms, b=B_CASH)
+    out = {
         "n": int(m.sum()),
         "lambda": lams,
         "skill_hybrid_vs_rw": float(1 - np.mean(crps_h / s_) / np.mean(crps_rw / s_)),
@@ -221,6 +234,104 @@ def cash_hybrid(fc: pd.DataFrame) -> dict:
         "skill_twin_vs_rw": float(1 - np.mean(crps_tw / s_) / np.mean(crps_rw / s_)),
         "accepted": bool(S.ci(d)[1] >= 0 and (1 - np.mean(crps_h / s_) / np.mean(crps_rw / s_)) >= 0),
     }
+    out |= density_combos(g, oy)
+    return out
+
+
+TAUS = np.array([0.05, 0.25, 0.5, 0.75, 0.95])  # the twin's stored quantiles (experiments.py)
+
+
+def _quantile_grid(q: np.ndarray, m: int = 50) -> np.ndarray:
+    """(n x m) quantiles at tau_j = (j - 0.5) / m from the five stored quantiles: piecewise linear in the normal score
+    of tau, extrapolated with the outer segments' slopes, so the tails stay continuous and monotone."""
+    from scipy.stats import norm
+
+    z_k, z = norm.ppf(TAUS), norm.ppf((np.arange(m) + 0.5) / m)
+    q = np.sort(q, axis=1)
+    j = np.clip(np.searchsorted(z_k, z) - 1, 0, len(z_k) - 2)
+    slope = (q[:, j + 1] - q[:, j]) / (z_k[j + 1] - z_k[j])
+    return q[:, j] + slope * (z - z_k[j])
+
+
+def _crps_sorted(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """CRPS of equally weighted sorted samples (rows of x) at y: E|X - y| - 0.5 E|X - X'|."""
+    m = x.shape[1]
+    i = np.arange(1, m + 1)
+    return np.mean(np.abs(x - y[:, None]), axis=1) - (x * (2 * i - m - 1)).sum(axis=1) / (m * m)
+
+
+def density_combos(g: pd.DataFrame, oy: np.ndarray, m: int = 50, b: int = 300) -> dict:
+    """Density combinations of the random walk (Gaussian) and the twin, with lambda chosen on mean scaled CRPS
+    of forecasts already reported (the same rule as the location hybrid, which shifts the mean only).
+
+    linear_pool: F = (1 - lambda) F_rw + lambda F_twin. quantile_avg: Q = (1 - lambda) Q_rw + lambda Q_twin
+    (Vincentization). Both densities are discretized at m quantiles; the twin's from its five stored quantiles, so
+    its CRPS here is an approximation of the sample CRPS (both are reported). Skill is against the discretized RW."""
+    from scipy.stats import norm
+
+    y, rw, sd, sc = (g[c].to_numpy(float) for c in ("y", "rw_mu", "rw_sd", "scale"))
+    Q = np.array(g["q"].tolist(), float)
+    ok = np.isfinite(y) & np.isfinite(rw) & np.isfinite(sd) & (sd > 0) & np.isfinite(sc) & (sc > 0)
+    ok &= np.isfinite(Q).all(axis=1)
+    y, rw, sd, sc, Q, oy_ = y[ok], rw[ok], sd[ok], sc[ok], Q[ok], oy[ok]
+    firms = unit(g).to_numpy()[ok]
+    if len(y) < 50:
+        return {}
+    z = norm.ppf((np.arange(m) + 0.5) / m)
+    xr = rw[:, None] + sd[:, None] * z[None, :]
+    xt = _quantile_grid(Q, m)
+    grid = np.round(np.arange(0, 1.01, 0.05), 2)
+    # linear pool, closed form: CRPS = (1-l) A_r + l A_t - 0.5 [(1-l)^2 D_rr + l^2 D_tt + 2 l (1-l) D_rt]
+    A_r, A_t = np.mean(np.abs(xr - y[:, None]), 1), np.mean(np.abs(xt - y[:, None]), 1)
+    D_rr = 2 * (A_r - _crps_sorted(xr, y))
+    D_tt = 2 * (A_t - _crps_sorted(xt, y))
+    D_rt = np.concatenate(
+        [np.abs(xr[s, :, None] - xt[s, None, :]).mean(axis=(1, 2)) for s in np.array_split(np.arange(len(y)), 50)]
+    )
+
+    def pool(lam):
+        return (1 - lam) * A_r + lam * A_t - 0.5 * ((1 - lam) ** 2 * D_rr + lam**2 * D_tt + 2 * lam * (1 - lam) * D_rt)
+
+    def qavg(lam):
+        return _crps_sorted((1 - lam) * xr + lam * xt, y)
+
+    crps_r = _crps_sorted(xr, y) / sc
+    out: dict = {"twin_crps_discretized_vs_sample": None}
+    if "crps_twin" in g:
+        ct = g["crps_twin"].to_numpy(float)[ok]
+        out["twin_crps_discretized_vs_sample"] = float(np.nanmean(_crps_sorted(xt, y)) / np.nanmean(ct))
+    for name, fn in (("linear_pool", pool), ("quantile_avg", qavg)):
+        C = np.column_stack([fn(lam) / sc for lam in grid])  # n x lambdas, scaled CRPS
+        pred, lams = np.full(len(y), np.nan), {}
+        for yr in sorted(set(oy_)):
+            past = oy_ < yr - 1  # forecasts whose four quarters were all reported before this origin
+            if past.sum() < 200:
+                continue
+            j = int(np.argmin(C[past].mean(axis=0)))
+            lams[int(yr)] = float(grid[j])
+            pred[oy_ == yr] = C[oy_ == yr, j]
+        te = np.isfinite(pred)
+        if not te.any():
+            out[name] = {"n": 0}
+            continue
+        skill = float(1 - pred[te].mean() / crps_r[te].mean())
+        d = S.boot(
+            lambda a, c: 1 - np.mean(a) / np.mean(c),
+            [pred[te], crps_r[te]],
+            firms[te],
+            b=b,
+            seed=S.SEEDS["cash_pool"][0],
+        )
+        out[name] = {
+            "n": int(te.sum()),
+            "lambda": lams,
+            "skill_vs_rw": skill,
+            "skill_ci": S.ci(d),
+            "skill_twin_alone_vs_rw": float(1 - C[te, -1].mean() / crps_r[te].mean()),
+            "accepted": bool(S.ci(d)[1] >= 0 and skill >= 0),  # the location hybrid's rule (REVISION_PLAN_2 1.3)
+            "ci_excludes_zero": bool(S.ci(d)[0] > 0),
+        }
+    return out
 
 
 # ---------------------------------------------------------------- 3 calibration
@@ -251,7 +362,7 @@ def calibration(fc: pd.DataFrame, panel: pd.DataFrame) -> dict:
                 pool = pg if len(pg) >= 100 else past
                 c90[idx] = float(np.quantile(pool["s90"], 0.9))
         d["cond_hit"] = d["s90"] <= c90
-        # (b) adaptive conformal: alpha_t updated after each reported error (gamma = 0.005), quantile of past scores
+        # (b) adaptive conformal: alpha_t moves with the miscoverage of newly reported errors; quantile of past scores
         # forecasts are issued in yearly batches, so alpha is updated once per batch of newly reported errors with
         # their average miscoverage (Gibbs and Candes 2021, eq. 2, with the batch error rate), gamma = 0.05
         alpha, gamma, hits, widths = 0.10, 0.05, np.full(len(d), np.nan), np.full(len(d), np.nan)
@@ -297,14 +408,17 @@ def harrell_c(risk: np.ndarray, time: np.ndarray, event: np.ndarray) -> float:
     m = np.isfinite(risk) & np.isfinite(time)
     r, t, e = risk[m], time[m], event[m].astype(bool)
     num = den = 0.0
-    order = np.argsort(t)
-    r, t, e = r[order], t[order], e[order]
-    for i in range(len(t)):
-        if not e[i]:
+    # event times are quarters (few distinct values): for each, compare its events with the sorted risks of every
+    # firm-year still event-free afterwards, O(n log n) instead of O(n^2)
+    for tv in np.unique(t[e]):
+        later = np.sort(r[t > tv])
+        if not len(later):
             continue
-        later = t > t[i]
-        den += later.sum()
-        num += (r[i] > r[later]).sum() + 0.5 * (r[i] == r[later]).sum()
+        ri = r[e & (t == tv)]
+        below = np.searchsorted(later, ri, "left")
+        ties = np.searchsorted(later, ri, "right") - below
+        den += len(later) * len(ri)
+        num += below.sum() + 0.5 * ties.sum()
     return float(num / den) if den else np.nan
 
 
@@ -323,14 +437,23 @@ def timing(df: pd.DataFrame, firms: np.ndarray, b: int) -> dict:
             "static": (-1 if static == "st_cash_min" else 1) * df[static].to_numpy(float),
         }
         res: dict = {k: harrell_c(v, time, event) for k, v in risks.items()}
-        idx = np.random.default_rng(1).choice(len(df), min(len(df), 6000), replace=False)  # C is O(n^2)
-        d = S.boot(
-            lambda a, c_, t_, e_: harrell_c(a, t_, e_) - harrell_c(c_, t_, e_),
-            [risks["twin"][idx], risks["no_loops"][idx], time[idx], event[idx].astype(float)],
-            firms[idx],
-            b=b,
-        )
-        res["twin_minus_no_loops"] = {"diff": float(np.nanmean(d)), "ci": S.ci(d)}
+        # the paired difference on the firm-years where both risks exist, point estimate and bootstrap alike
+        # (revision 2 compared C-indices of different samples and bootstrapped a random 6000-row subsample)
+        both = np.isfinite(risks["twin"]) & np.isfinite(risks["no_loops"])
+        cols = [risks["twin"][both], risks["no_loops"][both], time[both], event[both].astype(float)]
+
+        def diff(a, c_, t_, e_):
+            return harrell_c(a, t_, e_) - harrell_c(c_, t_, e_)
+
+        d = S.boot(diff, cols, firms[both], b=b) if both.sum() > 1 else np.array([np.nan])
+        est = float(diff(*cols)) if both.sum() > 1 else np.nan
+        res["twin_minus_no_loops"] = {
+            "diff": float(np.nanmean(d)),
+            "ci": S.ci(d),
+            "est": est,
+            "p_centered": S.p_centered(est, d),
+            "n": int(both.sum()),
+        }
         res["events"] = int(event.sum())
         out[ev] = res
     return out
@@ -422,13 +545,21 @@ def episodes(panel: pd.DataFrame, b: int) -> dict:
 
 
 # ---------------------------------------------------------------- 4.5 FCF mechanism
-def _combo(b_: np.ndarray, adj: np.ndarray, real: np.ndarray, yrs: np.ndarray, lo: float, hi: float) -> np.ndarray:
-    """Walk-forward combination base + lambda * (adjuster - base), lambda chosen on earlier years."""
+def _combo(
+    b_: np.ndarray, adj: np.ndarray, real: np.ndarray, yrs: np.ndarray, lo: float | None, hi: float | None
+) -> np.ndarray:
+    """Walk-forward combination base + lambda * (adjuster - base), lambda chosen on earlier years.
+
+    `lo`, `hi`: winsorization limits of the training loss; None takes each year's limits from its training years
+    only (transmission.train_bounds)."""
     pr = np.full(len(b_), np.nan)
+    bnd = T.train_bounds(real, yrs, "train") if lo is None else None
     for y in sorted(set(yrs)):
         tr = (yrs <= y - 3) & np.isfinite(b_) & np.isfinite(adj) & np.isfinite(real)
         if tr.sum() < 200:
             continue
+        if bnd is not None:
+            lo, hi = bnd[int(y)]
         err = [
             np.mean(np.abs(np.clip(b_[tr] + lam * (adj[tr] - b_[tr]), lo, hi) - np.clip(real[tr], lo, hi)))
             for lam in T.LAMBDAS
@@ -458,18 +589,36 @@ def fcf_mechanism(df: pd.DataFrame) -> dict:
         e_t = np.mean(np.abs(np.clip(pt[m], lo, hi) - np.clip(real[m], lo, hi)))
         e_n = np.mean(np.abs(np.clip(pn[m], lo, hi) - np.clip(real[m], lo, hi)))
         out[var] = {"mae_twin_combo": float(e_t), "mae_null_combo": float(e_n), "gain": float(e_n - e_t)}
-    g_fcf = out["fcf"]["gain"]
-    out["capex_share_of_fcf_gain"] = float(out["capex"]["gain"] / g_fcf) if g_fcf else None
-    out["capex_hypothesis_holds"] = bool(
-        out["capex_share_of_fcf_gain"] is not None and out["capex_share_of_fcf_gain"] > 0.5
-    )
+        # limits from training years only, for the weight and for the evaluation of each test year
+        bnd = T.train_bounds(real, yrs, "train")
+        LO = np.array([bnd.get(int(y), (np.nan, np.nan))[0] for y in yrs])
+        HI = np.array([bnd.get(int(y), (np.nan, np.nan))[1] for y in yrs])
+        pt, pn = _combo(b_, tw, real, yrs, None, None), _combo(b_, nl, real, yrs, None, None)
+        m = np.isfinite(pt) & np.isfinite(pn) & np.isfinite(real) & np.isfinite(LO)
+        e_t = np.mean(np.abs(np.clip(pt[m], LO[m], HI[m]) - np.clip(real[m], LO[m], HI[m])))
+        e_n = np.mean(np.abs(np.clip(pn[m], LO[m], HI[m]) - np.clip(real[m], LO[m], HI[m])))
+        out[var]["train_bounds"] = {
+            "mae_twin_combo": float(e_t),
+            "mae_null_combo": float(e_n),
+            "gain": float(e_n - e_t),
+            "mae_twin_combo_unwinsorized": float(np.mean(np.abs(pt[m] - real[m]))),
+            "mae_null_combo_unwinsorized": float(np.mean(np.abs(pn[m] - real[m]))),
+            "n": int(m.sum()),
+        }
+    for key, src in (("", lambda v: out[v]["gain"]), ("_train_bounds", lambda v: out[v]["train_bounds"]["gain"])):
+        g_fcf = src("fcf")
+        share = float(src("capex") / g_fcf) if g_fcf else None
+        out[f"capex_share_of_fcf_gain{key}"] = share
+        out[f"capex_hypothesis_holds{key}"] = bool(share is not None and share > 0.5)
     return out
 
 
 # ---------------------------------------------------------------- 4.6 two-way bootstrap, Holm
-def boot_two_way(stat, cols: list[np.ndarray], firms: np.ndarray, years: np.ndarray, b: int = 300) -> np.ndarray:
+def boot_two_way(
+    stat, cols: list[np.ndarray], firms: np.ndarray, years: np.ndarray, b: int = 300, seed: int | None = None
+) -> np.ndarray:
     """Pigeonhole bootstrap: resample firms and years independently and keep the firm-years in both draws."""
-    rng = np.random.default_rng(11)
+    rng = np.random.default_rng(S.SEEDS["boot_two_way"][0] if seed is None else seed)
     fu, yu = pd.unique(firms), pd.unique(years)
     fi = {f: np.flatnonzero(firms == f) for f in fu}
     out = np.empty(b)
@@ -495,7 +644,7 @@ def holm(pvals: dict[str, float]) -> dict[str, float]:
 
 def robustness_stats(tdf: pd.DataFrame, b: int) -> dict:
     """Key transmission statistics with firm x year clustering."""
-    firms, years = tdf["ticker"].to_numpy(), tdf["year"].to_numpy()
+    firms, years = unit(tdf).to_numpy(), tdf["year"].to_numpy()
     real, t1, n3 = (tdf[c].to_numpy(float) for c in ("real_cfo", "T1_cfo", "N3_cfo"))
     d = boot_two_way(S.rho, [t1 - n3, real - n3], firms, years, b)
     return {"incr_twin_vs_16q": S.rho(t1 - n3, real - n3), "ci_two_way": S.ci(d)}
@@ -549,7 +698,7 @@ def examples(panel: pd.DataFrame) -> dict:
     df = frame(panel)
     df["cik"] = panel.set_index("ticker")["cik"].groupby(level=0).first().reindex(df["ticker"]).to_numpy()
     dep, miss = df["twin_cfo"] - df["N3_cfo"], df["real_cfo"] - df["N3_cfo"]
-    big = (dep.abs() > 8) & (np.exp(df["log_rev"]) > 2e9)
+    big = (dep.abs() > LARGE_DEPARTURE_PP) & (np.exp(df["log_rev"]) > LARGE_REVENUE)
     out: dict = {
         "large_departures": int(big.sum()),
         "share_right_sign": float((np.sign(dep[big]) == np.sign(miss[big])).mean()) if big.any() else None,
@@ -622,17 +771,12 @@ def attrition(panel: pd.DataFrame) -> dict:
     return out
 
 
-def _safe(fn, *args) -> dict:
-    """Run one analysis; a failure (e.g. outcomes missing in an older run) is recorded instead of stopping the rest."""
-    try:
-        return fn(*args)
-    except Exception as e:  # noqa: BLE001
-        return {"error": f"{type(e).__name__}: {e}"}
+_safe = S._safe  # a failure (e.g. outcomes missing in an older run) is recorded instead of stopping the rest
 
 
 def section(panel_all: pd.DataFrame, panel: pd.DataFrame, fc: pd.DataFrame, b: int) -> dict:
     df = frame(panel)
-    firms = df["ticker"].to_numpy() if len(df) else np.array([])
+    firms = unit(df).to_numpy() if len(df) else np.array([])
     out: dict = {
         "revised_spec": _safe(revised_spec, df, firms, b),
         "overreaction": _safe(overreaction, df),

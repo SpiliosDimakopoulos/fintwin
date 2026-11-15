@@ -5,7 +5,7 @@ import { RATINGS } from "../engine/ratings";
 import type { Knobs } from "../engine/types";
 import { fixed, futureQuarters, money, pct, prettyName } from "../format";
 import { useSimulation } from "../hooks";
-import { Section, Skeleton, Status } from "../ui";
+import { LoadError, ModelNote, Section, Skeleton, Status } from "../ui";
 
 const SCEN = ["base", "rates_200", "recession", "pandemic", "stagflation", "credit_crunch"] as const;
 
@@ -18,8 +18,11 @@ export function VersusView({ index, pair, onPair, onOpen }: {
   const [scen, setScen] = useState<string>("pandemic");
   const [ca, setCa] = useState<Company | null>(null);
   const [cb, setCb] = useState<Company | null>(null);
-  useEffect(() => { onPair(a, b); setCa(null); loadCompany(a).then(setCa); }, [a]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { onPair(a, b); setCb(null); loadCompany(b).then(setCb); }, [b]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [failed, setFailed] = useState<string[]>([]);
+  const load = (t: string, set: (c: Company) => void) => loadCompany(t).then(set).catch((e) => { console.error(e); setFailed((f) => [...f, t]); });
+  const failedNow = [a, b].find((t) => failed.includes(t));
+  useEffect(() => { onPair(a, b); setCa(null); load(a, setCa); }, [a]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { onPair(a, b); setCb(null); load(b, setCb); }, [b]); // eslint-disable-line react-hooks/exhaustive-deps
   const knobs: Knobs = useMemo(() => ({ ...index.meta.presets[scen].knobs }), [scen, index]);
   const sa = useSimulation(ca?.params ?? null, knobs, index.meta.levers, 4000).summary;
   const sb = useSimulation(cb?.params ?? null, knobs, index.meta.levers, 4000).summary;
@@ -28,7 +31,7 @@ export function VersusView({ index, pair, onPair, onOpen }: {
   const picker = (value: string, set: (t: string) => void, color: string, label: string) => (
     <label style={{ display: "grid", gap: 6 }}>
       <span className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 8 }}><span className="sw-line" style={{ background: color, width: 20 }} />{label}</span>
-      <select value={value} onChange={(e) => set(e.target.value)} style={{ fontSize: 15, padding: "8px 10px" }} aria-label={label}>
+      <select value={value} onChange={(e) => set(e.target.value)} style={{ fontSize: 15, padding: "8px 10px" }}>
         {options.map(([t, e]) => <option key={t} value={t}>{t} · {prettyName(e.name)}</option>)}
       </select>
     </label>
@@ -64,7 +67,7 @@ export function VersusView({ index, pair, onPair, onOpen }: {
       </div>
       <p className="muted">{index.meta.presets[scen].desc}</p>
 
-      {!ca || !cb ? <Skeleton h={420} /> : (
+      {failedNow ? <LoadError what={`the twin for ${failedNow}`} /> : !ca || !cb ? <Skeleton h={420} /> : (
         <>
           <Section eyebrow="Head to head" title={scen === "base" ? "Under normal conditions" : `In a ${index.meta.presets[scen].label.toLowerCase()}`}>
             <div className="table-wrap">
@@ -107,6 +110,7 @@ export function VersusView({ index, pair, onPair, onOpen }: {
               {sb && <span className="sub">{b}: <Status health={sb.healthScore} /> · breach {pct(sb.pBreach, 1)}</span>}
               <span className="muted">Net debt/EBITDA tolerance: {fixed(ca.params.sector_tol ?? 1, 2)}× vs {fixed(cb.params.sector_tol ?? 1, 2)}× sector norm</span>
             </div>
+            <ModelNote />
           </Section>
         </>
       )}

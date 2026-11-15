@@ -1,4 +1,63 @@
+import os
+import socket
+
+import numpy as np
+import pandas as pd
 import pytest
+from hypothesis import settings
+
+import fintwin.stochastic.calibrate as calibrate_mod
+
+# Small bootstraps in tests: the research defaults (B = 10,000 for the test family) take minutes.
+os.environ.setdefault("FINTWIN_B_FAMILY", "200")
+os.environ.setdefault("FINTWIN_B_LAD", "20")
+
+# CI runs the property tests on a fixed example sequence (HYPOTHESIS_PROFILE=ci), so a failure reproduces anywhere.
+settings.register_profile("ci", derandomize=True)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
+
+_SWITCHES = (
+    "FINTWIN_SPEC",
+    "FINTWIN_FIXES",
+    "FINTWIN_SELECTION",
+    "FINTWIN_DATA_LEGACY",
+    "FINTWIN_FROZEN",
+    "FINTWIN_FILL_ONLY",
+)
+_LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "slow: bootstrap, Monte Carlo or stats-pipeline tests (deselect with -m 'not slow')"
+    )
+    config.addinivalue_line("markers", "network: the test may open a network connection")
+
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch):
+    """The specification switches come from the test, never from the developer's shell."""
+    for k in _SWITCHES:
+        monkeypatch.delenv(k, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_network(request, monkeypatch):
+    """A test that forgets to patch requests fails here instead of calling SEC or FRED (loopback stays open)."""
+    if request.node.get_closest_marker("network"):
+        return
+    real_connect, real_connect_ex = socket.socket.connect, socket.socket.connect_ex
+
+    def guard(real):
+        def wrapper(self, address, *a):
+            if self.family in (socket.AF_INET, socket.AF_INET6) and address[0] not in _LOCAL_HOSTS:
+                raise RuntimeError(f"test tried to open a network connection to {address!r}")
+            return real(self, address, *a)
+
+        return wrapper
+
+    monkeypatch.setattr(socket.socket, "connect", guard(real_connect))
+    monkeypatch.setattr(socket.socket, "connect_ex", guard(real_connect_ex))
 
 
 def make_params(**over) -> dict:
@@ -87,3 +146,26 @@ def make_params(**over) -> dict:
 @pytest.fixture
 def params():
     return make_params()
+
+
+@pytest.fixture
+def macro(monkeypatch):
+    """Stub the NBER/GDP regime and return a quarterly rate frame, so calibration runs offline."""
+    gdp = pd.Series(0.05 + 0.01 * np.sin(np.arange(80) / 3), index=pd.date_range("2005-03-31", periods=80, freq="QE"))
+    monkeypatch.setattr(
+        calibrate_mod,
+        "recession_regime",
+        lambda asof=None: {
+            "hazard": 0.045,
+            "exit": 0.24,
+            "gdp_shortfall_q": 0.01,
+            "in_recession_now": False,
+            "gdp_yoy": gdp,
+            "n_recessions": 12,
+        },
+    )
+    idx = pd.date_range("2000-03-31", "2025-12-31", freq="QE")
+    return pd.DataFrame(
+        {"short_rate": 0.02 + 0.01 * np.sin(np.arange(len(idx)) / 8), "long_rate": 0.035, "credit_spread": 0.02},
+        index=idx,
+    )

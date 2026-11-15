@@ -17,11 +17,12 @@ import traceback
 import warnings
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from . import universe
-from .data.facts import load_company
+from .data.facts import contiguous, load_company
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "web" / "public" / "data"
@@ -29,10 +30,10 @@ CACHE = Path(__file__).resolve().parents[1] / ".cache"
 
 
 def _json(path: Path, obj) -> None:
-    from .export import _clean
+    from .export import dumps
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_clean(obj), separators=(",", ":")), encoding="utf-8")
+    path.write_text(dumps(obj, separators=(",", ":")), encoding="utf-8")
 
 
 def norms() -> None:
@@ -40,6 +41,8 @@ def norms() -> None:
     for t in universe.tickers():
         try:
             q = load_company(t).quarters
+            if not contiguous(q, 4):  # a gap row would make the 4-row sum a 3-quarter sum
+                continue
             ebitda = float((q["operating_income"] + q["da"].fillna(0)).tail(4).sum())
             nd = float(q["total_debt"].iloc[-1] - q["cash"].iloc[-1] - q["short_investments"].iloc[-1])
             if ebitda > 0 and np.isfinite(nd):
@@ -53,12 +56,11 @@ def norms() -> None:
 def shard(i: int, n: int) -> None:
     from .backtest.batch import company_cases
     from .data.fred import macro_quarterly
-    from .export import SHOWCASE, SOBOL_SET, company_block
+    from .export import SOBOL_SET, company_block
 
-    tickers = [
-        t for k, t in enumerate(universe.tickers() + [s for s in SHOWCASE if s not in universe.tickers()]) if k % n == i
-    ]
+    tickers = [t for k, t in enumerate(expected_tickers()) if k % n == i]
     macro = macro_quarterly()
+    (CACHE / "failed" / f"shard{i}.json").unlink(missing_ok=True)  # a fixed failure must not linger in the report
     failed = {}
     for t in tickers:
         t0 = time.time()
@@ -78,27 +80,47 @@ def shard(i: int, n: int) -> None:
     _json(CACHE / "failed" / f"shard{i}.json", failed)
 
 
-def build_index() -> dict:
-    from .export import SHOWCASE, meta_block
+def expected_tickers() -> list[str]:
+    from .export import SHOWCASE
 
-    companies = {}
+    base = universe.tickers()
+    return base + [t for t in SHOWCASE if t not in base]
+
+
+def failed_tickers() -> dict[str, str]:
+    """Failures of the latest shard runs. A record is dropped once the ticker's company file is newer than it."""
+    out = {}
+    for f in (CACHE / "failed").glob("*.json"):
+        for t, msg in json.loads(f.read_text(encoding="utf-8")).items():
+            cf = DATA / "companies" / f"{t}.json"
+            if not (cf.exists() and cf.stat().st_mtime > f.stat().st_mtime):
+                out[t] = msg
+    return out
+
+
+def build_index(tickers: list[str] | None = None, failed: dict[str, str] | None = None) -> dict:
+    """Index of this run's universe. Failed tickers (stale company file) and orphans (not in the universe) are left
+    out, so a stale week-old JSON is never re-stamped as current and `changes.diff` can report removals."""
+    from .export import index_entry, meta_block
+
+    want = set(expected_tickers() if tickers is None else tickers)
+    failed = failed_tickers() if failed is None else failed
+    companies, stale, orphans = {}, [], []
     for f in sorted((DATA / "companies").glob("*.json")):
         b = json.loads(f.read_text(encoding="utf-8"))
-        companies[b["ticker"]] = {
-            "name": b["name"],
-            "sector": b["sector"],
-            "gics": b.get("gics", ""),
-            "showcase": b["ticker"] in SHOWCASE,
-            "last_quarter": b["params"]["last_quarter"],
-            "matrix": {k: {"health": v["health_score"], "p_breach": v["p_breach"]} for k, v in b["presets"].items()},
-            # baseline score components, so next week's changes feed can say which one moved
-            "components": b["presets"]["base"].get("components"),
-        }
-    index = {
+        t = b["ticker"]
+        if t not in want:
+            orphans.append(t)
+        elif t in failed:
+            stale.append(t)
+        else:
+            companies[t] = index_entry(b)
+    index: dict[str, Any] = {
         "companies": companies,
         "meta": {**meta_block(), "generated": date.today().isoformat(), "n_companies": len(companies)},
     }
     _json(DATA / "index.json", index)
+    index["_stale"], index["_orphans"] = stale, orphans  # returned to aggregate for the build report, not written
     return index
 
 
@@ -111,8 +133,10 @@ def aggregate() -> None:
 
     # last week's index (committed by the weekly workflow) is the baseline for the "what changed" feed
     prev = json.loads((DATA / "index.json").read_text(encoding="utf-8")) if (DATA / "index.json").exists() else None
-    idx = build_index()
-    print(f"  index: {len(idx['companies'])} companies")
+    failed = failed_tickers()
+    idx = build_index(failed=failed)
+    stale, orphans = idx.pop("_stale"), idx.pop("_orphans")
+    print(f"  index: {len(idx['companies'])} companies ({len(stale)} stale left out, {len(orphans)} orphans)")
     if prev:
         hist_path = DATA / "changes.json"
         history = json.loads(hist_path.read_text(encoding="utf-8")) if hist_path.exists() else None
@@ -130,19 +154,25 @@ def aggregate() -> None:
     golden_cases(macro_quarterly())
     build_backtests()
     notes()
-    failed = {}
-    for f in (CACHE / "failed").glob("*.json"):
-        failed.update(json.loads(f.read_text(encoding="utf-8")))
     _json(
         DATA / "build_report.json",
-        {"generated": date.today().isoformat(), "failed": failed, "n_companies": len(idx["companies"])},
+        {
+            "generated": date.today().isoformat(),
+            "failed": failed,
+            "stale_excluded": stale,
+            "orphans": orphans,
+            "n_companies": len(idx["companies"]),
+        },
     )
     print(f"  failed: {len(failed)} {list(failed)[:12]}")
 
 
 if __name__ == "__main__":
     warnings.simplefilter("ignore")
-    cmd = sys.argv[1]
+    usage = "usage: python -m fintwin.pipeline norms | shard I N | aggregate"
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if cmd == "shard" and len(sys.argv) != 4:
+        raise SystemExit(usage)
     if cmd == "norms":
         norms()
     elif cmd == "shard":
@@ -150,4 +180,4 @@ if __name__ == "__main__":
     elif cmd == "aggregate":
         aggregate()
     else:
-        raise SystemExit(f"unknown command {cmd}")
+        raise SystemExit(f"unknown command {cmd!r}; {usage}")

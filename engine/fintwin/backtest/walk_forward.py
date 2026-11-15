@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
@@ -21,6 +23,7 @@ from ..scenarios.presets import DEFAULT_LEVERS, PRESETS, build_scenario
 from ..stochastic.calibrate import calibrate
 from ..stochastic.mc import run, summarize
 from ..stochastic.shocks import draw_shocks
+from .batch import _calendar, data_legacy, usable_prefix, window_ok
 from .scoring import crps_gaussian, crps_samples, interval_hit, pit
 
 CUTOFFS: dict[str, dict[str, str]] = {
@@ -32,6 +35,8 @@ BANDS = [5, 25, 50, 75, 95]
 
 def _realized(full: pd.DataFrame, after: pd.Timestamp, horizon: int) -> pd.DataFrame:
     r = full[full.index > after + pd.Timedelta(days=20)].head(horizon).copy()
+    if not data_legacy():  # keep the longest gap-free run of quarters, never a window across a hole
+        r = r.iloc[: usable_prefix(r, after)]  # the run `following` accepts, found in one pass
     r["cash_like"] = r["cash"] + r["short_investments"]
     r["ebitda"] = r["operating_income"] + r["da"]
     r["fcf"] = r["cfo"] - r["capex"]
@@ -40,17 +45,22 @@ def _realized(full: pd.DataFrame, after: pd.Timestamp, horizon: int) -> pd.DataF
 
 def _baseline(hist: pd.DataFrame, var: str, h: int) -> tuple[float, float]:
     """Naive benchmarks: seasonal random walk for revenue, plain random walk for balances."""
+    legacy = data_legacy()  # otherwise changes on the calendar series (gap rows blank), not across a hole
     if var == "revenue":
         s = hist["revenue"].dropna()
         same_season = s.iloc[-4 + ((h - 1) % 4)]
-        yoy = np.log(s / s.shift(4)).dropna().tail(20)
+        r = s if legacy else _calendar(hist, hist["revenue"])
+        yoy = np.log(r / r.shift(4)).dropna().tail(20)
         sd = float(yoy.std()) * np.sqrt(int(np.ceil(h / 4)))
         return float(same_season), float(same_season * sd)
     col = {"cash_like": None, "total_debt": "total_debt"}[var]
     s = (hist["cash"] + hist["short_investments"]) if col is None else hist[col]
-    s = s.dropna()
-    sd = float(s.diff().tail(20).std()) * np.sqrt(h)
-    return float(s.iloc[-1]), sd
+    if legacy:
+        s = s.dropna()
+        sd = float(s.diff().tail(20).std()) * np.sqrt(h)
+        return float(s.iloc[-1]), sd
+    s = _calendar(hist, s)
+    return float(s.dropna().iloc[-1]), float(s.diff().dropna().tail(20).std()) * np.sqrt(h)
 
 
 def forecast_backtest(ticker: str, cutoff_key: str, horizon: int = 8, n_paths: int = 4000) -> dict:
@@ -84,6 +94,8 @@ def forecast_backtest(ticker: str, cutoff_key: str, horizon: int = 8, n_paths: i
             if not np.isfinite(y[h]):
                 continue
             mu_b, sd_b = _baseline(hist.quarters, var, h + 1)
+            if not (np.isfinite(mu_b) and np.isfinite(sd_b)):
+                continue  # a NaN baseline would drop out of the crps_baseline mean but not out of the crps mean
             rows.append(
                 {
                     "h": h + 1,
@@ -157,6 +169,9 @@ def structural_backtest(p: dict, real: pd.DataFrame, eps: np.ndarray) -> dict:
     out = simulate(p, scn, eps, DEFAULT_LEVERS)
     actual = real["fcf"].values[:H]
     ok = np.isfinite(actual)
+    if not data_legacy() and not ok.all():  # cumulate only up to the first missing quarter, never through it
+        H = int(np.argmin(ok))
+        actual, ok = actual[:H], ok[:H]
     if ok.sum() == 0:
         return {}
     sim_cum = np.cumsum(out["fcf"][:, :H], axis=1)
@@ -206,20 +221,32 @@ UNIVERSE = [
 
 
 def cross_section(tickers: list[str] = UNIVERSE, n_paths: int = 2000) -> dict:
-    """Pre-COVID twin vulnerability vs realized 2020-21 liquidity stress, across a universe."""
+    """Pre-COVID twin vulnerability vs realized 2020-21 liquidity stress, across a universe.
+
+    The universe is hand-picked (with hindsight about which sectors 2020 hit), so the rank correlation is an
+    illustration, not the census result."""
     cutoff = CUTOFFS["pre_covid"]["date"]
     macro = macro_quarterly(cutoff)
     rows, failed = [], {}
     for t in tickers:
         try:
             hist = load_company(t, asof=cutoff)
+            # cheap data checks before calibration and simulation (no earlier 16-quarter screen here, so the
+            # four-quarter one is needed for the trailing revenue)
+            if not window_ok(hist.quarters, 4):
+                failed[t] = "no four consecutive quarters before the cutoff"
+                continue
+            full = load_company(t).quarters
+            win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
+            fcf = win["cfo"] - win["capex"]
+            if not data_legacy() and not np.isfinite(fcf.to_numpy(float)).all():
+                failed[t] = "missing cash-flow quarter in 2020-21"  # unknown, not zero burn
+                continue
             p = calibrate(hist, macro, 8)
             eps = draw_shocks(p, n_paths, 8, seed=7)
             sm_base = summarize(run(p, eps=eps))
             sm_stress = summarize(run(p, PRESETS["pandemic"]["knobs"], eps=eps))
-            full = load_company(t).quarters
-            win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
-            fcf = (win["cfo"] - win["capex"]).fillna(0).cumsum()
+            fcf = fcf.fillna(0).cumsum()
             pre_liq = p["cash0"]
             rev_ttm = float(hist.quarters["revenue"].tail(4).sum())
             debt_raise = float(win["total_debt"].max() - p["debt0"])
@@ -237,11 +264,16 @@ def cross_section(tickers: list[str] = UNIVERSE, n_paths: int = 2000) -> dict:
             )
         except Exception as e:  # keep the study going; report what failed and why
             failed[t] = f"{type(e).__name__}: {e}"
+    if not rows:
+        raise RuntimeError(f"cross_section: no ticker produced a row; failures: {failed}")
     df = pd.DataFrame(rows)
-    stats = {}
+    stats: dict[str, dict[str, Any]] = {}
     for x in ["health_stress", "p_breach_stress"]:
         for y in ["realized_min_cum_fcf_pct_rev", "realized_debt_raise_pct_rev"]:
             d = df[[x, y]].dropna()
+            if len(d) < 3:  # Spearman is undefined below three pairs
+                stats[f"{x}__{y}"] = {"spearman": None, "p_value": None, "n": len(d)}
+                continue
             rho, pval = spearmanr(d[x], d[y])
             stats[f"{x}__{y}"] = {"spearman": float(rho), "p_value": float(pval), "n": len(d)}
     return {"cutoff": cutoff, "rows": rows, "stats": stats, "failed": failed}

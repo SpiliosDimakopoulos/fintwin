@@ -1,16 +1,21 @@
 # Weekly refresh: pull the latest SEC filings and FRED data, rebuild every twin, re-run the large-sample
 # validation and the time machine, then redeploy the site. Runs on free GitHub-hosted runners.
+#
+# This workflow only ever works on `main` and only commits the dashboard's summary files. It never touches the paper:
+# the paper is built from a `paper-*` tag, from the committed docs/paper/research.json and the frozen snapshot
+# (see REPRODUCE.md), and none of those read what this job writes.
 name: data
 on:
   schedule: [{ cron: "0 6 * * 1" }]   # Mondays 06:00 UTC
   workflow_dispatch: {}
 concurrency: { group: data, cancel-in-progress: false }
-permissions: { contents: read, pages: write, id-token: write, actions: read }
+permissions: { contents: read }
 env:
   SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
   OPENBLAS_NUM_THREADS: "2"
   PYTHONWARNINGS: ignore
   SHARDS: 16
+  MIN_COMPANIES: 300   # below this the refresh is treated as broken and is neither committed nor deployed
 
 jobs:
   norms:
@@ -19,18 +24,22 @@ jobs:
     defaults: { run: { working-directory: engine } }
     outputs: { week: "${{ steps.week.outputs.week }}" }
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { ref: main }
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
       - id: week
         run: echo "week=$(date +%G-%V)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache/restore@v6
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with: { path: engine/.cache/edgar, key: "edgar-${{ steps.week.outputs.week }}", restore-keys: "edgar-" }
-      - run: uv sync
+      - run: uv sync --locked
       - name: Sector leverage norms (also warms the EDGAR cache)
         run: uv run python -m fintwin.pipeline norms
-      - uses: actions/cache/save@v6
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        # a re-run in the same ISO week finds the key taken; that is harmless, so do not fail on it
+        continue-on-error: true
         with: { path: engine/.cache/edgar, key: "edgar-${{ steps.week.outputs.week }}" }
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with: { name: norms, path: engine/fintwin/data/sector_norms.json }
 
   shard:
@@ -42,18 +51,20 @@ jobs:
       matrix: { i: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
-      - uses: actions/cache/restore@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { ref: main }
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with: { path: engine/.cache/edgar, key: "edgar-${{ needs.norms.outputs.week }}", restore-keys: "edgar-" }
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with: { name: norms, path: engine/fintwin/data }
-      - run: uv sync
+      - run: uv sync --locked
       - name: Start from empty output folders (only this shard's files are uploaded)
         run: rm -rf ../web/public/data/companies ../web/public/data/timeline .cache/batch .cache/failed
       - name: Company twins, validation and time machine (shard ${{ matrix.i }})
         run: uv run python -m fintwin.pipeline shard ${{ matrix.i }} $SHARDS
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: shard-${{ matrix.i }}
           include-hidden-files: true
@@ -65,47 +76,69 @@ jobs:
 
   aggregate:
     needs: [norms, shard]
-    if: ${{ !cancelled() }}
+    # all 16 shards must have finished: a missing shard would silently drop about 1/16 of the companies from the site
+    if: ${{ !cancelled() && needs.shard.result == 'success' }}
     runs-on: ubuntu-latest
-    permissions: { contents: write, actions: read }
+    permissions: { contents: write }
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
-      - uses: actions/cache/restore@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { ref: main }
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with: { path: engine/.cache/edgar, key: "edgar-${{ needs.norms.outputs.week }}", restore-keys: "edgar-" }
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with: { name: norms, path: engine/fintwin/data }
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with: { pattern: "shard-*", merge-multiple: true, path: . }
       - name: Index, calibration, backtests, goldens, analyst notes
         working-directory: engine
         run: |
-          uv sync
+          uv sync --locked
           uv run python -m fintwin.pipeline aggregate
+      - name: Coverage gate
+        run: |
+          n=$(find web/public/data/companies -name '*.json' | wc -l)
+          echo "$n company files"
+          test "$n" -ge "$MIN_COMPANIES"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
       - name: Parity check against the fresh goldens
         working-directory: web
         run: npm ci && npm test
       - name: Build site
         working-directory: web
         run: npm run build
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with: { path: web/dist }
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with: { name: site-data, path: web/public/data/, retention-days: 90 }
-      - name: Record the refresh in the repository (small summary files only)
+      - name: Record the refresh on main (small summary files only)
         run: |
-          git config user.name "SpiliosDimakopoulos"
-          git config user.email "spiliosdimakk@gmail.com"
+          # the bot identity, not a personal address; failures here must fail the job
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add web/public/data/build_report.json web/public/data/calibration.json web/public/data/index.json
-          git add web/public/data/changes.json web/public/data/feed.xml 2>/dev/null || true
-          git diff --cached --quiet || git commit -m "data: weekly refresh $(date -u +%Y-%m-%d)"
-          git push || echo "push skipped"
+          for f in changes.json feed.xml; do [ -f "web/public/data/$f" ] && git add "web/public/data/$f"; done
+          git diff --cached --quiet && exit 0
+          git commit -m "data: weekly refresh $(date -u +%Y-%m-%d) (run ${{ github.run_id }})"
+          # The site data was already uploaded as artifacts, so the rest of the working tree is not needed:
+          # drop it so the rebase can run. main may have moved during the run; retry if someone pushes meanwhile.
+          git restore .
+          for attempt in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1
 
   deploy:
     needs: aggregate
     runs-on: ubuntu-latest
+    permissions: { pages: write, id-token: write }
+    # one deploy at a time, shared with pages.yml
+    concurrency: { group: pages-deploy, cancel-in-progress: false }
     environment: { name: github-pages, url: "${{ steps.d.outputs.page_url }}" }
     steps:
       - id: d
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5

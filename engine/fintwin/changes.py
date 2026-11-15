@@ -12,11 +12,11 @@ from datetime import UTC, date, datetime
 from email.utils import format_datetime
 from xml.sax.saxutils import escape
 
+from .model.constants import HEALTH_WEIGHTS as WEIGHTS
+
 THRESHOLD = 5.0  # health points on the 0-100 scale
 HISTORY_WEEKS = 26
 SITE = "https://spiliosdimakopoulos.github.io/fintwin/"
-# weights of the health score's components (model.sd_model): runway, coverage rating, leverage, Altman Z''
-WEIGHTS = {"liq": 0.3, "cov": 0.3, "lev": 0.2, "solv": 0.2}
 LABELS = {"liq": "liquidity runway", "cov": "interest coverage", "lev": "leverage", "solv": "solvency (Altman Z'')"}
 
 
@@ -27,7 +27,7 @@ def _drivers(before: dict | None, after: dict | None) -> list[dict]:
     out = [
         {"component": k, "label": LABELS[k], "points": round(WEIGHTS[k] * (after[k] - before[k]), 1)}
         for k in WEIGHTS
-        if k in before and k in after
+        if before.get(k) is not None and after.get(k) is not None
     ]
     return sorted((d for d in out if abs(d["points"]) >= 0.5), key=lambda d: -abs(d["points"]))
 
@@ -41,7 +41,10 @@ def diff(prev: dict, new: dict, today: str | None = None) -> dict:
         filed = a.get("last_quarter") != b.get("last_quarter")
         if filed:
             filings.append({"ticker": t, "name": b["name"], "quarter": b.get("last_quarter")})
-        h0, h1 = a["matrix"]["base"]["health"], b["matrix"]["base"]["health"]
+        ba, bb = a["matrix"]["base"], b["matrix"]["base"]
+        h0, h1 = ba.get("health"), bb.get("health")
+        if h0 is None or h1 is None:  # a null score (NaN in the build) must not crash the weekly aggregate
+            continue
         if abs(h1 - h0) < THRESHOLD:
             continue
         s0, s1 = a["matrix"].get("pandemic", {}).get("health"), b["matrix"].get("pandemic", {}).get("health")
@@ -55,8 +58,8 @@ def diff(prev: dict, new: dict, today: str | None = None) -> dict:
                 "delta": round(h1 - h0, 1),
                 "stress_before": None if s0 is None else round(s0, 1),
                 "stress_after": None if s1 is None else round(s1, 1),
-                "p_breach_before": round(a["matrix"]["base"]["p_breach"], 3),
-                "p_breach_after": round(b["matrix"]["base"]["p_breach"], 3),
+                "p_breach_before": None if ba.get("p_breach") is None else round(ba["p_breach"], 3),
+                "p_breach_after": None if bb.get("p_breach") is None else round(bb["p_breach"], 3),
                 "new_filing": filed,
                 "quarter": b.get("last_quarter"),
                 "drivers": _drivers(a.get("components"), b.get("components")),
@@ -101,7 +104,9 @@ def rss(history: dict) -> str:
     """RSS 2.0 feed, one item per weekly rebuild."""
     items = []
     for w in history["weeks"]:
-        lines = [_line(m) for m in w["movers"][:12]] or ["No company's baseline health moved by 5 points or more."]
+        lines = [_line(m) for m in w["movers"][:12]] or [
+            f"No company's baseline health moved by {THRESHOLD:g} points or more."
+        ]
         pub = format_datetime(datetime.fromisoformat(w["date"]).replace(hour=8, tzinfo=UTC))
         items.append(
             "<item>"

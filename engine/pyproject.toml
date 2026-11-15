@@ -1,7 +1,23 @@
 [project]
 name = "fintwin"
-version = "0.1.0"
+version = "3.0.0"
 description = "Corporate financial health digital twin: SEC XBRL -> system dynamics -> Monte Carlo stress tests"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Spilios Dimakopoulos" }]
+keywords = ["finance", "xbrl", "monte-carlo", "system-dynamics", "financial-distress", "stress-testing"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Financial and Insurance Industry",
+  "Topic :: Office/Business :: Financial",
+  "Topic :: Scientific/Engineering",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.26",
@@ -11,6 +27,11 @@ dependencies = [
   "python-dotenv>=1.0",
   "statsmodels>=0.14",
 ]
+
+[project.urls]
+Homepage = "https://spiliosdimakopoulos.github.io/fintwin/"
+Repository = "https://github.com/SpiliosDimakopoulos/fintwin"
+Issues = "https://github.com/SpiliosDimakopoulos/fintwin/issues"
 
 [project.optional-dependencies]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
@@ -23,7 +44,6 @@ dev = [
     "pytest>=8",
     "hypothesis>=6.100",
     "matplotlib>=3.8",
-    "lxml>=6.1.3",
     "ruff>=0.17.1",
     "mypy>=2.4.0",
     "pytest-cov>=7.1.0",
@@ -61,6 +81,9 @@ check_untyped_defs = false
 [tool.coverage.run]
 # Network clients, the optional LLM memo, the optional local API and CLI orchestration are exercised by the
 # weekly data workflow, not by unit tests; everything else is measured.
+# The research code (research/*) that produces the paper's numbers is measured, not omitted.
 omit = ["fintwin/data/edgar.py", "fintwin/data/edgar_universe.py", "fintwin/data/fred.py", "fintwin/memo.py", "fintwin/api.py", "fintwin/pipeline.py",
-        "fintwin/backtest/walk_forward.py", "fintwin/backtest/batch.py", "fintwin/research/experiments.py",
-        "fintwin/research/__main__.py", "fintwin/research/assumption_sobol.py"]
+        "fintwin/backtest/walk_forward.py", "fintwin/backtest/batch.py"]
+
+[tool.coverage.report]
+fail_under = 85

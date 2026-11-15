@@ -1,4 +1,6 @@
 import { useState } from "react";
+// llm.ts only type-imports web-llm, so this static import does not pull the model runtime into the page bundle
+import { interpret, loadModel, MODEL_LABEL, MODEL_SIZE, webgpuAvailable } from "./llm";
 import { describe, findCompany, parseScenario, type Scenario } from "./parse";
 
 const EXAMPLES = [
@@ -17,12 +19,11 @@ export function AskTwin({ names, onApply }: { names: Record<string, string>; onA
   const [ai, setAi] = useState<AiState>("off");
   const [progress, setProgress] = useState("");
   const [busy, setBusy] = useState(false);
-  const [gpu] = useState(() => typeof navigator !== "undefined" && "gpu" in navigator);
+  const [gpu] = useState(webgpuAvailable);
 
   const enableAi = async () => {
     setAi("loading");
     try {
-      const { loadModel } = await import("./llm");
       await loadModel((p) => setProgress(`${Math.round(p.progress * 100)}% · ${p.text.split(".")[0]}`));
       setAi("ready");
     } catch (e) {
@@ -38,18 +39,20 @@ export function AskTwin({ names, onApply }: { names: Record<string, string>; onA
     setMiss(false);
     let sc: Scenario | null = null;
     let source: "rules" | "ai" = "rules";
-    if (ai === "ready") {
-      try {
-        const { interpret } = await import("./llm");
-        const out = await interpret(query);
-        if (out && (Object.keys(out.knobs).length || Object.keys(out.levers).length)) { sc = { ...out, ticker: findCompany(query, names) }; source = "ai"; }
-      } catch { /* fall back to the rules */ }
+    try {
+      if (ai === "ready") {
+        try {
+          const out = await interpret(query);
+          if (out && (Object.keys(out.knobs).length || Object.keys(out.levers).length)) { sc = { ...out, ticker: findCompany(query, names) }; source = "ai"; }
+        } catch { /* fall back to the rules */ }
+      }
+      if (!sc) {
+        const r = parseScenario(query, names);
+        sc = r.matched ? r : null;
+      }
+    } finally {
+      setBusy(false);
     }
-    if (!sc) {
-      const r = parseScenario(query, names);
-      sc = r.matched ? r : null;
-    }
-    setBusy(false);
     if (!sc) { setResult(null); setMiss(true); return; }
     setResult({ lines: describe(sc), source, ticker: sc.ticker });
     onApply(sc);
@@ -77,10 +80,10 @@ export function AskTwin({ names, onApply }: { names: Record<string, string>; onA
 
       <div className="muted" style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         {ai === "off" && gpu && <button type="button" className="btn-link" onClick={enableAi}>Understand free-form text with an on-device AI model</button>}
-        {ai === "off" && gpu && <span>({"about 1 GB"}, downloaded once, runs in your browser; nothing you type leaves it)</span>}
+        {ai === "off" && gpu && <span>({MODEL_SIZE}, downloaded once, runs in your browser; nothing you type leaves it)</span>}
         {ai === "off" && !gpu && <span>Free-form understanding with an on-device AI model needs a browser with WebGPU, such as Chrome or Edge on a desktop.</span>}
         {ai === "loading" && <span><span className="busy-dot" /> Loading the model: {progress || "starting"}</span>}
-        {ai === "ready" && <span>On-device model ready (Qwen2.5 1.5B, WebGPU).</span>}
+        {ai === "ready" && <span>On-device model ready ({MODEL_LABEL}, WebGPU).</span>}
         {ai === "error" && <span>The model could not load here ({progress}); the built-in rules still work.</span>}
         <span>Language only chooses the scenario; every number on this page comes from the simulation.</span>
       </div>

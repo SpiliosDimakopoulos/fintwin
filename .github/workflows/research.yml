@@ -2,17 +2,25 @@
 # the transmission test with its null ladder, liquidity decisions, loop ablations, sensitivity analysis, a 2014-2024
 # distress panel with the Chapter 11 census, the 2020 cross-section and ETS forecast comparisons.
 # Manual only; runs on free GitHub-hosted runners.
+#
+# Inputs are the frozen snapshot (release `snapshot_release`, default paper-data) read with FINTWIN_FROZEN=1: nothing
+# is fetched from EDGAR or FRED. Run it from a `paper-*` tag (or the branch that tag will be cut from), never from main.
+# Leave `snapshot_release` empty only for an exploratory run on live data (results are then not reproducible).
 name: research
 on:
   workflow_dispatch:
     inputs:
       mode: { description: "research, audit (data completeness) or sobol (global sensitivity)", default: research }
+      snapshot_release: { description: "Release tag with the frozen inputs; empty = live data", default: paper-data }
+      release_tag: { description: "Optional: attach research-results to this existing release (kept beyond 90 days)", default: "" }
 permissions: { contents: read, actions: read }
 env:
   SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
-  OPENBLAS_NUM_THREADS: "2"
+  # one BLAS thread: results do not depend on thread count or scheduling (R9)
+  OPENBLAS_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
   PYTHONWARNINGS: ignore
-  FINTWIN_FACTS_MAX_AGE: "100000"  # one data vintage for the whole run
   SHARDS: 16
 jobs:
   audit:
@@ -21,11 +29,16 @@ jobs:
     timeout-minutes: 340
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
-      - run: uv sync && uv run python scripts/data_audit.py
-      - uses: actions/upload-artifact@v7
-        with: { name: data-audit, path: docs/paper/data_audit.json }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
+      - run: uv sync --locked
+      - if: ${{ inputs.snapshot_release != '' }}
+        uses: ./.github/actions/snapshot
+        with: { release: "${{ inputs.snapshot_release }}" }
+      - run: uv run python scripts/data_audit.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with: { name: data-audit, path: docs/paper/data_audit.json, retention-days: 90 }
   sobol-shard:
     if: ${{ inputs.mode == 'sobol' }}
     runs-on: ubuntu-latest
@@ -35,33 +48,34 @@ jobs:
       matrix: { i: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
-      - uses: actions/cache/restore@v6
-        with:
-          path: engine/.cache/edgar
-          key: "edgar-shard-${{ matrix.i }}-${{ github.run_id }}"
-          restore-keys: |
-            edgar-shard-${{ matrix.i }}-
-            edgar-
-      - run: uv sync
-      - run: timeout 320m uv run python -m fintwin.research sobol-shard ${{ matrix.i }} 16 || true
-      - uses: actions/upload-artifact@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
+      - run: uv sync --locked
+      - if: ${{ inputs.snapshot_release != '' }}
+        uses: ./.github/actions/snapshot
+        with: { release: "${{ inputs.snapshot_release }}" }
+      # a timeout is tolerated (the shard resumes on the next run); a crash is not
+      - run: |
+          rc=0; timeout 320m uv run python -m fintwin.research sobol-shard ${{ matrix.i }} 16 || rc=$?
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ]
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with: { name: "sobol-${{ matrix.i }}", include-hidden-files: true, path: engine/.cache/sobol/ }
   sobol-stats:
     needs: sobol-shard
-    if: ${{ !cancelled() && inputs.mode == 'sobol' }}
+    if: ${{ !cancelled() && needs.sobol-shard.result == 'success' && inputs.mode == 'sobol' }}
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with: { pattern: "sobol-*", merge-multiple: true, path: engine/.cache/sobol }
-      - run: uv sync && uv run python -m fintwin.research sobol-stats
-      - uses: actions/upload-artifact@v7
-        with: { name: sobol-assumptions, path: docs/paper/sobol_assumptions.json }
+      - run: uv sync --locked && uv run python -m fintwin.research sobol-stats
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with: { name: sobol-assumptions, path: docs/paper/sobol_assumptions.json, retention-days: 90 }
   shard:
     if: ${{ inputs.mode != 'audit' && inputs.mode != 'sobol' }}
     runs-on: ubuntu-latest
@@ -71,40 +85,51 @@ jobs:
       matrix: { i: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
-      # each shard always gets the same companies, so it keeps its own EDGAR cache between runs
-      - uses: actions/cache/restore@v6
-        with:
-          path: engine/.cache/edgar
-          key: "edgar-shard-${{ matrix.i }}-${{ github.run_id }}"
-          restore-keys: |
-            edgar-shard-${{ matrix.i }}-
-            edgar-
-      - run: uv sync
-      # stop cleanly before the job limit so finished companies are always uploaded
-      - run: timeout 320m uv run python -m fintwin.research shard ${{ matrix.i }} $SHARDS || true
-      - uses: actions/cache/save@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
+      - run: uv sync --locked
+      # frozen inputs: every shard reads the same vintage. No per-run cache keys, no restore-keys fallbacks.
+      - if: ${{ inputs.snapshot_release != '' }}
+        uses: ./.github/actions/snapshot
+        with: { release: "${{ inputs.snapshot_release }}" }
+      # stop cleanly before the job limit so finished companies are always uploaded; a crash fails the job
+      - run: |
+          rc=0; timeout 320m uv run python -m fintwin.research shard ${{ matrix.i }} $SHARDS || rc=$?
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ]
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
-        with: { path: engine/.cache/edgar, key: "edgar-shard-${{ matrix.i }}-${{ github.run_id }}" }
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with: { name: "research-${{ matrix.i }}", include-hidden-files: true, path: engine/.cache/research/ }
+        with: { name: "research-${{ matrix.i }}", include-hidden-files: true, path: engine/.cache/research/, retention-days: 90 }
   stats:
     needs: shard
-    if: ${{ !cancelled() && inputs.mode != 'audit' && inputs.mode != 'sobol' }}
+    # only when all 16 shards finished without a crash
+    if: ${{ !cancelled() && needs.shard.result == 'success' && inputs.mode != 'audit' && inputs.mode != 'sobol' }}
     runs-on: ubuntu-latest
+    permissions: { contents: write, actions: read }   # write: only to attach results to an existing release
     defaults: { run: { working-directory: engine } }
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
-      - uses: actions/download-artifact@v8
-        with: { pattern: "research-*", merge-multiple: true, path: engine/.cache/research }
-      - run: uv sync && uv run python -m fintwin.research stats
-      - uses: actions/upload-artifact@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with: { version: "0.12.5" }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with: { pattern: "research-[0-9]*", merge-multiple: true, path: engine/.cache/research }
+      - run: uv sync --locked
+      - if: ${{ inputs.snapshot_release != '' }}
+        uses: ./.github/actions/snapshot
+        with: { release: "${{ inputs.snapshot_release }}" }
+      - run: uv run python -m fintwin.research stats
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: research-results
           include-hidden-files: true
+          retention-days: 90
           path: |
             docs/paper/research.json
             engine/.cache/research/
+      - name: Attach to the release (artifacts expire; release assets do not)
+        if: ${{ inputs.release_tag != '' }}
+        env: { GH_TOKEN: "${{ github.token }}", TAG: "${{ inputs.release_tag }}" }
+        working-directory: .
+        run: |
+          tar -czf /tmp/research-results.tar.gz -C engine .cache/research
+          gh release upload "$TAG" docs/paper/research.json /tmp/research-results.tar.gz --clobber

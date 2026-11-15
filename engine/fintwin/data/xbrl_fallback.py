@@ -8,19 +8,25 @@ instance of older filings), and appends its US-GAAP facts in the same row format
 number, form and filing date. Point-in-time loading therefore treats them exactly like facts from the API.
 
 Only entity-wide facts (contexts without dimensions) in USD are kept, which is what `companyfacts` reports as well.
+A candidate file is used only if its root element is an XBRL instance, and a fact repeated in one instance keeps its
+most precise `decimals` (D11). Filings that `companyfacts` holds only in part are not completed.
 """
 
 from __future__ import annotations
 
 import gzip
+import io
+import logging
 import os
+import re
 import xml.etree.ElementTree as ET
 
-import requests
+import numpy as np
 
 from . import edgar as E
 
-PERIODIC = {"10-K", "10-Q", "10-K/A", "10-Q/A", "10-KT"}
+log = logging.getLogger(__name__)
+
 XBRLI = "{http://www.xbrl.org/2003/instance}"
 XBRLDI = "http://xbrl.org/2006/xbrldi"
 GAAP_PREFIX = "http://fasb.org/us-gaap/"
@@ -32,32 +38,27 @@ def enabled() -> bool:
 
 def periodic_filings(cik: int) -> list[dict]:
     """Every XBRL-tagged 10-K / 10-Q (and amendments) in the company's complete filing history."""
-    d = E._get_json(f"https://data.sec.gov/submissions/CIK{cik:010d}.json", f"submissions_{cik:010d}.json", 24)
-    pages = [d["filings"]["recent"]]
-    for f in d["filings"].get("files", []):
-        pages.append(E._get_json(f"https://data.sec.gov/submissions/{f['name']}", f["name"], 24 * 365))
+    _, pages = E.submission_pages(cik, 24)
     out = []
     for p in pages:
-        for i, form in enumerate(p.get("form", [])):
-            if form in PERIODIC and p.get("isXBRL", [0] * (i + 1))[i]:
+        forms = p.get("form", [])
+        xbrl, primary = p.get("isXBRL", [0] * len(forms)), p.get("primaryDocument", [""] * len(forms))
+        for i, form in enumerate(forms):
+            if form in E.PERIODIC_FORMS and xbrl[i]:
                 out.append(
-                    {
-                        "accn": p["accessionNumber"][i],
-                        "form": form,
-                        "filed": p["filingDate"][i],
-                        "primary": p.get("primaryDocument", [""] * (i + 1))[i],
-                    }
+                    {"accn": p["accessionNumber"][i], "form": form, "filed": p["filingDate"][i], "primary": primary[i]}
                 )
     return out
 
 
+LINKBASE_SUFFIXES = ("_cal.xml", "_def.xml", "_lab.xml", "_pre.xml", "_ref.xml")
+NOT_INSTANCE = re.compile(r"^(FilingSummary|MetaLinks|defnref|R\d+)\.xml$", re.I)
+MAX_CANDIDATES = 3
+
+
 def _instance_name(cik: int, accn: str, primary: str) -> str | None:
-    idx = E._get_json(
-        f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn.replace('-', '')}/index.json",
-        f"index_{accn}.json",
-        24 * 365,
-    )
-    names = [x["name"] for x in idx["directory"]["item"]]
+    """Revision-2 choice: first inline instance, else the first .xml that is not a linkbase (may be a non-instance)."""
+    names = _index_names(cik, accn)
     inline = [n for n in names if n.endswith("_htm.xml")]
     if inline:
         return inline[0]
@@ -70,28 +71,54 @@ def _instance_name(cik: int, accn: str, primary: str) -> str | None:
         and not n.endswith(("_cal.xml", "_def.xml", "_lab.xml", "_pre.xml"))
     ]
     exact = [n for n in xml if n.startswith(stem)] if stem else []
-    return (exact or xml or [None])[0]
+    pick = exact or xml
+    return pick[0] if pick else None
+
+
+def _index_names(cik: int, accn: str) -> list[str]:
+    idx = E._get_json(
+        f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn.replace('-', '')}/index.json",
+        f"index_{accn}.json",
+        24 * 365,
+    )
+    return [x["name"] for x in idx["directory"]["item"]]
+
+
+def instance_candidates(names: list[str], primary: str) -> list[str]:
+    """Possible XBRL instances of a filing, most likely first (D11): the inline-extracted `*_htm.xml`, then .xml files
+    that are neither linkbases nor viewer/reference files (FilingSummary, MetaLinks, defnref, R*.xml), those named
+    after the primary document first. The caller confirms each by its root element."""
+    inline = [n for n in names if n.endswith("_htm.xml")]
+    stem = primary.rsplit(".", 1)[0] if primary else ""
+    xml = [n for n in names if n.endswith(".xml") and n not in inline]
+    xml = [n for n in xml if not n.endswith(LINKBASE_SUFFIXES) and not NOT_INSTANCE.match(n)]
+    xml.sort(key=lambda n: (not (stem and n.startswith(stem)), not re.search(r"\d{8}\.xml$", n)))
+    return (inline + xml)[:MAX_CANDIDATES]
+
+
+def is_instance(content: bytes) -> bool:
+    """An XBRL instance has an `xbrli:xbrl` root element."""
+    try:
+        for _, el in ET.iterparse(io.BytesIO(content), events=("start",)):
+            return el.tag == f"{XBRLI}xbrl"
+    except ET.ParseError:
+        return False
+    return False
 
 
 def _download(cik: int, accn: str, name: str) -> bytes:
     path = E.CACHE_DIR / f"xbrl_{accn}_{name}.gz"
     if path.exists():
         return gzip.decompress(path.read_bytes())
+    if E.frozen():
+        raise E.FrozenMiss(f"not in the frozen snapshot: {path.name}")
     url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn.replace('-', '')}/{name}"
-    last = None
-    for _ in range(3):
-        try:
-            # the same monotonic clock as edgar._get_json: time.time() here set _last_request to ~1.7e9, after which
-            # edgar's monotonic wait came out as decades and the weekly build hung (data runs of 2 and 9 Nov 2026)
-            E.throttle()
-            r = requests.get(url, headers={"User-Agent": E._user_agent()}, timeout=60)
-            r.raise_for_status()
-            E.CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(gzip.compress(r.content))
-            return r.content
-        except requests.RequestException as e:
-            last = e
-    raise RuntimeError(f"could not download {url}: {last}")
+    content = E.fetch(url).content
+    if content[:64].lstrip().lower().startswith((b"<!doctype html", b"<html")):  # SEC's block page, never cache it
+        raise RuntimeError(f"HTML page instead of XBRL from {url}; check SEC_USER_AGENT and the request rate")
+    E.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    E.write_atomic(path, gzip.compress(content))
+    return content
 
 
 def parse_instance(content: bytes, tags: set[str], accn: str, form: str, filed: str) -> dict[str, list[dict]]:
@@ -117,7 +144,8 @@ def parse_instance(content: bytes, tags: set[str], accn: str, form: str, filed: 
         if m is not None and m.text and m.text.strip().split(":")[-1] == "USD":
             usd.add(u.get("id"))
     out: dict[str, list[dict]] = {}
-    seen: set[tuple] = set()
+    seen: dict[tuple, tuple[float, dict]] = {}  # (tag, start, end) -> (precision, row)
+    legacy = E.data_legacy()
     for el in root:
         if not el.tag.startswith("{" + GAAP_PREFIX):
             continue
@@ -132,19 +160,55 @@ def parse_instance(content: bytes, tags: set[str], accn: str, form: str, filed: 
             continue
         ctx = contexts[el.get("contextRef") or ""]
         key = (tag, ctx.get("start"), ctx["end"])
+        prec = _precision(el.get("decimals"))
         if key in seen:  # the same fact repeated in several statements
+            # D11: keep the most precise version (a summary table may repeat a value rounded to millions)
+            if legacy or prec <= seen[key][0]:
+                continue
+            seen[key][1]["val"] = val
+            seen[key] = (prec, seen[key][1])
             continue
-        seen.add(key)
-        out.setdefault(tag, []).append(
-            {**ctx, "val": val, "accn": accn, "form": form, "filed": filed, "fy": None, "fp": None}
-        )
+        row = {**ctx, "val": val, "accn": accn, "form": form, "filed": filed, "fy": None, "fp": None}
+        seen[key] = (prec, row)
+        out.setdefault(tag, []).append(row)
     return out
 
 
+def _precision(decimals: str | None) -> float:
+    """XBRL `decimals` as a sortable precision: INF is exact, a missing attribute is the least precise."""
+    if decimals is None:
+        return -np.inf
+    if decimals.strip().upper() == "INF":
+        return np.inf
+    try:
+        return float(decimals)
+    except ValueError:
+        return -np.inf
+
+
+def _filing_facts(cik: int, f: dict, tags: set[str]) -> dict | None:
+    """Facts of one filing from its XBRL instance, trying candidate files until one is an instance (D11)."""
+    name = _instance_name(cik, f["accn"], f["primary"])
+    # EDGAR's own extraction of an inline-XBRL filing is always an instance; anything else is checked (D11)
+    if E.data_legacy() or (name and name.endswith("_htm.xml")):
+        return parse_instance(_download(cik, f["accn"], name), tags, f["accn"], f["form"], f["filed"]) if name else None
+    for name in instance_candidates(_index_names(cik, f["accn"]), f["primary"]):
+        try:
+            content = _download(cik, f["accn"], name)
+        except Exception as e:
+            log.warning("xbrl fallback: CIK %s %s/%s skipped: %s: %s", cik, f["accn"], name, type(e).__name__, e)
+            continue
+        if is_instance(content):
+            return parse_instance(content, tags, f["accn"], f["form"], f["filed"])
+    return None
+
+
 def augment(cik: int, raw: dict, tags: set[str]) -> dict:
-    """Append facts from periodic filings that `companyfacts` lacks. Never fails: on any error, returns `raw`."""
+    """Append facts from periodic filings that `companyfacts` lacks. Never fails: on any error it returns `raw` with
+    what was added so far, logs the error and lists it in `raw["_fallback_errors"]`."""
     if not enabled():
         return raw
+    errors: list[str] = []
     try:
         gaap = raw.setdefault("facts", {}).setdefault("us-gaap", {})
         known = {r["accn"] for t in gaap.values() for rows in t.get("units", {}).values() for r in rows}
@@ -152,17 +216,21 @@ def augment(cik: int, raw: dict, tags: set[str]) -> dict:
         added = []
         for f in missing:
             try:
-                name = _instance_name(cik, f["accn"], f["primary"])
-                if not name:
-                    continue
-                facts = parse_instance(_download(cik, f["accn"], name), tags, f["accn"], f["form"], f["filed"])
-            except Exception:  # one unreadable filing must not drop the others
+                facts = _filing_facts(cik, f, tags)
+            except Exception as e:  # one unreadable filing must not drop the others
+                errors.append(f"{f['accn']}: {type(e).__name__}: {e}")
+                log.warning("xbrl fallback: CIK %s filing skipped: %s", cik, errors[-1])
+                continue
+            if facts is None:
                 continue
             for tag, rows in facts.items():
                 gaap.setdefault(tag, {"units": {}})["units"].setdefault("USD", []).extend(rows)
             if facts:
                 added.append(f["accn"])
         raw.setdefault("_fallback", []).extend(added)
-    except Exception:
-        return raw
+    except Exception as e:
+        errors.append(f"{type(e).__name__}: {e}")
+        log.warning("xbrl fallback: CIK %s abandoned: %s", cik, errors[-1])
+    if errors:
+        raw["_fallback_errors"] = errors
     return raw

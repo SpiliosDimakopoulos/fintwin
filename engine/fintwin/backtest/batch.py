@@ -20,7 +20,10 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from ..data.facts import load_company
+# FINTWIN_DATA_LEGACY=1 (exactly "1") restores the v2 data handling (zero-filled outcome gaps, positional alignment,
+# 90-day reporting lag) for the one comparison run of REVISION_PLAN_3 §0.3; one definition, in `edgar`, everywhere.
+from ..data.edgar import data_legacy
+from ..data.facts import QUARTER_DAYS, contiguous, load_company
 from ..data.fred import macro_quarterly
 from ..model.sd_model import simulate
 from ..scenarios.presets import DEFAULT_LEVERS, PRESETS, build_scenario
@@ -134,20 +137,137 @@ UNIVERSE_XL = [
 ]
 
 
-def _realized(full: pd.DataFrame, after: pd.Timestamp) -> pd.DataFrame:
-    r = full[full.index > after + pd.Timedelta(days=20)].head(H).copy()
-    r["cash_like"] = r["cash"] + r["short_investments"]
+def window_ok(q: pd.DataFrame, n: int, col: str = "revenue") -> bool:
+    """The last n rows are n consecutive reported quarters (workstream A's `facts.contiguous`: no gap row, no
+    fiscal-year-end break, no step over one quarter). Under FINTWIN_DATA_LEGACY only the row count, as in v2."""
+    if data_legacy():
+        return len(q) >= n
+    return contiguous(q, n, col)
+
+
+def following(full: pd.DataFrame, last: pd.Timestamp, n: int) -> tuple[pd.DataFrame, str | None]:
+    """The n quarters after `last` and why they cannot be used: "short" (not yet reported) or "gap" (a gap row, a
+    fiscal-year break or a missing step inside the window, or between `last` and its first quarter).
+
+    Realized quarters are matched to simulated quarters by position, so a window with a hole is rejected whole
+    rather than compared with the wrong quarters. Legacy: the next n rows, as in v2."""
+    nxt = full[full.index > last + pd.Timedelta(days=20)].head(n)
+    if len(nxt) < n:
+        return nxt.iloc[:0], "short"
+    if data_legacy():
+        return nxt, None
+    if usable_prefix(nxt, last) < n:
+        return nxt.iloc[:0], "gap"
+    return nxt, None
+
+
+def usable_prefix(nxt: pd.DataFrame, last: pd.Timestamp, col: str = "revenue") -> int:
+    """How many leading rows of `nxt` (the quarters after `last`) are consecutive reported quarters: `col` reported,
+    one quarter after the previous row (after `last` for the first) and no fiscal-year-end break. `contiguous(nxt, n)`
+    skips the first row's link, so a `fye_break` on the first quarter (days uncovered after `last`) is tested here."""
+    if not len(nxt):
+        return 0
+    ends = np.r_[np.datetime64(pd.Timestamp(last), "ns"), nxt.index.to_numpy(dtype="datetime64[ns]")]
+    steps = np.diff(ends).astype("timedelta64[D]").astype(int)
+    ok = nxt[col].notna().to_numpy() & (steps >= QUARTER_DAYS[0]) & (steps <= QUARTER_DAYS[1])
+    if "fye_break" in nxt:
+        ok &= ~nxt["fye_break"].astype(bool).to_numpy()
+    return int(len(ok) if ok.all() else np.argmin(ok))
+
+
+def first_filed(cik: int) -> dict[str, pd.Series]:
+    """Period end -> date the value was first filed, for revenue and cash, from the cached companyfacts."""
+    from ..data.facts import DURATION, FORMS, INSTANT
+    from ..data.facts import company_facts as _facts
+
+    gaap = _facts(cik)["facts"].get("us-gaap", {})
+    out: dict[str, pd.Series] = {}
+    for field, tags in (("revenue", DURATION["revenue"]), ("cash", INSTANT["cash"])):
+        frames = []
+        for tag in tags:
+            rows = gaap.get(tag, {}).get("units", {}).get("USD", [])
+            if rows:
+                d = pd.DataFrame(rows)
+                frames.append(d.loc[d["form"].isin(FORMS), ["end", "filed"]])
+        if frames:
+            d = pd.concat(frames)
+            out[field] = pd.to_datetime(d["filed"]).groupby(pd.to_datetime(d["end"])).min().sort_index()
+    return out
+
+
+def filed_for(filed: pd.Series | None, end: pd.Timestamp, tol_days: int = 12) -> str | None:
+    """First filing date of the period ending nearest `end` (within the spine's alignment tolerance)."""
+    if filed is None or filed.empty:
+        return None
+    gap = np.abs((filed.index - pd.Timestamp(end)).days)
+    i = int(np.argmin(gap))
+    return str(filed.iloc[i].date()) if gap[i] <= tol_days else None
+
+
+def seen_by(target: pd.Series, filed: pd.Series | None, cutoff: pd.Timestamp, lag_days: int = 90) -> pd.Series:
+    """Was each target quarter reported by `cutoff`? The actual first filing date when known, otherwise the
+    quarter end plus `lag_days` (the only rule before revision 3, and the rule under FINTWIN_DATA_LEGACY)."""
+    fallback = pd.to_datetime(target) + pd.Timedelta(days=lag_days)
+    if filed is None or data_legacy():
+        return fallback <= cutoff
+    when = pd.to_datetime(filed, errors="coerce").fillna(fallback)
+    return when <= cutoff
+
+
+def _realized(full: pd.DataFrame, after: pd.Timestamp, why: dict | None = None) -> pd.DataFrame:
+    """The H realized quarters after `after`; empty (reason in `why["realized"]`) if they are not all reported or
+    contain a gap. Legacy: the next H rows, however many there are."""
+    if data_legacy():
+        r = full[full.index > after + pd.Timedelta(days=20)].head(H).copy()
+    else:
+        r, reason = following(full, after, H)
+        r = r.copy()
+        if reason and why is not None:
+            why["realized"] = reason
+    r["cash_like"] = r["cash"] + r["short_investments"].fillna(0)  # as in the history (experiments, rw_empirical)
     return r
 
 
+def _calendar(hist: pd.DataFrame, s: pd.Series) -> pd.Series:
+    """`s` on the calendar spine with gap rows blanked (their balances are carried forward, not reported), so that
+    shift(4) / diff(h) look 4 / h quarters back in time, not 4 / h reported rows back across a hole."""
+    return s.where(~hist["gap"].astype("boolean").fillna(False).astype(bool)) if "gap" in hist else s
+
+
 def _baseline(hist: pd.DataFrame, var: str, h: int) -> tuple[float, float]:
+    legacy = data_legacy()
     if var == "revenue":
         s = hist["revenue"].dropna()
         same = s.iloc[-4 + ((h - 1) % 4)]
-        yoy = np.log(s / s.shift(4)).dropna().tail(20)
+        r = s if legacy else _calendar(hist, hist["revenue"])
+        yoy = np.log(r / r.shift(4)).dropna().tail(20)
         return float(same), float(same * yoy.std() * np.sqrt(int(np.ceil(h / 4))))
-    s = (hist["cash"] + hist["short_investments"]).dropna()
-    return float(s.iloc[-1]), float(s.diff().tail(20).std() * np.sqrt(h))
+    c = hist["cash"] + hist["short_investments"].fillna(0)
+    if legacy:
+        s = c.dropna()
+        return float(s.iloc[-1]), float(s.diff().tail(20).std() * np.sqrt(h))
+    s = _calendar(hist, c)
+    return float(s.dropna().iloc[-1]), float(s.diff().dropna().tail(20).std() * np.sqrt(h))
+
+
+def rw_empirical(hist: pd.DataFrame, var: str, h: int) -> np.ndarray | None:
+    """Random-walk density from empirical quantiles, an alternative to the Gaussian `_baseline`: the seasonal
+    random walk times the last 20 observed year-on-year growth factors for revenue; the last cash balance plus the
+    last 20 observed h-quarter changes for cash. Changes are taken on the calendar series (gap rows blank) and only
+    then dropped; legacy: on the reported rows, as in v2."""
+    legacy = data_legacy()
+    if var == "revenue":
+        s = hist["revenue"].dropna()
+        if len(s) < 12:
+            return None
+        same = float(s.iloc[-4 + ((h - 1) % 4)])
+        r = s if legacy else _calendar(hist, hist["revenue"])
+        yoy = np.log(r / r.shift(4)).replace([np.inf, -np.inf], np.nan).dropna().tail(20).to_numpy(float)
+        return same * np.exp(yoy * np.sqrt(int(np.ceil(h / 4)))) if len(yoy) >= 8 else None
+    c = hist["cash"] + hist["short_investments"].fillna(0)
+    s = c.dropna() if legacy else _calendar(hist, c)
+    d = s.diff(h).dropna().tail(20).to_numpy(float)
+    return float(s.dropna().iloc[-1]) + d if len(d) >= 8 else None
 
 
 def _vintage(hist, origin: str | None, macro) -> dict:
@@ -168,16 +288,26 @@ def company_cases(ticker: str, n_paths: int = 2000) -> dict:
     full_data = load_company(ticker)
     full = full_data.quarters
     cases, skipped, vintages = [], {}, []
+    try:
+        filed = first_filed(int(full_data.cik))
+    except Exception as e:  # conformal windows then use the fixed lag; the reason is kept
+        filed = {}
+        skipped["filed"] = f"{type(e).__name__}: {e}"
     for origin in ORIGINS:
         try:
             hist = load_company(ticker, asof=origin)
-            if len(hist.quarters) < 16:
-                skipped[origin] = "fewer than 16 quarters of history"
+            if not window_ok(hist.quarters, 16):
+                skipped[origin] = "fewer than 16 consecutive quarters of history"
                 continue
             vintages.append(_vintage(hist, origin, macro_quarterly(origin)))
-            real = _realized(full, hist.quarters.index[-1])
+            why: dict = {}
+            real = _realized(full, hist.quarters.index[-1], why)
             if len(real) < H:
-                skipped[origin] = "not enough realized quarters yet"
+                skipped[origin] = (
+                    "gap in the realized quarters"
+                    if why.get("realized") == "gap"
+                    else "not enough realized quarters yet"
+                )
                 continue
             p = calibrate(hist, macro_quarterly(origin), H)
             eps = draw_shocks(p, n_paths, H, seed=11)
@@ -185,19 +315,24 @@ def company_cases(ticker: str, n_paths: int = 2000) -> dict:
                 flag: simulate(p, build_scenario({}, H), eps, {**DEFAULT_LEVERS, "recessions": flag})
                 for flag in (True, False)
             }
+            if not all(np.isfinite(s[k]).all() for s in sims.values() for k in ("revenue", "cash")):
+                raise ValueError("non-finite simulation output")  # reported under `skipped`, not written as NaN
             for var, key in (("revenue", "revenue"), ("cash_like", "cash")):
                 for h in range(H):
                     y = float(real[var].iloc[h])
                     if not np.isfinite(y):
                         continue
                     mu_b, sd_b = _baseline(hist.quarters, var, h + 1)
+                    emp = rw_empirical(hist.quarters, var, h + 1)
                     row = {
                         "origin": origin,
                         "var": var,
                         "h": h + 1,
                         "y": y,
                         "target": str(real.index[h].date()),
+                        "filed": filed_for(filed.get("revenue" if var == "revenue" else "cash"), real.index[h]),
                         "crps_baseline": crps_gaussian(mu_b, sd_b, y),
+                        "crps_baseline_emp": crps_samples(emp, y) if emp is not None else None,
                     }
                     for flag, out in sims.items():
                         x = out[key][:, h]
@@ -212,7 +347,7 @@ def company_cases(ticker: str, n_paths: int = 2000) -> dict:
         vintages.append(_vintage(full_data, None, macro_quarterly()))
     except Exception as e:
         skipped["latest"] = f"{type(e).__name__}: {e}"
-    cash_like = full["cash"] + full["short_investments"]
+    cash_like = full["cash"] + full["short_investments"].fillna(0)
     timeline = {
         "ticker": ticker,
         "series": {
@@ -223,30 +358,45 @@ def company_cases(ticker: str, n_paths: int = 2000) -> dict:
         },
         "vintages": vintages,
     }
+    from ..research.__main__ import stamp
+
     return {
         "ticker": ticker,
         "cases": cases,
+        "covid": covid_row(ticker, full, skipped),
         "skipped": skipped,
-        "covid": covid_row(ticker, full),
         "timeline": timeline,
+        "_stamp": stamp(),  # `aggregate` reports how many companies come from another code/data version
     }
 
 
-def covid_row(ticker: str, full: pd.DataFrame) -> dict | None:
-    """Pre-COVID twin under the demand-freeze scenario vs realized 2020-21 cash burn."""
+def covid_row(ticker: str, full: pd.DataFrame, why: dict | None = None) -> dict | None:
+    """Pre-COVID twin under the demand-freeze scenario vs realized 2020-21 cash burn. When there is no row, the
+    reason is written to `why["covid"]`."""
+    why = why if why is not None else {}
     try:
         cutoff = "2020-02-20"
         hist = load_company(ticker, asof=cutoff)
-        if len(hist.quarters) < 16:
+        if not window_ok(hist.quarters, 16):  # also covers the four trailing quarters of rev_ttm below
+            why["covid"] = "fewer than 16 consecutive quarters of history"
             return None
+        # cheap data checks first: a firm without a usable 2020-21 window costs no calibration or simulation
+        win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
+        fcf = win["cfo"] - win["capex"]
+        if not data_legacy() and len(win) and not contiguous(win, len(win)):
+            why["covid"] = "gap in the 2020-21 quarters"  # a calendar hole, not a quiet quarter
+            return None
+        if not data_legacy() and not np.isfinite(fcf.to_numpy(float)).all():
+            why["covid"] = "missing cash-flow quarter in 2020-21"  # unknown, not zero burn
+            return None
+        if not len(fcf):
+            why["covid"] = "no reported quarter in 2020-21"
+            return None
+        fcf = fcf.fillna(0).cumsum()
+        rev_ttm = float(hist.quarters["revenue"].tail(4).sum())
         p = calibrate(hist, macro_quarterly(cutoff), 8)
         eps = draw_shocks(p, 2000, 8, seed=7)
         st = summarize(simulate(p, build_scenario(PRESETS["pandemic"]["knobs"], 8), eps, DEFAULT_LEVERS))
-        win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
-        fcf = (win["cfo"] - win["capex"]).fillna(0).cumsum()
-        rev_ttm = float(hist.quarters["revenue"].tail(4).sum())
-        if not len(fcf):
-            return None
         return {
             "ticker": ticker,
             "name": hist.name,
@@ -255,7 +405,8 @@ def covid_row(ticker: str, full: pd.DataFrame) -> dict | None:
             "realized_min_cum_fcf_pct_rev": float(fcf.min() / rev_ttm * 100),
             "realized_debt_raise_pct_rev": float((win["total_debt"].max() - p["debt0"]) / rev_ttm * 100),
         }
-    except Exception:
+    except Exception as e:
+        why["covid"] = f"{type(e).__name__}: {e}"
         return None
 
 
@@ -291,11 +442,13 @@ def aggregate() -> dict:
         sc = _scores(g, "reg")
         g = g.join(sc)
         # online conformal: the scale factor for origin 15 Feb Y uses only forecasts whose target quarter had been
-        # reported by then (quarter end + 75 days), so no error is used before it was observable
+        # reported by then (its actual first filing date; quarter end + 90 days where unknown), so no error is
+        # used before it was observable
         conf90, conf50, factors = [], [], {}
         target = pd.to_datetime(g["target"]) if "target" in g else pd.to_datetime(g["year"].astype(str) + "-01-01")
+        filed = g["filed"] if "filed" in g else None
         for year, gy in g.groupby("year"):
-            seen = target + pd.Timedelta(days=90) <= pd.Timestamp(f"{year}-02-15")
+            seen = seen_by(target, filed, pd.Timestamp(f"{year}-02-15"))
             past = g[(g["year"] < year) & seen]
             if len(past) < 40:
                 continue
@@ -332,6 +485,8 @@ def aggregate() -> dict:
             "pit_hist": pit.round(4).tolist(),
             "by_year": by_year,
             "by_horizon": {int(h): float(gh["hit90"].mean()) for h, gh in g.groupby("h")},
+            # skill and a firm-clustered DM statistic per horizon (not pooled), against both naive densities
+            "skill_by_horizon": skill_by_horizon(g),
         }
     rows = [r["covid"] for r in per if r.get("covid")]
     xs = pd.DataFrame(rows)
@@ -355,8 +510,53 @@ def aggregate() -> dict:
         "rows": rows,
     }
     res["skipped"] = {r["ticker"]: r["skipped"] for r in per if r["skipped"]}
-    OUT.write_text(json.dumps(res, separators=(",", ":")), encoding="utf-8")
+    stamps = pd.Series([r.get("_stamp") or "none" for r in per]).value_counts()
+    res["stamps"] = {"n_distinct": int(len(stamps)), "largest_share": float(stamps.iloc[0] / stamps.sum())}
+    from ..clean import _clean
+
+    OUT.write_text(json.dumps(_clean(res), separators=(",", ":"), allow_nan=False), encoding="utf-8")
     return res
+
+
+def dm_stat(d: np.ndarray, groups: np.ndarray) -> dict:
+    """Diebold-Mariano statistic of mean loss differences `d`, with a cluster-robust variance over `groups` and
+    t(G-1) p-values (few clusters)."""
+    from scipy import stats as _st
+
+    d, groups = np.asarray(d, float), np.asarray(groups)
+    m = np.isfinite(d)
+    d, groups = d[m], groups[m]
+    n, G = len(d), len(set(groups.tolist()))
+    if n < 10 or G < 3:
+        return {"n": int(n), "mean": float(d.mean()) if n else None, "t": None, "p": None}
+    e = d - d.mean()
+    s = pd.Series(e).groupby(groups).sum().to_numpy()
+    var = (G / (G - 1)) * float(np.sum(s**2)) / n**2
+    t = float(d.mean() / np.sqrt(var)) if var > 0 else None
+    return {
+        "n": int(n),
+        "clusters": int(G),
+        "mean": float(d.mean()),
+        "t": t,
+        "p": float(2 * _st.t.sf(abs(t), G - 1)) if t is not None else None,
+    }
+
+
+def skill_by_horizon(g: pd.DataFrame) -> dict:
+    out: dict = {}
+    for h, gh in g.groupby("h"):
+        r: dict = {"n": int(len(gh))}
+        for base in ("crps_baseline", "crps_baseline_emp"):
+            if base not in gh or gh[base].isna().all():
+                continue
+            b = gh[base].astype(float)
+            ok = b.notna()
+            r[base] = {
+                "skill": float(1 - gh.loc[ok, "crps_reg"].mean() / b[ok].mean()),
+                "dm": dm_stat((gh.loc[ok, "crps_reg"] - b[ok]).to_numpy(float), gh.loc[ok, "ticker"].to_numpy()),
+            }
+        out[int(h)] = r
+    return out
 
 
 if __name__ == "__main__":

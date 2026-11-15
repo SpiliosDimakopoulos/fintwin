@@ -12,6 +12,7 @@ import fintwin.data.xbrl_fallback as X
 
 class _Resp:
     content = b"<xbrl/>"
+    headers: dict = {}
     status_code = 200
 
     def raise_for_status(self) -> None:
@@ -21,7 +22,7 @@ class _Resp:
 def test_fallback_download_then_json_request_does_not_stall(monkeypatch, tmp_path):
     monkeypatch.setenv("SEC_USER_AGENT", "test test@example.com")
     monkeypatch.setattr(E, "CACHE_DIR", tmp_path)
-    monkeypatch.setattr(X.requests, "get", lambda *a, **k: _Resp())
+    monkeypatch.setattr(E.requests, "get", lambda *a, **k: _Resp())  # every SEC request goes through edgar.fetch
     sleeps: list[float] = []
     monkeypatch.setattr(E.time, "sleep", lambda s: sleeps.append(s))
     E._last_request = 0.0

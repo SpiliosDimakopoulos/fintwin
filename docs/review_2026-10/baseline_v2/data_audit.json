@@ -1,0 +1,47 @@
+{
+ "current": {
+  "companies": 5220,
+  "loaded": 5219,
+  "firm_quarters": 191189,
+  "companies_with_gaps": 474,
+  "gaps": 643,
+  "gaps_no_filing": 91,
+  "gaps_filed_untagged": 552,
+  "share_latest_matches_last_filing": 0.8972983330139873,
+  "cfo_missing_quarters": 4749
+ },
+ "old_window_75_105": {
+  "companies": 5220,
+  "loaded": 5219,
+  "firm_quarters": 190853,
+  "companies_with_gaps": 507,
+  "gaps": 943,
+  "gaps_no_filing": 94,
+  "gaps_filed_untagged": 849,
+  "share_latest_matches_last_filing": 0.8961486874880246,
+  "cfo_missing_quarters": 4773
+ },
+ "companies_recovered": 37,
+ "examples_recovered": [
+  "CIK0000014177",
+  "CIK0000016099",
+  "CIK0000018169",
+  "CIK0000033488",
+  "CIK0000039047",
+  "CIK0000056873",
+  "CIK0000068145",
+  "CIK0000069671",
+  "CIK0000077476",
+  "CIK0000086144",
+  "CIK0000095521",
+  "CIK0000110471",
+  "CIK0000807882",
+  "CIK0000865436",
+  "CIK0000866787",
+  "CIK0000877422",
+  "CIK0000896985",
+  "CIK0000909832",
+  "CIK0001041061",
+  "CIK0001041379"
+ ]
+}

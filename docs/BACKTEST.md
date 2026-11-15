@@ -3,6 +3,11 @@
 > **Superseded for research claims by the paper ([docs/paper/fintwin.pdf](paper/fintwin.pdf)).** The paper adds persistence benchmarks (trailing free-cash-flow margin), a run-rate-adjusted outcome, 2020 bankruptcies and a structural test over 2014–2023. With those controls, the COVID ranking below is largely explained by persistent cash-flow characteristics; the twin's robust strength is identifying where a margin rule misjudges the cash response to a given revenue path.
 
 
+> **In-sample caveat (15-11-2026, quality review R1).** These rolling-origin backtests calibrate with today's product
+> defaults (the January-2026 rating-spread table and the product's fixed-cost prior) at every past cutoff, so they are
+> partly in-sample. The research pipeline behind the paper uses the point-in-time calibration and is not affected. The
+> next software version routes these backtests through the same point-in-time calibration.
+
 All numbers come from `web/public/data/backtest.json`, which `uv run python -m fintwin.export BACKTEST` regenerates. Twins are calibrated on **point-in-time** data (facts *filed* before the cutoff), with no tuning on outcomes.
 
 ## 0. Large-sample validation (headline)
@@ -87,6 +92,6 @@ Where the twin fails, and why:
 
 ```bash
 cd engine
-bash scripts/build_all.sh            # all companies + goldens + backtests
+bash scripts/resume_build.sh --all  # all companies + goldens + backtests
 uv run python scripts/backtest_check.py CCL AAPL   # console summary
 ```

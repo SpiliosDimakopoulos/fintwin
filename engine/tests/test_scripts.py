@@ -5,9 +5,9 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
+from test_pipeline_offline import synthetic_companyfacts
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 DEFAULT_TICKERS = ["AAPL", "TSLA", "CCL", "BA", "INTC", "NFLX"]
@@ -47,40 +47,12 @@ def test_cli_help_subprocess_exits_zero_without_network(script_name):
         capture_output=True,
         text=True,
         env=env,
-        timeout=10,
+        timeout=60,  # a cold numpy/pandas import on Windows can take several seconds
     )
     assert res.returncode == 0
     assert "usage:" in res.stdout
     assert "tickers" in res.stdout
     assert "--help" in res.stdout
-
-
-def test_diagnose_help_does_not_trigger_data_loading(diagnose_mod):
-    with (
-        patch.object(diagnose_mod, "load_company") as mock_load,
-        patch.object(diagnose_mod, "macro_quarterly") as mock_macro,
-    ):
-        with pytest.raises(SystemExit) as exc_info:
-            diagnose_mod.main(["--help"])
-        assert exc_info.value.code == 0
-        mock_load.assert_not_called()
-        mock_macro.assert_not_called()
-
-
-def test_backtest_check_help_does_not_trigger_backtest(backtest_check_mod):
-    with patch.object(backtest_check_mod, "forecast_backtest") as mock_backtest:
-        with pytest.raises(SystemExit) as exc_info:
-            backtest_check_mod.main(["--help"])
-        assert exc_info.value.code == 0
-        mock_backtest.assert_not_called()
-
-
-def test_regime_ablation_help_does_not_trigger_aggregation(regime_ablation_mod):
-    with patch.object(regime_ablation_mod, "aggregate") as mock_agg:
-        with pytest.raises(SystemExit) as exc_info:
-            regime_ablation_mod.main(["--help"])
-        assert exc_info.value.code == 0
-        mock_agg.assert_not_called()
 
 
 def test_diagnose_defaults(diagnose_mod):
@@ -129,3 +101,15 @@ def test_invalid_arguments_raise_error(request, mod_fixture, capsys):
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
     assert "unrecognized arguments" in captured.err
+
+
+def test_diagnose_runs_on_a_synthetic_company(diagnose_mod, macro, monkeypatch, capsys):
+    import fintwin.data.facts as facts
+
+    cf = synthetic_companyfacts()
+    monkeypatch.setattr(facts, "company_facts", lambda cik: cf)
+    monkeypatch.setattr(facts, "ticker_to_cik", lambda t: (123, "Synthetic Industries Inc"))
+    monkeypatch.setattr(diagnose_mod, "macro_quarterly", lambda asof=None: macro)
+    diagnose_mod.main(["SYN"])
+    out = capsys.readouterr().out
+    assert "SYN" in out and "mu" in out

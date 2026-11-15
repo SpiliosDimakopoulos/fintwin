@@ -5,12 +5,18 @@ __pycache__/
 .pytest_cache/
 .hypothesis/
 engine/.cache/
+engine/out/
+engine/*.log
 node_modules/
 web/dist/
 *.egg-info/
 tools/node_modules/
 tools/frames/
 tools/*.png
+tools/shots/
+*.tsbuildinfo
+engine/out/
+engine/*.log
 docs/paper/*.aux
 docs/paper/*.log
 docs/paper/*.out
@@ -22,3 +28,19 @@ docs/paper/*.bbl
 docs/paper/*.blg
 docs/paper/*.fls
 docs/paper/*.fdb_latexmk
+engine/snapshot/
+
+# stray local files (never meant for the repo)
+grep.exe.stackdump
+klein_list.txt
+*.stackdump
+Feedback_from_researchers.txt
+docs/MESSAGES_TO_RESEARCHERS.md
+docs/OUTREACH.md
+
+# LaTeX build leftovers anywhere under docs/paper (the PDF itself is tracked)
+docs/paper/**/*.aux
+docs/paper/*.toc
+docs/paper/*.synctex.gz
+docs/RESEARCHER_REPLIES_*.md
+engine/SOURCE.json

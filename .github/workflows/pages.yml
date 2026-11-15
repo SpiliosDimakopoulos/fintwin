@@ -1,29 +1,38 @@
-# Deploy the dashboard on every push. The data comes from the latest successful weekly data build (artifact
-# "site-data"), so code changes never roll the site back to the older snapshot committed in the repo.
+# Deploy the dashboard on every push to main. The data comes from the latest successful weekly data build of main
+# (artifact "site-data"), so code changes never roll the site back to the older snapshot committed in the repo.
+# Only main is ever deployed: the paper tags and the revision branches have no effect on the site.
 name: pages
 on: { push: { branches: [main] }, workflow_dispatch: {} }
 permissions: { contents: read, pages: write, id-token: write, actions: read }
-concurrency: { group: pages, cancel-in-progress: true }
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # one deploy at a time, shared with data.yml; a running deploy is finished, not cancelled
+    concurrency: { group: pages-deploy, cancel-in-progress: false }
     environment: { name: github-pages }
     steps:
-      - uses: actions/checkout@v7
-      - name: Use the freshest data build if there is one
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { ref: main }
+      - name: Use the freshest data build of main if there is one
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          run_id=$(gh run list -R "$GITHUB_REPOSITORY" --workflow data.yml --status success --limit 1 --json databaseId -q '.[0].databaseId' || true)
+          run_id=$(gh run list -R "$GITHUB_REPOSITORY" --workflow data.yml --branch main --status success --limit 1 --json databaseId -q '.[0].databaseId' || true)
           if [ -n "$run_id" ] && gh run download "$run_id" -R "$GITHUB_REPOSITORY" -n site-data -D /tmp/site-data; then
             rsync -a /tmp/site-data/ web/public/data/
             echo "data from run $run_id"
           else
             echo "no data build yet; using the committed snapshot"
           fi
-      - uses: actions/setup-node@v7
-        with: { node-version: 22 }
-      - run: npm ci && npm run build
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: npm ci
         working-directory: web
-      - uses: actions/upload-pages-artifact@v5
+      # the parity tests run against the goldens that came with the data build above
+      - run: npm test
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with: { path: web/dist }
-      - uses: actions/deploy-pages@v5
+      - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
