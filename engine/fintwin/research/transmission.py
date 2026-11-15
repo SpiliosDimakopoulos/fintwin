@@ -73,7 +73,7 @@ FORECASTERS = [*MODELS, *COMBOS]
 # mean absolute error}, each against the 16-quarter margin: 16 comparisons
 FAMILY = ("T1", "N3+T1", "N3+N1", "N3+N5")
 FAMILY_BENCH = "N3"
-# combination gains reported with DM (firm x year) and the year-block bootstrap (E3)
+# combination gains reported with DM (firm x year) and the year-block bootstrap
 GAINS = (
     ("N3+T1", "N3"),
     ("N3+T1", "N3+N1"),
@@ -87,7 +87,7 @@ GAINS = (
 
 # ---------------------------------------------------------------- frame
 def point(st: dict, key: str) -> float:
-    """E1: the specification's 8-quarter point forecast of a structural output (`twin_cfo`, `noloops_fcf`, ...).
+    """The specification's 8-quarter point forecast of a structural output (`twin_cfo`, `noloops_fcf`, ...).
 
     `<key>_point` when the shard stores it (the median of path totals in v3, the sum of per-quarter medians in
     v2-pre); else `<key>_tot` when the shard says E1 is on; else the revision-2 sum of the per-quarter medians."""
@@ -137,7 +137,7 @@ def frame(rows: pd.DataFrame) -> pd.DataFrame:
                 x = np.asarray(path if path is not None else [np.nan] * len(rev), float)
                 rec[f"{k}_{var}"] = float(x.sum())
                 rec[f"{k}_{var}_w"] = float(np.min(np.cumsum(x)))
-            # E1: the twin's totals are the specification's point forecast; the v2 sum of medians is kept beside it
+            # the twin's totals are the specification's point forecast; the v2 sum of medians is kept beside it
             rec[f"T1sm_{var}"] = rec[f"T1_{var}"]
             if st.get(f"twin_{var}") is not None:
                 rec[f"T1_{var}"] = point(st, f"twin_{var}")
@@ -245,11 +245,11 @@ def levels(df: pd.DataFrame, var: str) -> dict:
             "n": int(ok.sum()),
             "median_ae": float(np.nanmedian(e[ok])),
             "mae_w": float(np.nanmean(np.abs(_wins(x, lo, hi) - _wins(real, lo, hi))[ok])),
-            "mae": float(np.nanmean(e[ok])),  # unwinsorized (E6)
+            "mae": float(np.nanmean(e[ok])),  # unwinsorized
             "rho": S.rho(x, real),
             "share_closer_than_N1": float(np.nanmean((e < np.abs(base - real))[ok & np.isfinite(base)])),
         }
-    if f"T1sm_{var}" in df:  # E1: the twin as the sum of per-quarter medians (the v2-pre estimator), for comparison
+    if f"T1sm_{var}" in df:  # the twin as the sum of per-quarter medians (the v2-pre estimator), for comparison
         x = df[f"T1sm_{var}"].to_numpy(float)
         ok = np.isfinite(x) & np.isfinite(real)
         if ok.any():
@@ -374,8 +374,8 @@ def _one_sided(t: float, df: int) -> float:
 
 
 def _encompassing_v3(d: pd.DataFrame, var: str, X: pd.DataFrame, lo: float, hi: float, cols: list[str]) -> dict:
-    """E9 / SW-14: the two-way clustered tests with t(G-1) critical values and a PSD check, beside the firm-only ones.
-    E7: encompassing and DM under absolute loss, the loss lambda is chosen on, and a LAD (median) regression."""
+    """The two-way clustered tests with t(G-1) critical values and a PSD check, beside the firm-only ones.
+    Also encompassing and DM under absolute loss, the loss lambda is chosen on, and a LAD (median) regression."""
     firms, years = unit(d).to_numpy(), d["year"].to_numpy()
     real = d[f"real_{var}"].to_numpy(float)
     yfe = [c for c in X if c.startswith("y_")]
@@ -452,7 +452,7 @@ def _lad(d: pd.DataFrame, var: str, use: list[str], yfe: list[str], X: pd.DataFr
 def train_bounds(real: np.ndarray, yrs: np.ndarray, mode: str = "train") -> dict[int, tuple[float, float]]:
     """Winsorization limits (1st and 99th percentiles of the realized outcome) for each cutoff year.
 
-    "train" (E6): from the years whose outcomes were known at that cutoff (<= Y-3) only; "full": the revision-2 limits
+    "train": from the years whose outcomes were known at that cutoff (<= Y-3) only; "full": the revision-2 limits
     from every year, test years included."""
     real = np.asarray(real, float)
     years = sorted({int(y) for y in yrs})
@@ -473,7 +473,7 @@ def hybrid(df: pd.DataFrame, var: str, firms: np.ndarray, b: int, bounds: str = 
 
     Evaluated on years with at least 200 earlier observations; the null hybrid (N1 adjusted by N6) is the control.
     `bounds="full"` is the revision-2 computation (winsorization limits from every year, test years included);
-    `bounds="train"` takes each test year's limits from its training years only (E6) and adds unwinsorized errors.
+    `bounds="train"` takes each test year's limits from its training years only and adds unwinsorized errors.
     """
     real = df[f"real_{var}"].to_numpy(float)
     yrs = df["year"].to_numpy()
@@ -548,7 +548,7 @@ def hybrid(df: pd.DataFrame, var: str, firms: np.ndarray, b: int, bounds: str = 
 # ---------------------------------------------------------------- resampling engine for the comparison family
 # Every loss is a sum over firm x year cells, so a bootstrap resample is a vector of firm counts w (multinomial over
 # firms) and of cutoff-year counts v (multinomial over years); a firm-year's weight is w_f * v_t. The combination
-# weight lambda is re-chosen in every resample from the reweighted training years (E3) by one matrix product
+# weight lambda is re-chosen in every resample from the reweighted training years by one matrix product
 # W (B x F) @ S (F x years*lambdas) per test year, instead of a Python loop over resamples.
 def _draws(n_f: int, n_t: int, b: int, scheme: str, g: np.random.Generator):
     W = g.multinomial(n_f, np.full(n_f, 1 / n_f), size=b).astype(float) if scheme in ("firm", "firm_year") else None
@@ -765,7 +765,7 @@ def _gain(L: np.ndarray, a: int, c: int) -> np.ndarray:
 
 
 def inference(df: pd.DataFrame, b: int, seed_family: int | None = None, seed_year: int | None = None) -> dict:
-    """The pre-specified inference of REVISION_PLAN_3 2.1 (E3, E4, E5, E6, E7).
+    """The pre-specified inference of REVISION_PLAN_3 2.1.
 
     family: the 16 comparisons {twin, twin+16q, 16q+4q, regression+16q} x {OCF, FCF} x {median, mean absolute error}
         against the 16-quarter margin; Romano-Wolf stepdown (studentized, two-sided) over the firm x year bootstrap,
@@ -823,7 +823,7 @@ def inference(df: pd.DataFrame, b: int, seed_family: int | None = None, seed_yea
 
 
 def _gains(df: pd.DataFrame, b: int, fy: dict, seed: int) -> dict:
-    """E3: combination gains with lambda re-estimated in every year-block resample, DM with firm x year clustering,
+    """Combination gains with lambda re-estimated in every year-block resample, DM with firm x year clustering,
     year-by-year gains."""
     names = sorted({k for pair in GAINS for k in pair}, key=FORECASTERS.index)
     yb = boot_losses(df, names, b, "year", seed)
@@ -1049,7 +1049,7 @@ def section(rows: pd.DataFrame, b: int, panel: bool = True, b_family: int | None
         if panel:
             e["encompassing"] = encompassing(df, var)
             e["hybrid"] = hybrid(df, var, firms, b)  # revision 2: winsorization limits from all years
-            e["hybrid_train"] = hybrid(df, var, firms, b, bounds="train")  # E6
+            e["hybrid_train"] = hybrid(df, var, firms, b, bounds="train")
             e["by_year"] = by_year(df, var)
             e["heterogeneity"] = heterogeneity(df, var)
         out[var] = e
@@ -1071,7 +1071,7 @@ def section(rows: pd.DataFrame, b: int, panel: bool = True, b_family: int | None
             "twin_vs_best_null": twin_vs_best["rho"],
             "twin_vs_best_null_ci": twin_vs_best.get("ci"),
             "encompassing_p_twin": out["cfo"]["encompassing"]["all"]["p"]["T1"],
-            # E9: the same coefficient with firm x year clustering and t(G-1) critical values
+            # the same coefficient with firm x year clustering and t(G-1) critical values
             "encompassing_p_twin_two_way_tG1": out["cfo"]["encompassing"]["all_two_way_tG1"]["p"]["T1"],
         }
         v = out["verdict"]

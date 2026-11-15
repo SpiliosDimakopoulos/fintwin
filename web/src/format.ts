@@ -1,9 +1,10 @@
 export function money(x: number | null | undefined, digits = 1): string {
   if (x == null || !Number.isFinite(x)) return "–";
   const a = Math.abs(x), s = x < 0 ? "−" : "";
-  if (a >= 1e12) return `${s}$${(a / 1e12).toFixed(digits)}T`;
-  if (a >= 1e9) return `${s}$${(a / 1e9).toFixed(digits)}B`;
-  if (a >= 1e6) return `${s}$${(a / 1e6).toFixed(0)}M`;
+  // pick the tier after rounding, so 999.96e9 reads "$1.0T", not "$1000.0B"
+  if (a >= 1e12 || +(a / 1e9).toFixed(digits) >= 1000) return `${s}$${(a / 1e12).toFixed(digits)}T`;
+  if (a >= 1e9 || +(a / 1e6).toFixed(0) >= 1000) return `${s}$${(a / 1e9).toFixed(digits)}B`;
+  if (a >= 1e6 || +a.toFixed(0) >= 1e6) return `${s}$${(a / 1e6).toFixed(0)}M`;
   return `${s}$${a.toFixed(0)}`;
 }
 
@@ -15,8 +16,11 @@ export function moneyTick(x: number): string {
   return `${s}${a}`;
 }
 
+/** toFixed without the "-0" it prints for tiny negatives. */
+const toFixedNoNegZero = (x: number, digits: number) => (+x.toFixed(digits) || 0).toFixed(digits);
+
 export const pct = (x: number | null | undefined, digits = 0) =>
-  x == null || !Number.isFinite(x) ? "–" : `${(x * 100).toFixed(digits)}%`;
+  x == null || !Number.isFinite(x) ? "–" : `${toFixedNoNegZero(x * 100, digits)}%`;
 
 /** Sign-aware number: "+5", "−5", "0". Avoids "+-5" when a value turns negative. */
 export function signed(x: number | null | undefined, digits = 0): string {
@@ -33,11 +37,11 @@ export const MODEL_LIMIT_NOTE =
 export const UNIVERSE_TEXT = "US-GAAP filers reporting in USD with at least $50M of revenue";
 
 export const fixed = (x: number | null | undefined, digits = 1) =>
-  x == null || !Number.isFinite(x) ? "–" : x.toFixed(digits);
+  x == null || !Number.isFinite(x) ? "–" : toFixedNoNegZero(x, digits);
 
 export function quarterLabel(iso: string): string {
   const d = new Date(iso + "T00:00:00Z");
-  const q = Math.floor(((d.getUTCMonth() + 12 - 0) % 12) / 3) + 1;
+  const q = Math.floor(d.getUTCMonth() / 3) + 1;
   return `Q${q} '${String(d.getUTCFullYear()).slice(2)}`;
 }
 

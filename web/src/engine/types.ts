@@ -49,6 +49,8 @@ export const OUTPUT_KEYS = [
   "debt_issued", "recession", "dividends", "buybacks", "h_liq", "h_cov", "h_lev", "h_solv",
 ] as const;
 /** Present only when M1 is on. */
+/** Weights of the health score components (sd_model.py); Waterfall.tsx decomposes the score with them. */
+export const HEALTH_WEIGHTS = { liq: 0.3, cov: 0.3, lev: 0.2, solv: 0.2 } as const;
 export const M1_OUTPUT_KEYS = ["cov_breach", "revolver_avail"] as const;
 export type OutputKey = (typeof OUTPUT_KEYS)[number];
 /** Each output is a row-major [N * T] matrix (path-major). */

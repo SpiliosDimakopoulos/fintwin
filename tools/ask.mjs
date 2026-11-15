@@ -1,8 +1,8 @@
 // Drive "Ask the twin" like a visitor: an example chip, then a question that names another company.
 // usage: node ask.mjs http://localhost:4174/ out-dir
-import puppeteer from "puppeteer-core";
+import { launch } from "./lib.mjs";
 const [base = "http://localhost:4174/", out = "."] = process.argv.slice(2);
-const b = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+const b = await launch();
 const p = await b.newPage();
 const errs = []; p.on("pageerror", (e) => errs.push(e.message)); p.on("console", (m) => m.type() === "error" && errs.push(m.text()));
 await p.setViewport({ width: 1400, height: 1000 });

@@ -93,7 +93,7 @@ export function MachineView({ c, meta }: { c: Company; meta: Meta }) {
         </label>
       </div>
       <div className="panel" style={{ padding: "8px 8px 0" }}>
-        <div style={{ width: "100%", overflowX: "auto" }}>
+        <div style={{ width: "100%", overflowX: "auto" }} tabIndex={0} role="region" aria-label="Stock and flow diagram, scrollable">
           <svg viewBox="0 0 960 540" style={{ width: "100%", minWidth: 640, height: "auto" }} role="img"
             aria-label="Stock and flow diagram of the company's financial dynamics">
             <defs>
@@ -149,6 +149,18 @@ export function MachineView({ c, meta }: { c: Company; meta: Meta }) {
           </svg>
         </div>
       </div>
+
+      <p className="muted only-phone" style={{ marginTop: 6 }}>Swipe sideways to see the whole diagram.</p>
+      {s && (
+        <div className="table-wrap" style={{ marginTop: 14 }}>
+          <table aria-label={`Median values in ${fut[q]}`}>
+            <thead><tr><th>{fut[q]}, median path</th>{(["revenue", "ebitda", "cash", "debt"] as const).map((k) => <th key={k} className="r">{STOCKS[k].label}</th>)}<th className="r">Credit rating</th><th className="r">Health score</th></tr></thead>
+            <tbody><tr><td className="sub">{meta.presets[preset].label}</td>
+              {(["revenue", "ebitda", "cash", "debt"] as const).map((k) => <td key={k} className="r num">{valueText(k)}</td>)}
+              <td className="r">{RATINGS[ratingIdx]}</td><td className="r num">{med("health").toFixed(0)}</td></tr></tbody>
+          </table>
+        </div>
+      )}
 
       <Section eyebrow="Feedback loops" title="Why shocks fade or spiral">
         <div className="cols-2" style={{ rowGap: 28 }}>

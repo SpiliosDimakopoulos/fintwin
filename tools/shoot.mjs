@@ -1,6 +1,6 @@
 // Drive the dashboard headless: screenshot each view, report console errors.
 // usage: node shoot.mjs <baseUrl> <outDir> [theme=light|dark] [width]
-import puppeteer from "puppeteer-core";
+import { launch } from "./lib.mjs";
 import { mkdirSync } from "node:fs";
 
 const [base = "http://localhost:5173/", out = "../docs/screenshots", theme = "light", width = "1400"] = process.argv.slice(2);
@@ -11,10 +11,7 @@ const ROUTES = [
   ["compare", "compare/CCL"], ["backtest", "backtest/CCL"], ["method", "method/CCL"], ["twin-aapl", "twin/AAPL"],
 ];
 
-const browser = await puppeteer.launch({
-  executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
-  headless: true, args: ["--no-sandbox"],
-});
+const browser = await launch({ args: ["--no-sandbox"] });
 const page = await browser.newPage();
 await page.setViewport({ width: +width, height: 900, deviceScaleFactor: 1 });
 await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: theme }]);

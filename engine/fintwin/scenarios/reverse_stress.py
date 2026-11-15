@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
-from ..stochastic.mc import run, summarize
+import numpy as np
+
+from ..stochastic.mc import run
 from ..stochastic.shocks import draw_shocks
 
 TARGETS: dict[str, dict[str, Any]] = {
@@ -12,7 +15,7 @@ TARGETS: dict[str, dict[str, Any]] = {
         "lo": 0.0,
         "hi": 0.95,
         "base": {"sales_duration": 3, "sales_recovery": 6},
-        "label": "Revenue drop (held 3 quarters)",
+        "label": "Revenue drop (3 quarters, half in the first)",
         "unit": "pct",
     },
     "rate_bp": {"lo": 0.0, "hi": 1500.0, "base": {}, "label": "Interest-rate rise", "unit": "bp"},
@@ -26,15 +29,26 @@ def breaking_point(
     """Smallest shock size at which P(liquidity breach within horizon) >= target_p.
 
     Uses common random numbers so P(breach) is monotone in the shock size and bisection is well-posed.
-    Returns None if even the largest shock considered does not reach the target.
+    Returns None if even the largest shock considered does not reach the target, and the knob's lower bound (no
+    shock) if the baseline already reaches it.
     """
-    spec = TARGETS[knob]
-    eps = draw_shocks(p, n_paths, p["horizon"], seed)
+    return _bisect(_breach_prob(p, knob, draw_shocks(p, n_paths, p["horizon"], seed)), knob, target_p, iters)
+
+
+def _breach_prob(p: dict, knob: str, eps: np.ndarray) -> Callable[[float], float]:
+    """P(breach by the horizon) as a function of the knob's size, memoized: both targets share the end points."""
+    base, cache = TARGETS[knob]["base"], {}
 
     def prob(x: float) -> float:
-        return summarize(run(p, {**spec["base"], knob: x}, eps=eps))["p_breach"]
+        if x not in cache:
+            cache[x] = float(run(p, {**base, knob: x}, eps=eps)["breach"][:, -1].mean())
+        return cache[x]
 
-    lo, hi = spec["lo"], spec["hi"]
+    return prob
+
+
+def _bisect(prob: Callable[[float], float], knob: str, target_p: float, iters: int) -> float | None:
+    lo, hi = TARGETS[knob]["lo"], TARGETS[knob]["hi"]
     if prob(lo) >= target_p:
         return lo
     if prob(hi) < target_p:
@@ -48,14 +62,16 @@ def breaking_point(
     return float(hi)
 
 
-def reverse_stress(p: dict, n_paths: int = 2000) -> dict:
+def reverse_stress(p: dict, n_paths: int = 2000, seed: int = 21, iters: int = 18) -> dict:
+    eps = draw_shocks(p, n_paths, p["horizon"], seed)
     out = {}
     for knob, spec in TARGETS.items():
+        prob = _breach_prob(p, knob, eps)
         out[knob] = {
             "label": spec["label"],
             "unit": spec["unit"],
-            "p10": breaking_point(p, knob, 0.10, n_paths),
-            "p50": breaking_point(p, knob, 0.50, n_paths),
+            "p10": _bisect(prob, knob, 0.10, iters),
+            "p50": _bisect(prob, knob, 0.50, iters),
         }
     return out
 
@@ -70,5 +86,8 @@ def headline(rs: dict, level: str = "p50") -> str:
     if not hits:
         return "No single shock in the tested ranges breaks the company."
     share = level[1:]
+    # every knob's lower bound is "no shock" on the same draws, so one at its bound means the baseline breaches
+    if any(v[level] == TARGETS[k]["lo"] for k, v in hits):
+        return f"Even with no shock the chance of running out of cash is already {share}% or more."
     parts = [f"{v['label'].lower()} of {_fmt(v[level], v['unit'])}" for _, v in hits]
     return f"A {share}% chance of running out of cash takes any one of: " + "; ".join(parts) + "."

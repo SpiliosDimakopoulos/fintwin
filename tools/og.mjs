@@ -1,9 +1,9 @@
 // Build web/public/og.png (1200x630 social card) from the live hero terminal plus headline text.
-import puppeteer from "puppeteer-core";
+import { launch } from "./lib.mjs";
 import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 const base = process.argv[2] ?? "http://localhost:4173/";
-const b = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+const b = await launch();
 const p = await b.newPage();
 await p.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
 await p.setViewport({ width: 1400, height: 900, deviceScaleFactor: 2 });

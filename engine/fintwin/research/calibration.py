@@ -1,13 +1,13 @@
 """Calibration of the twin's predictive distributions, unconditionally and where it matters (reviewer point 9).
 
 Online conformal rescaling: the interval for a forecast made at origin O is widened by the 90% quantile of past
-normalized errors, using only forecasts whose target quarter had been *reported* by O: its actual first filing date
-(D10), or quarter end + 90 days (`REPORT_LAG`) where that date is unknown. The first version used every forecast from
+normalized errors, using only forecasts whose target quarter had been *reported* by O: its actual first filing date,
+or quarter end + 90 days (`REPORT_LAG`) where that date is unknown. The first version used every forecast from
 earlier origins, which can include quarters reported after O.
 
-Also here: PIT histograms, interval scores and conditional-coverage tests (E13), an asymmetric conformal interval
+Also here: PIT histograms, interval scores and conditional-coverage tests, an asymmetric conformal interval
 (the symmetric one cannot correct skew), the density test of the 8-quarter totals against Gaussian and empirical
-residual densities around the 16-quarter margin (E2, REVISION_PLAN_3 §2.2 B1), and DM tests by horizon (E10).
+residual densities around the 16-quarter margin, and DM tests by horizon.
 """
 
 from __future__ import annotations
@@ -158,7 +158,7 @@ def section(fc: pd.DataFrame, panel: pd.DataFrame) -> dict:
             "below_q05": float((d["y"] < d["q05"]).mean()),
             "above_q95": float((d["y"] > d["q95"]).mean()),
             "bias_median": float(((d["y"] - d["q50"]) / d["scale"]).median()),
-            # E13: the whole PIT distribution, interval scores (scaled by trailing quarterly revenue) and the
+            # the whole PIT distribution, interval scores (scaled by trailing quarterly revenue) and the
             # conditional-coverage tests, before and after conformal rescaling
             "pit_hist": pit_hist(d["pit_twin"].to_numpy(float)),
             "interval_score90": {
@@ -214,7 +214,7 @@ def section(fc: pd.DataFrame, panel: pd.DataFrame) -> dict:
     return out
 
 
-# ---------------------------------------------------------------- E10: DM by horizon
+# ---------------------------------------------------------------- DM by horizon
 def dm_by_horizon(fc: pd.DataFrame, a: str = "crps_twin", refs: tuple[str, ...] = ("crps_rw", "crps_rw_emp")) -> dict:
     """Mean CRPS difference (a - ref) and a firm-clustered DM statistic per variable and horizon, not pooled."""
     out: dict = {}
@@ -235,7 +235,7 @@ def dm_by_horizon(fc: pd.DataFrame, a: str = "crps_twin", refs: tuple[str, ...] 
     return out
 
 
-# ---------------------------------------------------------------- E2: density of the 8-quarter totals
+# ---------------------------------------------------------------- density of the 8-quarter totals
 DENSITY_LAG = 3  # training years <= Y-3, the walk-forward rule of revision 2 (all eight outcome quarters reported)
 MIN_TRAIN = 300
 

@@ -147,7 +147,7 @@ def window_ok(q: pd.DataFrame, n: int, col: str = "revenue") -> bool:
 
 def following(full: pd.DataFrame, last: pd.Timestamp, n: int) -> tuple[pd.DataFrame, str | None]:
     """The n quarters after `last` and why they cannot be used: "short" (not yet reported) or "gap" (a gap row, a
-    fiscal-year break or a missing step inside the window, or between `last` and its first quarter; SW-4, D1).
+    fiscal-year break or a missing step inside the window, or between `last` and its first quarter).
 
     Realized quarters are matched to simulated quarters by position, so a window with a hole is rejected whole
     rather than compared with the wrong quarters. Legacy: the next n rows, as in v2."""
@@ -176,7 +176,7 @@ def usable_prefix(nxt: pd.DataFrame, last: pd.Timestamp, col: str = "revenue") -
 
 
 def first_filed(cik: int) -> dict[str, pd.Series]:
-    """Period end -> date the value was first filed, for revenue and cash, from the cached companyfacts (D10)."""
+    """Period end -> date the value was first filed, for revenue and cash, from the cached companyfacts."""
     from ..data.facts import DURATION, FORMS, INSTANT
     from ..data.facts import company_facts as _facts
 
@@ -205,7 +205,7 @@ def filed_for(filed: pd.Series | None, end: pd.Timestamp, tol_days: int = 12) ->
 
 
 def seen_by(target: pd.Series, filed: pd.Series | None, cutoff: pd.Timestamp, lag_days: int = 90) -> pd.Series:
-    """Was each target quarter reported by `cutoff`? The actual first filing date when known (D10), otherwise the
+    """Was each target quarter reported by `cutoff`? The actual first filing date when known, otherwise the
     quarter end plus `lag_days` (the only rule before revision 3, and the rule under FINTWIN_DATA_LEGACY)."""
     fallback = pd.to_datetime(target) + pd.Timedelta(days=lag_days)
     if filed is None or data_legacy():
@@ -251,7 +251,7 @@ def _baseline(hist: pd.DataFrame, var: str, h: int) -> tuple[float, float]:
 
 
 def rw_empirical(hist: pd.DataFrame, var: str, h: int) -> np.ndarray | None:
-    """Random-walk density from empirical quantiles (E10), an alternative to the Gaussian `_baseline`: the seasonal
+    """Random-walk density from empirical quantiles, an alternative to the Gaussian `_baseline`: the seasonal
     random walk times the last 20 observed year-on-year growth factors for revenue; the last cash balance plus the
     last 20 observed h-quarter changes for cash. Changes are taken on the calendar series (gap rows blank) and only
     then dropped; legacy: on the reported rows, as in v2."""
@@ -366,13 +366,13 @@ def company_cases(ticker: str, n_paths: int = 2000) -> dict:
         "covid": covid_row(ticker, full, skipped),
         "skipped": skipped,
         "timeline": timeline,
-        "_stamp": stamp(),  # SW-2: `aggregate` reports how many companies come from another code/data version
+        "_stamp": stamp(),  # `aggregate` reports how many companies come from another code/data version
     }
 
 
 def covid_row(ticker: str, full: pd.DataFrame, why: dict | None = None) -> dict | None:
     """Pre-COVID twin under the demand-freeze scenario vs realized 2020-21 cash burn. When there is no row, the
-    reason is written to `why["covid"]` (SW-3)."""
+    reason is written to `why["covid"]`."""
     why = why if why is not None else {}
     try:
         cutoff = "2020-02-20"
@@ -384,10 +384,10 @@ def covid_row(ticker: str, full: pd.DataFrame, why: dict | None = None) -> dict 
         win = full[(full.index > pd.Timestamp("2020-01-15")) & (full.index <= pd.Timestamp("2021-07-15"))]
         fcf = win["cfo"] - win["capex"]
         if not data_legacy() and len(win) and not contiguous(win, len(win)):
-            why["covid"] = "gap in the 2020-21 quarters"  # D1: a calendar hole, not a quiet quarter
+            why["covid"] = "gap in the 2020-21 quarters"  # a calendar hole, not a quiet quarter
             return None
         if not data_legacy() and not np.isfinite(fcf.to_numpy(float)).all():
-            why["covid"] = "missing cash-flow quarter in 2020-21"  # D4: not zero burn
+            why["covid"] = "missing cash-flow quarter in 2020-21"  # unknown, not zero burn
             return None
         if not len(fcf):
             why["covid"] = "no reported quarter in 2020-21"
@@ -442,7 +442,7 @@ def aggregate() -> dict:
         sc = _scores(g, "reg")
         g = g.join(sc)
         # online conformal: the scale factor for origin 15 Feb Y uses only forecasts whose target quarter had been
-        # reported by then (its actual first filing date, D10; quarter end + 90 days where unknown), so no error is
+        # reported by then (its actual first filing date; quarter end + 90 days where unknown), so no error is
         # used before it was observable
         conf90, conf50, factors = [], [], {}
         target = pd.to_datetime(g["target"]) if "target" in g else pd.to_datetime(g["year"].astype(str) + "-01-01")
@@ -485,7 +485,7 @@ def aggregate() -> dict:
             "pit_hist": pit.round(4).tolist(),
             "by_year": by_year,
             "by_horizon": {int(h): float(gh["hit90"].mean()) for h, gh in g.groupby("h")},
-            # E10: skill and a firm-clustered DM statistic per horizon (not pooled), against both naive densities
+            # skill and a firm-clustered DM statistic per horizon (not pooled), against both naive densities
             "skill_by_horizon": skill_by_horizon(g),
         }
     rows = [r["covid"] for r in per if r.get("covid")]

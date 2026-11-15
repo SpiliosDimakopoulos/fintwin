@@ -19,53 +19,79 @@ export function useSize<T extends HTMLElement>() {
   return [ref, width] as const;
 }
 
+type SimResult = { summary: Summary; ms: number };
+type SimReply = { id: number } & (SimResult | { error: string } | { superseded: true });
+
 let worker: Worker | null = null;
 let nextId = 1;
-const pending = new Map<number, (r: { summary: Summary; ms: number }) => void>();
+const pending = new Map<number, { resolve: (r: SimResult | null) => void; reject: (e: Error) => void }>();
+function failAll(msg: string) {
+  for (const p of pending.values()) p.reject(new Error(msg));
+  pending.clear();
+}
 function getWorker() {
   if (!worker) {
     worker = new Worker(new URL("./engine/worker.ts", import.meta.url), { type: "module" });
-    worker.onmessage = (e) => {
-      const cb = pending.get(e.data.id);
-      pending.delete(e.data.id);
-      cb?.(e.data);
+    worker.onmessage = (e: MessageEvent<SimReply>) => {
+      const d = e.data;
+      const p = pending.get(d.id);
+      pending.delete(d.id);
+      if (!p) return;
+      if ("error" in d) p.reject(new Error(d.error));
+      else p.resolve("superseded" in d ? null : d);
     };
+    worker.onerror = (e) => failAll(`Simulation worker failed: ${e.message}`);
+    worker.onmessageerror = () => failAll("Simulation worker sent an unreadable message");
   }
   return worker;
 }
 
-export function runSimulation(params: Params, knobs: Knobs, levers: Levers, nPaths = 5000, seed = 7) {
-  return new Promise<{ summary: Summary; ms: number }>((resolve) => {
+/** Resolves null when a newer request on the same lane replaced this one before it ran. */
+function post(req: Omit<SimRequest, "id">) {
+  return new Promise<SimResult | null>((resolve, reject) => {
     const id = nextId++;
-    pending.set(id, resolve);
-    getWorker().postMessage({ id, params, knobs, levers, nPaths, seed } satisfies SimRequest);
+    pending.set(id, { resolve, reject });
+    getWorker().postMessage({ id, ...req } satisfies SimRequest);
   });
+}
+
+export function runSimulation(params: Params, knobs: Knobs, levers: Levers, nPaths = 5000, seed = 7) {
+  return post({ params, knobs, levers, nPaths, seed }) as Promise<SimResult>;
 }
 
 /** Live Monte Carlo: re-runs (debounced, latest-wins) whenever inputs change. */
 export function useSimulation(params: Params | null, knobs: Knobs, levers: Levers, nPaths = 5000) {
-  const [state, setState] = useState<{ summary: Summary | null; ms: number; busy: boolean }>({ summary: null, ms: 0, busy: false });
+  const [state, setState] = useState<{ summary: Summary | null; ms: number; busy: boolean; error: string | null }>(
+    { summary: null, ms: 0, busy: false, error: null });
   const latest = useRef(0);
+  // each hook instance is its own lane, so the worker drops this hook's stale requests but not another hook's
+  const [lane] = useState(() => nextId++);
   const key = JSON.stringify([params?.ticker, knobs, levers, nPaths]);
   useEffect(() => {
     if (!params) return;
     const ticket = ++latest.current;
     setState((s) => ({ ...s, busy: true }));
     const timer = setTimeout(() => {
-      runSimulation(params, knobs, levers, nPaths).then((r) => {
-        if (ticket === latest.current) setState({ summary: r.summary, ms: r.ms, busy: false });
-      });
+      post({ params, knobs, levers, nPaths, seed: 7, lane }).then(
+        (r) => { if (r && ticket === latest.current) setState({ summary: r.summary, ms: r.ms, busy: false, error: null }); },
+        (e: Error) => { if (ticket === latest.current) setState((s) => ({ ...s, busy: false, error: e.message })); },
+      );
     }, 60);
     return () => clearTimeout(timer);
+    // `key` stands in for knobs/levers/nPaths, which callers often rebuild as new objects with the same content
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, params]);
   return state;
 }
 
+const safeDecode = (s: string) => {
+  try { return decodeURIComponent(s); } catch { return s; }
+};
+
 export function useHashState(def: string): [string, (v: string) => void] {
-  const [v, setV] = useState(() => decodeURIComponent(location.hash.slice(1)) || def);
+  const [v, setV] = useState(() => safeDecode(location.hash.slice(1)) || def);
   useEffect(() => {
-    const on = () => setV(decodeURIComponent(location.hash.slice(1)) || def);
+    const on = () => setV(safeDecode(location.hash.slice(1)) || def);
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, [def]);

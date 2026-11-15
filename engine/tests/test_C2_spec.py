@@ -12,9 +12,7 @@ from fintwin.research import experiments as X
 
 
 @pytest.fixture(autouse=True)
-def _clean_env(monkeypatch):
-    for k in ("FINTWIN_SPEC", "FINTWIN_FIXES", "FINTWIN_SELECTION", "FINTWIN_DATA_LEGACY"):
-        monkeypatch.delenv(k, raising=False)
+def _local_spec_fallback(monkeypatch):
     monkeypatch.setattr(X, "_spec_mod", None)  # test the local fallback's semantics
 
 

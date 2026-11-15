@@ -87,6 +87,6 @@ Where the twin fails, and why:
 
 ```bash
 cd engine
-bash scripts/build_all.sh            # all companies + goldens + backtests
+bash scripts/resume_build.sh --all  # all companies + goldens + backtests
 uv run python scripts/backtest_check.py CCL AAPL   # console summary
 ```

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -135,7 +136,7 @@ def boot(
             idx = g.integers(0, n, n)
         else:
             pick = g.integers(0, len(groups), len(groups))
-            idx = np.concatenate([groups[g] for g in pick])
+            idx = np.concatenate([groups[i] for i in pick])
         out[k] = stat(*(c[idx] for c in cols))
     return out
 
@@ -449,7 +450,7 @@ def _data_legacy() -> bool:
 def cases(dates: list[pd.Timestamp], gap_days: int = 1095) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
     """Group Item 1.03 filings into cases: (petition, last filing of the case).
 
-    A filing belongs to the current case when it comes within `gap_days` of the case's *previous* filing (D8): the
+    A filing belongs to the current case when it comes within `gap_days` of the case's *previous* filing: the
     revision-2 rule measured the gap from the petition, so a confirmation or emergence 8-K more than three years into
     a long case opened a phantom second case. FINTWIN_DATA_LEGACY=1 restores that rule."""
     out: list[list[pd.Timestamp]] = []
@@ -470,7 +471,7 @@ def petitions(dates: list[pd.Timestamp], gap_days: int = 1095) -> list[pd.Timest
 
 def in_bankruptcy(spans: list[tuple[pd.Timestamp, pd.Timestamp]], origin: str) -> bool:
     """True when the cutoff falls between a case's petition and its last 8-K: the firm is still in Chapter 11 and is
-    neither a survivor nor a new filer (D8)."""
+    neither a survivor nor a new filer."""
     o = pd.Timestamp(origin)
     return any(a <= o <= b for a, b in spans if b > a)
 
@@ -482,7 +483,7 @@ def bk_event(
     spans: list[tuple[pd.Timestamp, pd.Timestamp]] | None = None,
 ) -> float:
     """1 if a bankruptcy petition follows the cutoff within `days`; NaN if one was filed in the two years before it,
-    or (D8, with `spans`) if the cutoff falls inside a case that is still running."""
+    or (with `spans`) if the cutoff falls inside a case that is still running."""
     o = pd.Timestamp(origin)
     if any(o - pd.Timedelta(days=730) < d <= o for d in dates):
         return np.nan
@@ -606,10 +607,7 @@ def _secondary_pvalues(res: dict) -> dict[str, float]:
 def _industry(key: str) -> str:
     from ..universe import classify
 
-    try:
-        return classify(key)[0] or "Unknown"
-    except Exception:
-        return "Unknown"
+    return classify(key)[0] or "Unknown"
 
 
 # ---------------------------------------------------------------- COVID cross-section
@@ -863,13 +861,9 @@ def panel_section(p: pd.DataFrame) -> dict:
                     entry["twin_minus"] = paired(auc, twin, x, y, firms, B_PANEL)
             uni[k] = entry
         res["univariate"] = uni
+        in_year = {yr: (p["year"] == yr).to_numpy() & m for yr in out["years"]}
         res["auc_by_year"] = {
-            k: {
-                int(yr): auc(
-                    R[k].to_numpy(float)[(p["year"] == yr).to_numpy() & m], y[(p["year"] == yr).to_numpy() & m]
-                )
-                for yr in out["years"]
-            }
+            k: {int(yr): auc(R[k].to_numpy(float)[sel], y[sel]) for yr, sel in in_year.items()}
             for k in ("twin", "formula", "altman_z2", "icr", "fcf_margin", "static_stress")
             if k in uni
         }
@@ -970,7 +964,7 @@ def forecast_section(fc: pd.DataFrame) -> dict:
             firm_ids, origin_ids = pd.factorize(unit(g))[0], pd.factorize(g["origin"])[0]
             groups = np.column_stack([firm_ids, origin_ids]) if origin_ids.max() > 0 else firm_ids
             m = sm.OLS(d, np.ones(len(d))).fit(cov_type="cluster", cov_kwds={"groups": groups})
-            # E9 / SW-14: with about a dozen origins the normal p-value above over-rejects; t(G-1) and a PSD check
+            # with about a dozen origins the normal p-value above over-rejects; t(G-1) and a PSD check
             dm = two_way_mean(d, firm_ids, origin_ids) if origin_ids.max() > 0 else {}
             res[base] = {
                 "dm_tG1": dm,
@@ -995,11 +989,10 @@ def forecast_section(fc: pd.DataFrame) -> dict:
 
 
 def provenance() -> dict:
-    """Versions, code and data identity of the run (R3 / OPS-F5): enough for the paper to state them."""
+    """Versions, code and data identity of the run: enough for the paper to state them."""
     import hashlib
     import platform
     import subprocess
-    import sys
 
     import scipy
     import statsmodels
@@ -1054,6 +1047,16 @@ def _safe(fn, *args) -> dict:
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+def _error_paths(node, path: str = "") -> list[str]:
+    """Paths of every `{"error": ...}` entry left by `_safe` and the other per-section handlers."""
+    if not isinstance(node, dict):
+        return []
+    found = [f"{path or '/'}: {node['error']}"] if isinstance(node.get("error"), str) else []
+    for k, v in node.items():
+        found += _error_paths(v, f"{path}/{k}")
+    return found
+
+
 def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_errors: Path | None = None) -> dict:
     """`b_family` (default B_FAMILY, env FINTWIN_B_FAMILY) is the bootstrap size of the pre-specified comparison
     family; a dry run passes a small number. `out`: where to write research.json (default OUT), one file per
@@ -1062,9 +1065,9 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_
 
     b_family = B_FAMILY if b_family is None else int(b_family)
     xs, panel_all, fc, errors = load(cache)
-    RAW = "real_cum_fcf" if "real_cum_fcf" in xs else "real_burn"
-    ABN = "real_abn_cum_fcf" if "real_abn_cum_fcf" in xs else "real_abn_burn"
-    # D8: firm-years whose cutoff falls inside a running Chapter 11 case are neither survivors nor new filers
+    raw_col = "real_cum_fcf" if "real_cum_fcf" in xs else "real_burn"
+    abn_col = "real_abn_cum_fcf" if "real_abn_cum_fcf" in xs else "real_abn_burn"
+    # firm-years whose cutoff falls inside a running Chapter 11 case are neither survivors nor new filers
     n_in_bk = int(panel_all["in_bankruptcy"].sum()) if "in_bankruptcy" in panel_all else 0
     if n_in_bk and not _data_legacy():
         panel_all = panel_all[~panel_all["in_bankruptcy"].astype(bool)].reset_index(drop=True)
@@ -1077,6 +1080,7 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_
         "sp2020": xs["sp2020"].to_numpy(bool),
         "sp_today": xs["sp_today"].to_numpy(bool),
     }
+    sp = panel[panel["sp_today"] | panel["sp2020"]]
     res: dict = {
         "n_files": len(list(cache.glob("*.json"))),
         "samples": {
@@ -1097,9 +1101,9 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_
         "seeds": seeds_table() | {"B_FAMILY_used": b_family},
         # cumulative FCF over 2020Q1-2021Q2 (raw, and relative to the run-rate); the worst-cumulative versions, which
         # for firms with positive cash flow reduce to the first quarter, are kept as a robustness check
-        "covid": {k: covid_section(xs[v].reset_index(drop=True), RAW) for k, v in samples.items() if v.sum() >= 30},
+        "covid": {k: covid_section(xs[v].reset_index(drop=True), raw_col) for k, v in samples.items() if v.sum() >= 30},
         "covid_abnormal": {
-            k: covid_section(xs[v].reset_index(drop=True), ABN) for k, v in samples.items() if v.sum() >= 30
+            k: covid_section(xs[v].reset_index(drop=True), abn_col) for k, v in samples.items() if v.sum() >= 30
         },
         "covid_worst": {
             k: covid_section(xs[v].reset_index(drop=True), "real_burn") for k, v in samples.items() if v.sum() >= 30
@@ -1108,9 +1112,7 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_
         "bankruptcy_panel": distress.bankruptcy_panel(panel, B_PANEL),
         "exposure": distress.exposure(xs, B),
         "panel": panel_section(panel),
-        "panel_sp": panel_section(sp.reset_index(drop=True))
-        if len(sp := panel[panel["sp_today"] | panel["sp2020"]]) >= 300
-        else {},
+        "panel_sp": panel_section(sp.reset_index(drop=True)) if len(sp) >= 300 else {},
         "transmission": {
             "panel": transmission.section(panel, B_PANEL, b_family=b_family),
             "covid": transmission.section(xs, B, panel=False),
@@ -1119,20 +1121,20 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_
         "calibration": calibration.section(fc, panel),
         "errors": errors,
     }
-    # revision 3 evaluation sections of workstream C2 (interfaces/C2.md section 4)
-    res["density"] = _safe(calibration.density_section, panel)  # E2 / plan 2.2 B1
+    # revision 3 evaluation sections
+    res["density"] = _safe(calibration.density_section, panel)
     liq = _safe(distress.liquidity_frame, cache)
     if isinstance(liq, pd.DataFrame):
         # family pass: a joint petition or default labels every co-registrant (Hertz Corp / Hertz Global, round 2)
         labels = [c for c in liq if c.startswith(("ce", "y_short", "bk", "acc", "delist"))]
         liq, dedup_liq = dedupe_events(liq, labels, "year")
         res["samples"]["family_events_removed_liquidity"] = dedup_liq
-        res["liquidity"] = _safe(distress.liquidity_section, liq, B)  # E12 / plan 2.2 B2
-        res["credit_events"] = _safe(distress.credit_section, liq, B)  # M9 / B3
+        res["liquidity"] = _safe(distress.liquidity_section, liq, B)
+        res["credit_events"] = _safe(distress.credit_section, liq, B)
     else:
         res["liquidity"] = res["credit_events"] = liq
-    res["decision_scores"] = _safe(distress.event_scores, panel)  # E8
-    res["forecast_dm_by_horizon"] = _safe(calibration.dm_by_horizon, fc)  # E10
+    res["decision_scores"] = _safe(distress.event_scores, panel)
+    res["forecast_dm_by_horizon"] = _safe(calibration.dm_by_horizon, fc)
     res["provenance"] = provenance()
     from . import plan2
 
@@ -1144,6 +1146,8 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_
         res["exploratory_rivals"] = _safe(rivals.section, panel)
     res["plan2"]["verdicts"] = plan2.verdicts(res)
     res["plan2"]["holm"] = plan2.holm(_secondary_pvalues(res))
+    for line in _error_paths(res):  # a failed section must not pass as a finished run
+        print(f"WARNING section failed: {line}", file=sys.stderr, flush=True)
     from ..clean import _clean
     from .cross_spec import cfo_errors_frame
 

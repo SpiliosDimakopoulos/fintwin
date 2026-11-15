@@ -1,4 +1,4 @@
-import { Section } from "../ui";
+import { ExtLink, PAPER_URL, Section } from "../ui";
 
 const STEPS: [string, string, string][] = [
   ["Point-in-time filings", "SEC EDGAR XBRL", "Every number a US-GAAP filer reporting in USD has tagged in its 10-K and 10-Q filings, with ordered fallbacks for tags that change over time. Year-to-date cash flows are de-cumulated into quarters (Q4 = full year minus nine months). Impairments are added back to operating income, as a credit analyst would. Each fact keeps the date it was filed, so a backtest only sees the filings an analyst could have seen. Rating spreads, however, come from a single recent table (Damodaran, Jan 2026)."],
@@ -13,7 +13,7 @@ export function MethodView() {
         <div className="eyebrow">Method</div>
         <h1 className="display h-l" style={{ margin: "8px 0 10px" }}>How the twin is built</h1>
         <p className="lede">Three layers, each testable on its own. The live dashboard runs the product specification; the
-          {" "}<a href="https://github.com/SpiliosDimakopoulos/fintwin/blob/main/docs/paper/fintwin.pdf" target="_blank" rel="noreferrer">technical paper</a> reports the pre-specified and the revised specifications, with the full derivation, calibration estimators and evaluation.</p>
+          {" "}<ExtLink href={PAPER_URL}>technical paper</ExtLink> reports the pre-specified and the revised specifications, with the full derivation, calibration estimators and evaluation.</p>
       </Section>
 
       {STEPS.map(([title, tag, body], i) => (

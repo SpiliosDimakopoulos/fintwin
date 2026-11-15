@@ -140,7 +140,7 @@ def _digest(path: Path) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:16] if path.exists() else None
 
 
-# ---------------------------------------------------------------- failures are counted, not swallowed (SW-3)
+# ---------------------------------------------------------------- failures are counted, not swallowed
 class Failures:
     """Attempts and failures by stage and exception type, so attrition is reported instead of silently shrinking a
     sample. `skip` records data-driven exclusions (gaps, short series), which are not errors."""
@@ -182,7 +182,7 @@ def failure_summary(shards: list[dict]) -> dict:
     return out
 
 
-# ---------------------------------------------------------------- inputs read once per cutoff (SW-18)
+# ---------------------------------------------------------------- inputs read once per cutoff
 @lru_cache(maxsize=64)
 def _macro_cached(asof: str | None) -> pd.DataFrame:
     return _macro_quarterly(asof)
@@ -237,11 +237,11 @@ def data_vintage(cik: int) -> dict:
     }
 
 
-# ---------------------------------------------------------------- walk-forward tau (MM-F1) and lambda (MM-F3)
-# Grids over B1's prior s.d. multiplier `prior_tau` and partial-adjustment speed `fixed_adj_lambda` (per quarter).
-# B1's own grids take precedence when it defines them.
-TAU_GRID: tuple[float, ...] = tuple(getattr(_cal_mod, "TAU_GRID", (0.05, 0.10, 0.15, 0.25, 0.50)))
-LAMBDA_GRID: tuple[float, ...] = tuple(getattr(_cal_mod, "LAMBDA_GRID", (0.0, 0.10, 0.20, 0.35, 0.50)))
+# ---------------------------------------------------------------- walk-forward tau (F1) and lambda (F3)
+# Grids over the prior s.d. multiplier `prior_tau` and the partial-adjustment speed `fixed_adj_lambda` (per quarter),
+# as defined in stochastic/calibrate.py.
+TAU_GRID: tuple[float, ...] = tuple(_cal_mod.TAU_GRID)
+LAMBDA_GRID: tuple[float, ...] = tuple(_cal_mod.LAMBDA_GRID)
 WF_KEYS = {"tau": "prior_tau", "lam": "fixed_adj_lambda"}
 WF_LAG = 3  # revision 2's rule: test year Y uses cutoffs up to Y-3, whose eight outcome quarters were all reported
 WF_MIN_PAST = 500
@@ -249,7 +249,7 @@ WF_MIN_PAST = 500
 
 def wf_grid() -> dict[str, dict]:
     """Calibration variants the shard evaluates so that tau and lambda can be chosen on earlier years only. Each grid
-    is one-dimensional around B1's defaults (lambda is searched at the default tau, and vice versa)."""
+    is one-dimensional around the calibration defaults (lambda is searched at the default tau, and vice versa)."""
     g: dict[str, dict] = {}
     if fix_active("F1"):
         g |= {f"tau_{t:.2f}": {WF_KEYS["tau"]: float(t)} for t in TAU_GRID}
@@ -339,7 +339,7 @@ def selected_assumptions(asof: str | None) -> dict:
 
 
 # NBER announcement dates of the turning points after 2008 (nber.org/research/business-cycle-dating): before a
-# trough is announced, a forecaster at the cutoff still believes the economy is in recession (SW-17).
+# trough is announced, a forecaster at the cutoff still believes the economy is in recession.
 NBER_ANNOUNCED = [("2007-12-01", "peak", "2008-12-01"), ("2009-06-01", "trough", "2010-09-20"),
                   ("2020-02-01", "peak", "2020-06-08"), ("2020-04-01", "trough", "2021-07-19")]  # fmt: skip
 
@@ -356,7 +356,7 @@ def realtime_recession(asof: str) -> bool | None:
 def calibrate(hist: CompanyData, macro: pd.DataFrame, horizon: int = 12, assumptions: dict | None = None) -> dict:
     """Calibration with the rating-spread table that was published at the cutoff (the product uses January 2026's)."""
     # research runs keep the pre-specified 35% prior (5% under v2-rev); tau / lambda chosen walk-forward if a table
-    # is given, otherwise B1's defaults
+    # is given, otherwise the calibration defaults
     a = {"fixed_share_prior": research_prior(), **selected_assumptions(hist.asof), **(assumptions or {})}
     p = _calibrate(hist, macro, horizon, a)
     pit = spreads_asof(hist.asof)
@@ -378,7 +378,7 @@ def _f(x) -> float | None:
 
 
 def usable(hist: CompanyData, asof: str) -> bool:
-    """16 consecutive reported quarters of history (D1: gap rows are calendar quarters without a filing, so the row
+    """16 consecutive reported quarters of history (gap rows are calendar quarters without a filing, so the row
     count is not enough), and a company that was still filing: the last known quarter is recent.
 
     Without the second condition a company that stopped filing in 2016 would enter a 2019 cutoff with stale data.
@@ -398,7 +398,7 @@ def _ttm(q: pd.DataFrame, col: str) -> float:
 def _following(
     full: pd.DataFrame, last: pd.Timestamp, n: int, fails: Failures | None = None, where: str = ""
 ) -> pd.DataFrame:
-    """The next `n` quarters after `last`, or an empty frame if any is unreported or a gap row (SW-4, D1); the reason
+    """The next `n` quarters after `last`, or an empty frame if any is unreported or a gap row; the reason
     is recorded as an exclusion under `where`, never silently."""
     nxt, why = following(full, last, n)
     if why and fails is not None:
@@ -437,7 +437,7 @@ def features(c: CompanyData, p: dict) -> dict:
 
 def _features(c: CompanyData, p: dict) -> dict:
     # numpy scalars throughout: a zero balance-sheet item gives inf/NaN (then None), not a ZeroDivisionError that
-    # would turn the whole company into an error entry (SW-15)
+    # would turn the whole company into an error entry
     F = np.float64
     q = c.quarters
     last = q.iloc[-1]
@@ -505,7 +505,7 @@ SHORTFALL_Q = (4, 8)
 
 
 def shortfall(sim: dict, p: dict, k: int) -> float:
-    """P(cash + undrawn revolver < 0 in some quarter within the first k), E12. The undrawn line is the simulated
+    """P(cash + undrawn revolver < 0 in some quarter within the first k). The undrawn line is the simulated
     capacity (`revolver_cap` path when the model reports one, e.g. a facility cut on a covenant breach) less draws."""
     cap = sim.get("revolver_cap", p["revolver_cap"])
     cap = np.asarray(cap, float)[:, :k] if np.ndim(cap) == 2 else float(cap)
@@ -661,7 +661,7 @@ QLEVELS = (2.5, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 8
 
 def density(tot: np.ndarray, real: float) -> dict:
     """Compact predictive density of an 8-quarter total (% of trailing revenue): 21 quantiles, mean and s.d., plus
-    the CRPS and PIT against the realized total computed on all paths (E2)."""
+    the CRPS and PIT against the realized total computed on all paths."""
     tot = np.asarray(tot, float)
     return {
         "q": [round(float(v), 3) for v in np.percentile(tot, QLEVELS)],
@@ -719,7 +719,7 @@ def structural(
     def tot(x: np.ndarray) -> np.ndarray:  # path-level 8-quarter totals, % of trailing revenue
         return x[:, :n_q].sum(1) / rev_ttm * 100
 
-    def med_tot(x: np.ndarray) -> float:  # E1: the median of the path totals, not the sum of per-quarter medians
+    def med_tot(x: np.ndarray) -> float:  # the median of the path totals, not the sum of per-quarter medians
         return round(float(np.median(tot(x))), 4)
 
     pre_cfo, pre_fcf = pre["cfo"], pre["cfo"] - pre["capex"]
@@ -862,7 +862,7 @@ def _cumulative(pre: pd.DataFrame, window: pd.DataFrame, rev_ttm: float) -> tupl
     run_rate = (_ttm(pre, "cfo") - _ttm(pre, "capex")) / 4
     fcf = window["cfo"] - window["capex"]
     if not data_legacy() and not np.isfinite(fcf.to_numpy(float)).all():
-        return np.nan, np.nan  # D4: a missing quarter is unknown, not zero burn
+        return np.nan, np.nan  # a missing quarter is unknown, not zero burn
     total = float(fcf.fillna(0).sum() / rev_ttm * 100)
     if not np.isfinite(run_rate):
         return total, np.nan
@@ -870,7 +870,7 @@ def _cumulative(pre: pd.DataFrame, window: pd.DataFrame, rev_ttm: float) -> tupl
 
 
 def _fcf_path(window: pd.DataFrame) -> pd.Series | None:
-    """Quarterly FCF over an outcome window: None if any quarter is missing (D4; the legacy layer counted it as 0)."""
+    """Quarterly FCF over an outcome window: None if any quarter is missing (the legacy layer counted it as 0)."""
     fcf = window["cfo"] - window["capex"]
     if data_legacy():
         return fcf.fillna(0)
@@ -904,7 +904,7 @@ def covid_outcomes(hist: CompanyData, full: pd.DataFrame, fails: Failures | None
         fails.skip("covid_outcomes", "short")
         return {}
     if not data_legacy() and not contiguous(win, len(win)):
-        fails.skip("covid_outcomes", "gap")  # SW-4 / D1: a hole in the window would shift every cumulative value
+        fails.skip("covid_outcomes", "gap")  # a hole in the window would shift every cumulative value
         return {}
     path = _fcf_path(win)
     fcf = path.cumsum() if path is not None else pd.Series(np.nan, index=win.index)
@@ -931,7 +931,7 @@ def covid_outcomes(hist: CompanyData, full: pd.DataFrame, fails: Failures | None
 def _liquidity_realized(pre: pd.DataFrame, nxt: pd.DataFrame, rev_ttm: float) -> dict:
     """What happened to liquidity within 4 and 8 quarters: the lowest cash-like balance relative to the opening one and
     the largest rise in total debt (% of trailing revenue). `distress.liquidity_frame` turns them, with the credit
-    events, into the realized shortfall label of E12."""
+    events, into the realized shortfall label."""
     cash0 = float(pre["cash"].iloc[-1] + np.nan_to_num(pre["short_investments"].iloc[-1]))
     debt0 = float(pre["total_debt"].iloc[-1])
     cash = (nxt["cash"] + nxt["short_investments"].fillna(0)).to_numpy(float)
@@ -964,7 +964,7 @@ def _distress(hist: CompanyData, full: pd.DataFrame, filed: dict | None = None, 
     ebit = (both["operating_income"]).rolling(4).sum().tail(8)
     intr = both["interest_expense"].rolling(4).sum().tail(8)
     yoy_ok = pd.Series(True, index=both.index)
-    if not data_legacy():  # trailing sums and year-on-year changes only over consecutive quarters (D1)
+    if not data_legacy():  # trailing sums and year-on-year changes only over consecutive quarters
         ebit = ebit.where(contiguous_mask(both, 4, "operating_income").tail(8))
         intr = intr.where(contiguous_mask(both, 4, "interest_expense").tail(8))
         yoy_ok = contiguous_mask(both, 5)
@@ -986,7 +986,7 @@ def _distress(hist: CompanyData, full: pd.DataFrame, filed: dict | None = None, 
             * 100
         ),
         **_liquidity_realized(pre, nxt, rev_ttm),
-        # when the last outcome quarter was first reported (D10): a model trained for a later cutoff may use this
+        # when the last outcome quarter was first reported: a model trained for a later cutoff may use this
         # firm-year only if this date precedes that cutoff
         "outcome_filed": filed_for((filed or {}).get("revenue"), nxt.index[-1]),
         "outcome_filed4": filed_for((filed or {}).get("revenue"), nxt.index[3]),
@@ -1095,7 +1095,7 @@ def _forecast_origin(
                     "q": [float(v) for v in np.percentile(out[key][:, h], [5, 25, 50, 75, 95])],
                     "pit_twin": float(np.mean(out[key][:, h] <= y)),
                     "target": str(real.index[h].date()),
-                    # D10: the date the target quarter was first reported (conformal and training windows use it)
+                    # the date the target quarter was first reported (conformal and training windows use it)
                     "filed": filed_for((filed or {}).get("revenue" if var == "revenue" else "cash"), real.index[h]),
                     "rw_mu": _f(mu_b),
                     "rw_sd": _f(sd_b),
@@ -1106,7 +1106,7 @@ def _forecast_origin(
     return rows
 
 
-# ---------------------------------------------------------------- credit events from 8-K items (M9)
+# ---------------------------------------------------------------- credit events from 8-K items
 CREDIT_ITEMS = ("1.03", "2.04", "3.01")  # bankruptcy or receivership; acceleration of an obligation; delisting notice
 COC_ITEMS = ("2.01", "5.01")  # completion of an acquisition; change in control
 COC_WINDOW = pd.Timedelta(days=30)
@@ -1152,7 +1152,7 @@ def credit_events(cik: int) -> dict:
 
 @contextmanager
 def _timed(acc: dict, stage: str):
-    """Wall-clock seconds per stage (the rev3 cost model, REV3_LIGHT_PLAN B1). Timing only: no effect on results."""
+    """Wall-clock seconds per stage (the rev3 cost model, REV3_LIGHT_PLAN). Timing only: no effect on results."""
     t0 = time.perf_counter()
     try:
         yield
@@ -1187,7 +1187,7 @@ def company(
         fails.tried("filed")
         try:
             filed = first_filed(int(full_data.cik))
-        except Exception as e:  # D10 then falls back to the fixed lag downstream, and the count says how often
+        except Exception as e:  # the filing date then falls back to the fixed lag downstream, and the count says how often
             fails.fail("filed", e)
         fails.tried("credit_events")
         try:
@@ -1251,7 +1251,7 @@ def company(
                 "rec_realtime": realtime_recession(origin),
                 "selected": selected_assumptions(origin) or None,
             }
-            # E12: P(cash + undrawn < 0 within 4 / 8 quarters) at each shock depth and under the Recession preset
+            # P(cash + undrawn < 0 within 4 / 8 quarters) at each shock depth and under the Recession preset
             row["liquidity"] = {
                 "grid": {k: [v.get("short4"), v.get("short8")] for k, v in dg.items()},
                 "recession": [row["recession"].get("short4"), row["recession"].get("short8")],

@@ -19,12 +19,6 @@ def sim(p, knobs=None, **lev):
     return sd_model.simulate(p, build_scenario(knobs or {}, p["horizon"]), eps, lv)
 
 
-@pytest.fixture(autouse=True)
-def _clean_env(monkeypatch):
-    monkeypatch.delenv("FINTWIN_FIXES", raising=False)
-    monkeypatch.delenv("FINTWIN_SPEC", raising=False)
-
-
 def test_f6_margin_deviation_starts_at_m_dev0_and_decays():
     p = make_params(**QUIET, m_dev0=0.04)
     on, off = sim(p, F6=True), sim(p, F6=False)

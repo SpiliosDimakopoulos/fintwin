@@ -89,19 +89,41 @@ export type Backtest = {
 
 const base = import.meta.env.BASE_URL;
 const cache = new Map<string, Promise<unknown>>();
+class HttpError extends Error {
+  constructor(path: string, readonly status: number) { super(`${path}: HTTP ${status}`); }
+}
 function getJson<T>(path: string): Promise<T> {
   if (!cache.has(path)) {
+    // a failed load is evicted so the next call retries instead of replaying the error
     cache.set(path, fetch(`${base}${path}`).then((r) => {
-      if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+      if (!r.ok) throw new HttpError(path, r.status);
       return r.json();
-    }));
+    }).catch((e) => { cache.delete(path); throw e; }));
   }
   return cache.get(path) as Promise<T>;
+}
+/** For files a deploy may leave out: a 404 is "no data", anything else (network, bad JSON) is logged. */
+function getOptional<T>(path: string): Promise<T | null> {
+  return getJson<T>(path).catch((e) => {
+    if (!(e instanceof HttpError && e.status === 404)) console.warn(`Could not load ${path}:`, e);
+    return null;
+  });
+}
+
+/** The fields the browser engine indexes by quarter; a short array would turn every path into NaN. */
+function checkParams(p: Params) {
+  const bad = [
+    !(p.horizon > 0) && `horizon ${p.horizon}`,
+    !(p.maturities_q?.length >= p.horizon) && `maturities_q has ${p.maturities_q?.length} quarters`,
+    p.seasonal?.length !== 4 && "seasonal needs 4 values",
+    ...(["ebit_ttm0", "ebitda_ttm0", "interest_ttm0"] as const).map((k) => p[k]?.length !== 4 && `${k} needs 4 values`),
+  ].filter(Boolean);
+  if (bad.length) throw new Error(`${p.ticker}: malformed model parameters (${bad.join(", ")})`);
 }
 
 export const loadIndex = () => getJson<Index>("data/index.json");
 export const loadBacktest = () => getJson<Backtest>("data/backtest.json");
-export const loadCalibration = () => getJson<Calibration>("data/calibration.json").catch(() => null);
+export const loadCalibration = () => getOptional<Calibration>("data/calibration.json");
 
 /** Headline results of the research paper (written by engine/scripts/research_assets.py). */
 export type ResearchSummary = {
@@ -112,16 +134,21 @@ export type ResearchSummary = {
   bankruptcy: Record<"all" | "weak", Record<"twin" | "formula" | "ohlson_o" | "altman_z2", number>> & { weak_share: number };
 };
 export type BuildReport = { generated: string; failed: Record<string, string>; n_companies: number };
-export const loadBuildReport = () => getJson<BuildReport>("data/build_report.json").catch(() => null);
-export const loadResearch = () => getJson<ResearchSummary>("data/research_summary.json").catch(() => null);
-export const loadMemo = (t: string) => getJson<Memo>(`data/memos/${t}.json`).catch(() => null);
+export const loadBuildReport = () => getOptional<BuildReport>("data/build_report.json");
+export const loadResearch = () => getOptional<ResearchSummary>("data/research_summary.json");
+export const loadMemo = (t: string) => getOptional<Memo>(`data/memos/${encodeURIComponent(t)}.json`);
 
 /** Snapshot first; fall back to the optional local live API (`python -m fintwin.api`) for unseen tickers. */
 export async function loadCompany(ticker: string): Promise<Company> {
+  const c = await fetchCompany(ticker);
+  checkParams(c.params);
+  return c;
+}
+
+async function fetchCompany(ticker: string): Promise<Company> {
   try {
     return await getJson<Company>(`data/companies/${encodeURIComponent(ticker)}.json`);
   } catch {
-    cache.delete(`data/companies/${encodeURIComponent(ticker)}.json`);
     // The local live API exists only in development; on the static site an unknown ticker is simply not in the snapshot.
     if (!import.meta.env.DEV) throw new Error(`No snapshot for ${ticker}. The static site covers the companies listed in the matrix.`);
     const r = await fetch(`/api/company/${encodeURIComponent(ticker)}`);
@@ -132,7 +159,7 @@ export async function loadCompany(ticker: string): Promise<Company> {
 
 export type Vintage = { asof: string; last_quarter: string; health: number; health_p10: number; p_breach: number; params: Omit<import("./engine/types").Params, "_sources"> };
 export type Timeline = { ticker: string; series: { dates: string[]; revenue: (number | null)[]; cash: (number | null)[]; debt: (number | null)[] }; vintages: Vintage[] };
-export const loadTimeline = (t: string) => getJson<Timeline>(`data/timeline/${t}.json`).catch(() => null);
+export const loadTimeline = (t: string) => getOptional<Timeline>(`data/timeline/${encodeURIComponent(t)}.json`);
 
 export type ChangeDriver = { component: "liq" | "cov" | "lev" | "solv"; label: string; points: number };
 export type Mover = {
@@ -145,4 +172,4 @@ export type ChangeWeek = {
   movers: Mover[]; new_filings: { ticker: string; name: string; quarter: string | null }[]; added: string[]; removed: string[];
 };
 export type Changes = { threshold: number; weeks: ChangeWeek[] };
-export const loadChanges = () => getJson<Changes>("data/changes.json").catch(() => null);
+export const loadChanges = () => getOptional<Changes>("data/changes.json");

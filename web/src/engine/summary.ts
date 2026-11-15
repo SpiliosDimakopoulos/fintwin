@@ -12,6 +12,9 @@ export function percentile(sorted: Float64Array, q: number): number {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
 }
 
+const sortedCopy = (a: ArrayLike<number>) => Float64Array.from(a).sort();
+const median = (a: ArrayLike<number>) => percentile(sortedCopy(a), 50);
+
 function column(m: Float64Array, N: number, T: number, t: number): Float64Array {
   const c = new Float64Array(N);
   for (let n = 0; n < N; n++) c[n] = m[n * T + t];
@@ -62,8 +65,8 @@ export function summarize(o: Outputs, nSample = 40): Summary {
   const components = { liq: mean(o.h_liq), cov: mean(o.h_cov), lev: mean(o.h_lev), solv: mean(o.h_solv) };
   const healthAvg = mean(o.health);
   const ratingDist = new Array(RATINGS.length).fill(0);
-  let icrLow = 0, subIG = 0, eqSum: number[] = [], debtSum: number[] = [];
-  const healthMean = new Float64Array(N), minLiq = new Float64Array(N);
+  let icrLow = 0, subIG = 0;
+  const healthMean = new Float64Array(N), minLiq = new Float64Array(N), eqSum = new Float64Array(N), debtSum = new Float64Array(N);
   const breachQ: number[] = [];
   for (let n = 0; n < N; n++) {
     const last = n * T + T - 1;
@@ -82,22 +85,21 @@ export function summarize(o: Outputs, nSample = 40): Summary {
     healthMean[n] = h / T;
     minLiq[n] = ml;
     if (mi < 1.5) icrLow++;
-    eqSum.push(eq);
-    debtSum.push(dbt);
+    eqSum[n] = eq;
+    debtSum[n] = dbt;
     if (fb >= 0) breachQ.push(fb);
   }
-  const hs = Float64Array.from(healthMean).sort();
-  const ml = Float64Array.from(minLiq).sort();
-  const med = (a: number[]) => percentile(Float64Array.from(a).sort(), 50);
+  const hs = sortedCopy(healthMean);
+  const ml = sortedCopy(minLiq);
   const healthHist = new Array(20).fill(0);
   healthMean.forEach((h) => (healthHist[Math.min(Math.floor(h / 5), 19)] += 1 / N));
   const pick = Array.from({ length: Math.min(nSample, N) }, (_, j) => Math.floor((j * N) / Math.min(nSample, N)));
   return {
     bands, pBreachByQ, pRecessionByQ, components, healthMean: healthAvg, pBreach: pBreachByQ[T - 1], pIcrBelow15: icrLow / N, pSubIG: subIG / N, ratingDist,
     healthScore: percentile(hs, 50), healthP10: percentile(hs, 10), healthHist,
-    medianQuartersToBreach: breachQ.length ? med(breachQ) : null,
+    medianQuartersToBreach: breachQ.length ? median(breachQ) : null,
     minLiquidityBands: BANDS.map((b) => percentile(ml, b)),
-    equityNeededMedian: med(eqSum), debtIssuedMedian: med(debtSum),
+    equityNeededMedian: median(eqSum), debtIssuedMedian: median(debtSum),
     samplePaths: {
       cash: pick.map((n) => Array.from(o.cash.subarray(n * T, n * T + T))),
       health: pick.map((n) => Array.from(o.health.subarray(n * T, n * T + T))),
@@ -106,8 +108,6 @@ export function summarize(o: Outputs, nSample = 40): Summary {
 }
 
 // ---------------------------------------------------------------- M7: decision outputs (mirror of sd_model.py)
-const sortedCopy = (a: ArrayLike<number>) => Float64Array.from(a).sort();
-const median = (a: ArrayLike<number>) => percentile(sortedCopy(a), 50);
 
 /** P(cash + undrawn revolver < x in any of the first n quarters); n omitted = whole horizon. */
 export function pLiquidityBelow(out: Outputs, x: number, n?: number): number {
@@ -171,9 +171,9 @@ export function decisionOutputs(
     p_funding_gap: gap.filter((v) => v > 0).length / N,
     maturity_wall: maturityWall(p.maturities_q, T),
   };
-  const mq = p.revolver_maturity_q;
-  if (mq != null && mq > 0 && mq < T) {
-    const q = Math.trunc(mq);
+  // truncate before the range test, as Python's `0 < int(mq) < T`: mq in (0, 1) has no quarter before it
+  const q = Math.trunc(p.revolver_maturity_q ?? 0);
+  if (q > 0 && q < T) {
     res.revolver_due = { q, median: median(Array.from({ length: N }, (_, i) => out.revolver[i * T + q - 1])) };
   }
   if (x !== undefined) res.p_liquidity_below = { x, n: n || T, p: pLiquidityBelow(out, x, n) };

@@ -95,13 +95,19 @@ def verify() -> None:
 
 
 def restore(tar: str) -> None:
+    want = json.loads((OUT / "manifest.json").read_text(encoding="utf-8"))["tarball"]["sha256"]
+    if _sha(Path(tar)) != want:
+        raise SystemExit(f"{tar} does not match the tarball checksum in manifest.json (truncated or wrong download?)")
     with tarfile.open(tar) as tf:
         tf.extractall(ENGINE, filter="data")
     verify()
 
 
 if __name__ == "__main__":
-    if sys.argv[1] == "restore":
+    commands = {"build": build, "fred": fred, "verify": verify, "pack": pack}
+    if len(sys.argv) == 3 and sys.argv[1] == "restore":
         restore(sys.argv[2])
+    elif len(sys.argv) == 2 and sys.argv[1] in commands:
+        commands[sys.argv[1]]()
     else:
-        {"build": build, "fred": fred, "verify": verify, "pack": pack}[sys.argv[1]]()
+        raise SystemExit(__doc__)

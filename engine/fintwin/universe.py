@@ -53,7 +53,7 @@ def classify(ticker: str) -> tuple[str, str]:
         hit = u[u["key"] == ticker.upper()]
         return (str(hit["industry"].iloc[0]), "") if len(hit) else ("", "")
     if "~" in ticker:  # delisted 2020 Chapter 11 filers used in the research sample
-        bk = pd.read_csv(Path(__file__).with_name("data") / "bankruptcies_2020.csv")
+        bk = _bankruptcies()
         hit = bk[bk["key"] == ticker.upper()]
         return (str(hit["sector"].iloc[0]), "") if len(hit) else ("", "")
     u = universe()
@@ -66,6 +66,11 @@ def classify(ticker: str) -> tuple[str, str]:
 @lru_cache(maxsize=1)
 def _edgar() -> pd.DataFrame:
     return pd.read_csv(HERE / "data" / "universe_edgar.csv")
+
+
+@lru_cache(maxsize=1)
+def _bankruptcies() -> pd.DataFrame:
+    return pd.read_csv(HERE / "data" / "bankruptcies_2020.csv")
 
 
 @lru_cache(maxsize=1)

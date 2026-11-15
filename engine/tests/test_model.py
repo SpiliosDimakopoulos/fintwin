@@ -1,9 +1,11 @@
 import numpy as np
+import pytest
 from conftest import make_params
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fintwin.model.ratings import rating_rank
+from fintwin.model import sd_model
+from fintwin.model.ratings import ICR_LOWER, rating_rank
 from fintwin.scenarios.presets import PRESETS, build_scenario
 from fintwin.stochastic.mc import run, summarize
 from fintwin.stochastic.shocks import draw_shocks
@@ -89,16 +91,28 @@ def test_equity_lever_prevents_breach_when_market_open(params):
     assert with_eq["p_breach"] <= without["p_breach"]
 
 
-def test_rating_buckets():
-    assert rating_rank(np.array([-5.0]))[0] == 0
-    assert rating_rank(np.array([2.6]))[0] == 9  # BBB
-    assert rating_rank(np.array([50.0]))[0] == 14  # AAA
+BUCKET_EDGES = [(i, lower) for i, lower in enumerate(ICR_LOWER) if i > 0]
 
 
-def test_all_presets_run(params):
+@pytest.mark.parametrize("rank_fn", [rating_rank, sd_model._rank], ids=["ratings", "sd_model"])
+@pytest.mark.parametrize(("i", "lower"), BUCKET_EDGES)
+def test_rating_bucket_edges(rank_fn, i, lower):
+    assert rank_fn(np.array([lower]))[0] == i  # a bucket includes its lower bound
+    assert rank_fn(np.array([np.nextafter(lower, -np.inf)]))[0] == i - 1
+
+
+def test_rating_extremes_and_undefined_coverage():
+    assert list(rating_rank(np.array([-np.inf, -5.0, 2.6, 50.0, np.inf]))) == [0, 0, 9, 14, 14]
+    assert rating_rank(np.array([np.nan]))[0] == 0  # SW-9: undefined coverage ranks worst
+
+
+def test_presets_do_not_beat_the_base_case(params):
+    eps = draw_shocks(params, 200, params["horizon"], seed=1)
+    base = summarize(run(params, {}, eps=eps))["health_score"]
     for key, preset in PRESETS.items():
-        sm = summarize(run(params, preset["knobs"], n_paths=200))
+        sm = summarize(run(params, preset["knobs"], eps=eps))
         assert 0 <= sm["p_breach"] <= 1, key
+        assert sm["health_score"] <= base + 1e-9, key
 
 
 def test_scenario_shapes():
@@ -120,12 +134,13 @@ def test_recession_regime_frequency_and_effect(params):
     assert on["revenue"][:, -1].mean() < off["revenue"][:, -1].mean()
 
 
+@pytest.mark.slow
 def test_sobol_indices_are_sane(params):
     from fintwin.sensitivity.sobol import sobol
 
     rows = sobol(params, n_base=48, n_paths=100, n_boot=20)["rows"]
     st = {r["knob"]: r["ST"] for r in rows}
-    assert all(0 <= r["S1"] <= 1.2 and 0 <= r["ST"] <= 1.5 for r in rows)
+    assert all(0 <= r["S1"] <= 1.2 and 0 <= r["ST"] <= 1.5 for r in rows)  # smoke only; the estimator is tested below
     # a 0-50% revenue shock must matter more than a 0-60 day inventory build-up for this company
     assert st["sales_depth"] > st["dio_days"]
 
@@ -147,10 +162,47 @@ def test_sector_tolerance_raises_health_of_levered_company(params):
     assert tolerant["p_breach"] == plain["p_breach"]
 
 
-def test_health_waterfall_adds_up(params):
-    sm = summarize(run(params, {"sales_depth": 0.5}, n_paths=800))
+def _weighted_components(out):
+    # the model's health weights, 0.3/0.3/0.2/0.2 (sd_model.simulate), kept here as an independent check
+    return 0.3 * out["h_liq"] + 0.3 * out["h_cov"] + 0.2 * out["h_lev"] + 0.2 * out["h_solv"]
+
+
+def test_health_waterfall_adds_up_without_breach(params):
+    out = run(params, {}, {"recessions": False}, n_paths=300)
+    assert not out["breach"].any()
+    sm = summarize(out)
     c = sm["components"]
     weighted = 0.3 * c["liq"] + 0.3 * c["cov"] + 0.2 * c["lev"] + 0.2 * c["solv"]
-    # weighted components minus the breach cap equals the mean health exactly
-    assert weighted >= sm["health_mean"] - 1e-9
+    assert weighted == pytest.approx(sm["health_mean"])
     assert all(0 <= v <= 100 for v in c.values())
+
+
+def test_health_waterfall_subtracts_the_breach_cap(params):
+    out = run(params, {"sales_depth": 0.8, "sales_duration": 6}, n_paths=800, seed=9)
+    assert out["breach"].any()
+    w = _weighted_components(out)
+    capped = np.where(out["breach"], np.minimum(w, 25.0), w)
+    assert out["health"] == pytest.approx(capped)
+    sm = summarize(out)
+    c = sm["components"]
+    weighted = 0.3 * c["liq"] + 0.3 * c["cov"] + 0.2 * c["lev"] + 0.2 * c["solv"]
+    assert weighted - (w - capped).mean() == pytest.approx(sm["health_mean"])
+    assert (w - capped).mean() > 0
+
+
+def test_sobol_estimator_on_an_additive_function(params, monkeypatch):
+    """Y = sum w_i x_i has S1_i = ST_i = w_i^2 var_i / sum, and no interaction."""
+    import fintwin.sensitivity.sobol as sobol_mod
+
+    k = len(sobol_mod.FACTORS)
+    lo = np.array([f[1] for f in sobol_mod.FACTORS])
+    hi = np.array([f[2] for f in sobol_mod.FACTORS])
+    w = np.arange(1, k + 1, dtype=float)
+    monkeypatch.setattr(sobol_mod, "_evaluate", lambda p, X, eps: ((X - lo) / (hi - lo)) @ w)
+    res = sobol_mod.sobol(params, n_base=4000, n_paths=10, n_boot=10)
+    truth = w**2 / (w**2).sum()
+    by_knob = {r["knob"]: r for r in res["rows"]}
+    for i, (key, *_) in enumerate(sobol_mod.FACTORS):
+        assert by_knob[key]["S1"] == pytest.approx(truth[i], abs=0.04)
+        assert by_knob[key]["ST"] == pytest.approx(truth[i], abs=0.04)
+    assert res["interaction_share"] < 0.1

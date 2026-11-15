@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { healthStatus, MODEL_LIMIT_NOTE } from "./format";
 
 /* ---------- motion ---------- */
@@ -24,14 +24,11 @@ export function useTween(value: number, ms = 260) {
   return shown;
 }
 
-/** Make a clickable <tr> reachable and operable from the keyboard (Tab, Enter, Space). */
-export function rowActions(fn: () => void) {
+/** Row click as a mouse shortcut; the link inside the row is what keyboard and assistive-tech users follow. */
+export function rowClick(fn: () => void) {
   return {
-    tabIndex: 0,
-    onClick: fn,
-    onKeyDown: (e: React.KeyboardEvent) => {
-      if (e.target !== e.currentTarget) return;
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); }
+    onClick: (e: React.MouseEvent) => {
+      if (!(e.target as HTMLElement).closest("a, button")) fn();
     },
   };
 }
@@ -61,10 +58,42 @@ export function Wordmark() {
 
 /* ---------- building blocks ---------- */
 
-export function InfoTip({ children }: { children: ReactNode }) {
+export const REPO_URL = "https://github.com/SpiliosDimakopoulos/fintwin";
+export const PAPER_URL = `${REPO_URL}/blob/main/docs/paper/fintwin.pdf`;
+
+export function ExtLink({ href, children, className }: { href: string; children: ReactNode; className?: string }) {
+  return <a href={href} className={className} target="_blank" rel="noreferrer">{children}</a>;
+}
+
+/** Shown when a data file fails to load, instead of a skeleton that never resolves. */
+export function LoadError({ what }: { what: string }) {
   return (
-    <button type="button" className="info" aria-label="More information">
-      i<span className="pop" role="tooltip">{children}</span>
+    <div className="callout" role="alert" style={{ margin: "12px 0 24px" }}>
+      <p>Could not load {what}. Check your connection and reload the page.</p>
+      <button className="btn" style={{ marginTop: 10 }} onClick={() => location.reload()}>Reload</button>
+    </div>
+  );
+}
+
+/** Opens on hover, keyboard focus or tap (iOS does not focus buttons on tap); Esc or a tap elsewhere closes it. */
+export function InfoTip({ children }: { children: ReactNode }) {
+  const id = useId();
+  const ref = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("pointerdown", away);
+    return () => document.removeEventListener("pointerdown", away);
+  }, [open]);
+  return (
+    <button ref={ref} type="button" className="info" aria-label="More information" aria-describedby={id}
+      data-open={open && !dismissed ? "" : undefined} data-dismissed={dismissed ? "" : undefined}
+      onClick={() => { setOpen(dismissed || !open); setDismissed(false); }}
+      onBlur={() => { setOpen(false); setDismissed(false); }}
+      onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setDismissed(true); } }}>
+      i<span className="pop" role="tooltip" id={id}>{children}</span>
     </button>
   );
 }

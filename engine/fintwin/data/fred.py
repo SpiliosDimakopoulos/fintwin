@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import io
+import math
 import time
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
-import requests
 
-from .edgar import FrozenMiss, fill_only, frozen
+from .edgar import FrozenMiss, fetch, fill_only, frozen, write_atomic
 
 VINTAGES = Path(__file__).with_name("gdp_vintages.csv")
 
@@ -30,9 +31,7 @@ def fred_series(series_id: str, max_age_hours: float = 24) -> pd.Series:
         not (frozen() or fill_only()) and time.time() - path.stat().st_mtime > max_age_hours * 3600
     ):
         url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
-        resp = requests.get(url, timeout=60)
-        resp.raise_for_status()
-        path.write_text(resp.text, encoding="utf-8")
+        write_atomic(path, fetch(url, sec=False).text.encode("utf-8"))
     df = pd.read_csv(io.StringIO(path.read_text(encoding="utf-8")))
     s = pd.to_numeric(df.iloc[:, 1], errors="coerce")
     s.index = pd.to_datetime(df.iloc[:, 0])
@@ -52,9 +51,9 @@ def gdp_vintage(asof: str) -> pd.Series | None:
 
     A quarterly vintage is dated about the middle of the quarter's second month; it is used from the 20th.
     """
-    if not VINTAGES.exists():
+    v = _vintages()
+    if v is None:
         return None
-    v = pd.read_csv(VINTAGES, index_col=0)
     t = pd.Timestamp(asof)
     dated = {c: pd.Timestamp(int(c[:4]), 3 * int(c[-1]) - 1, 20) for c in v.columns}
     usable = [c for c, d in dated.items() if d <= t]
@@ -63,6 +62,11 @@ def gdp_vintage(asof: str) -> pd.Series | None:
     s = v[max(usable, key=lambda c: dated[c])].dropna()
     s.index = pd.PeriodIndex(s.index.str.replace(":", ""), freq="Q").to_timestamp(how="end").normalize()
     return s.astype(float)
+
+
+@lru_cache(maxsize=1)
+def _vintages() -> pd.DataFrame | None:
+    return pd.read_csv(VINTAGES, index_col=0) if VINTAGES.exists() else None
 
 
 def recession_regime(asof: str | None = None) -> dict:
@@ -81,7 +85,7 @@ def recession_regime(asof: str | None = None) -> dict:
     rec = rec[rec.index >= "1947-01-01"]
     starts = int(((rec == 1) & (rec.shift(1) == 0)).sum())
     in_rec = float(rec.sum())
-    yoy = (gdp.apply(lambda x: __import__("math").log(x)).diff(4)).dropna()
+    yoy = gdp.apply(math.log).diff(4).dropna()
     r = rec.reindex(yoy.index, method="nearest")
     shortfall_q = float(yoy[r == 0].mean() - yoy[r == 1].mean()) / 4.0
     return {

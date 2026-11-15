@@ -14,7 +14,6 @@ import pandas as pd
 import pytest
 
 from fintwin.data.facts import CompanyData
-from fintwin.stochastic import calibrate as calibrate_mod
 from fintwin.stochastic.calibrate import calibrate
 from fintwin.stochastic.mc import run, summarize
 
@@ -100,28 +99,6 @@ def synthetic_company(
     )
 
 
-@pytest.fixture
-def macro(monkeypatch):
-    gdp = pd.Series(0.05 + 0.01 * np.sin(np.arange(80) / 3), index=pd.date_range("2005-03-31", periods=80, freq="QE"))
-    monkeypatch.setattr(
-        calibrate_mod,
-        "recession_regime",
-        lambda asof=None: {
-            "hazard": 0.045,
-            "exit": 0.24,
-            "gdp_shortfall_q": 0.01,
-            "in_recession_now": False,
-            "gdp_yoy": gdp,
-            "n_recessions": 12,
-        },
-    )
-    idx = pd.date_range("2000-03-31", "2025-12-31", freq="QE")
-    return pd.DataFrame(
-        {"short_rate": 0.02 + 0.01 * np.sin(np.arange(len(idx)) / 8), "long_rate": 0.035, "credit_spread": 0.02},
-        index=idx,
-    )
-
-
 CASES = {
     "base": {},
     "da_missing": {"da_missing": True, "seed": 1},
@@ -140,8 +117,9 @@ def _outputs(macro) -> dict:
     return json.loads(json.dumps(res, default=float))
 
 
-def _golden(macro) -> None:  # pragma: no cover - run once on the pre-change code
-    GOLDEN.write_text(json.dumps(_outputs(macro), indent=1, sort_keys=True))
+def _golden(macro, generated_by: str) -> None:  # pragma: no cover - run once on the pre-change code
+    """`generated_by` is "<commit> <date>" of the code that ran; a regeneration shows up as a one-line change to it."""
+    GOLDEN.write_text(json.dumps({"_generated_by": generated_by, **_outputs(macro)}, indent=1, sort_keys=True))
 
 
 @pytest.mark.parametrize("spec", ["", "v2-pre", "v2-rev"])
@@ -152,6 +130,7 @@ def test_v2_specs_reproduce_revision2_code_exactly(macro, monkeypatch, spec):
         monkeypatch.delenv("FINTWIN_SPEC", raising=False)
     monkeypatch.delenv("FINTWIN_FIXES", raising=False)
     gold = json.loads(GOLDEN.read_text())
+    assert gold.pop("_generated_by").startswith("20b2610"), "the golden must come from the pre-change code"
     got = _outputs(macro)
     assert got.keys() == gold.keys()
     for k in gold:

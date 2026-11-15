@@ -1,6 +1,6 @@
 import { scaleLinear } from "d3-scale";
 import { area, line } from "d3-shape";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useSize } from "../hooks";
 
 export type FanLayer = {
@@ -46,6 +46,7 @@ function fanAlt(p: Props): string {
 export function FanChart(p: Props) {
   const [ref, width] = useSize<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
+  const clipId = `fan-clip-${useId().replace(/\W/g, "")}`;
   const H = p.height ?? 240;
   const hist = p.history ?? [];
   const nh = hist.length;
@@ -153,10 +154,18 @@ export function FanChart(p: Props) {
               <path d={bandArea(l.bands[1], l.bands[3])} fill={l.color} opacity={0.18} />
             </g>
           ))}
-          {p.samplePaths?.map((sp, i) => (
-            <path key={i} d={medLine(sp)} fill="none" stroke={p.layers[p.layers.length - 1]?.color} strokeWidth={1} opacity={0.32}
-              pathLength={1} className="draw-path" style={{ animationDelay: `${(i % 20) * 22}ms` }} />
-          ))}
+          {p.samplePaths && (
+            // sample paths often leave the 5-95% band that sets the y-domain, so keep them inside the plot area
+            <g>
+              <defs><clipPath id={clipId}><rect x={M.left} y={M.top} width={w - M.left - M.right} height={H - M.top - M.bottom} /></clipPath></defs>
+              <g clipPath={`url(#${clipId})`}>
+                {p.samplePaths.map((sp, i) => (
+                  <path key={i} d={medLine(sp)} fill="none" stroke={p.layers[p.layers.length - 1]?.color} strokeWidth={1} opacity={0.32}
+                    pathLength={1} className="draw-path" style={{ animationDelay: `${(i % 20) * 22}ms` }} />
+                ))}
+              </g>
+            </g>
+          )}
           {p.layers.map((l) => (
             <path key={l.label} d={medLine(l.bands[2])} fill="none" stroke={l.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
           ))}

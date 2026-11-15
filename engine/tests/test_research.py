@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from fintwin.data.edgar import ticker_to_cik
 from fintwin.model.sd_model import simulate
@@ -166,6 +167,7 @@ def _synthetic_research(tmp_path, n=160, bankrupt=12):
     return tmp_path, bk_dates
 
 
+@pytest.mark.slow
 def test_stats_pipeline_recovers_planted_signal(tmp_path, monkeypatch):
     import fintwin.research.stats as st
 
@@ -202,4 +204,4 @@ def test_health_at_open_is_a_valid_score_near_the_first_simulated_quarter(params
         np.zeros((1, 4, 5)) + [0, 0, 0, 0, 0.99],
         DEFAULT_LEVERS,
     )
-    assert abs(out["health"][0, 0] - h0) < 25  # one quarter of steady-state dynamics moves the score only a little
+    assert abs(out["health"][0, 0] - h0) < 6  # one quarter of steady-state dynamics: 4.5 points for this company

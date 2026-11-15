@@ -9,6 +9,7 @@ import type { MLCEngine } from "@mlc-ai/web-llm";
 import { clampScenario, type Scenario } from "./parse";
 
 export const MODEL = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+export const MODEL_LABEL = "Qwen2.5 1.5B";
 export const MODEL_SIZE = "about 1 GB";
 
 export const webgpuAvailable = () => typeof navigator !== "undefined" && "gpu" in navigator;
