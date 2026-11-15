@@ -1,3 +1,22 @@
+# Handoff (15-11-2026, latest; older notes below)
+
+State:
+- `rev3` pushed (history scrubbed of researcher names/email and RESEARCHER_REPLIES; backup branch `backup/rev3-before-scrub`,
+  local only). Draft PR #61 rev3 -> main (do not merge before the v3.0.0 tag).
+- `quality` merged into rev3; full suite on a cax11: 496/497 + web 97/97, the one failure was a test bug (fixed).
+- Paper: IJF two-pillar rewrite, reviewed by three agents, `docs/paper/fintwin.pdf`. Generators: `engine/scripts/rev3_inputs.py`,
+  `rev3_assets.py` (run by `make paper-assets`).
+- Explosive v3 firm-years: cause found (F3 fixed-cost target `fixed_adj_f = F/base_rev` with no bound; CRISPR 2021 ratio ~300).
+  Reported in the paper, not fixed (post-hoc). The bound belongs to the next model version (v3.1), evaluated on new data.
+- PR #62 (main): weekly `data` build hung since 2 Nov (throttle clock bug, fixed on rev3 but not on main). Needs merge + manual run.
+- PR #63 (main): B4 prospective archive enabled; needs merge after #62 and the 4 one-time setup steps in its description.
+
+Open, for the owner: postal address/country in the paper (TODO in fintwin.tex), confirm no funding; tag v3.0.0 + Zenodo
+after that; QUALITY_PLAN decisions D1/R1/R2/W6; ADR-001/002/003 on `lib` are still "proposed"; C1 seeds table, M4 sector
+table, D8 emergence dates not done. Reply drafts to researchers: docs/RESEARCHER_REPLY_DRAFTS_2026-11.md (git-excluded).
+
+---
+
 # Handoff (28-10-2026, end of session)
 
 Read this first, then `GROWTH_PLAN.md` (v2) and `IMPROVEMENT_PLAN.md`.
