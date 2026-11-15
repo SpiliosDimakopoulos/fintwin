@@ -32,6 +32,16 @@ def _user_agent() -> str:
     return ua
 
 
+def throttle() -> None:
+    """Wait until _MIN_INTERVAL has passed since the last SEC request; every caller must use this one clock."""
+    global _last_request
+    with _REQUEST_LOCK:
+        wait = _MIN_INTERVAL - (time.monotonic() - _last_request)
+        if wait > 0:
+            time.sleep(wait)
+        _last_request = time.monotonic()
+
+
 def _get_json(url: str, cache_name: str, max_age_hours: float) -> dict:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / (cache_name + ".gz")  # gzip: company facts compress ~8x
@@ -39,17 +49,12 @@ def _get_json(url: str, cache_name: str, max_age_hours: float) -> dict:
         with gzip.open(path, "rt", encoding="utf-8") as fh:
             return json.load(fh)
 
-    global _last_request
     for attempt in range(4):  # transient network errors, SEC throttling (429) and 5xx are retried with backoff
         try:
-            with _REQUEST_LOCK:
-                wait = _MIN_INTERVAL - (time.monotonic() - _last_request)
-                if wait > 0:
-                    time.sleep(wait)
-                _last_request = time.monotonic()
-                resp = requests.get(
-                    url, headers={"User-Agent": _user_agent(), "Accept-Encoding": "gzip, deflate"}, timeout=60
-                )
+            throttle()
+            resp = requests.get(
+                url, headers={"User-Agent": _user_agent(), "Accept-Encoding": "gzip, deflate"}, timeout=60
+            )
         except (requests.ConnectionError, requests.Timeout):
             if attempt == 3:
                 raise
