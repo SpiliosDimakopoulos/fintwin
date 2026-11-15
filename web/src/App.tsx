@@ -165,7 +165,7 @@ export default function App() {
 
       <footer className="footer">
         <span><span className="live-dot" style={{ background: "var(--good)" }} />Data rebuilt {index?.meta.generated} from SEC EDGAR and FRED · refreshes automatically every Monday. Research project: model-implied figures, not a forecast, credit opinion or investment advice.</span>
-        <span><button className="btn-link" onClick={() => setHelp(true)}>Shortcuts <span className="kbd">?</span></button> · <a href={REPO_URL} target="_blank" rel="noreferrer">Source</a> · <a href={PAPER_URL} target="_blank" rel="noreferrer">Paper</a></span>
+        <span><button className="btn-link" onClick={() => setHelp(true)}>Shortcuts <span className="kbd">?</span></button> · <a href="c/">All companies</a> · <a href={REPO_URL} target="_blank" rel="noreferrer">Source</a> · <a href={PAPER_URL} target="_blank" rel="noreferrer">Paper</a></span>
       </footer>
     </div>
   );
