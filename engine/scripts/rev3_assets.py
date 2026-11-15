@@ -8,6 +8,7 @@ Pillar B: distribution and stress (B1 density, B2 liquidity shortfall, B3 credit
 """
 
 import json
+from math import comb
 from pathlib import Path
 
 import numpy as np
@@ -276,7 +277,7 @@ lines = [r"\begin{tabular}{lrrrrrr}", r"\toprule",
          r"Event & Firm-years & Events & Simulator health [95\% CI] & Breach prob. & Recession breach prob. & Altman Z$''$ \\", r"\midrule"]
 for k in ("bk8", "ce8", "ce4", "acc8", "delist8"):
     v = C[k]
-    cell = lambda s: f"{fx(v[s]['auc'])} [{fx(v[s]['ci'][0])}, {fx(v[s]['ci'][1])}]"  # noqa: E731
+    cell = lambda s, v=v: f"{fx(v[s]['auc'])} [{fx(v[s]['ci'][0])}, {fx(v[s]['ci'][1])}]"  # noqa: E731
     lines.append(f"{LAB[k]} & {big(v['n'])} & {big(v['events'])} & {cell('twin')} & {fx(v['pb_base']['auc'])} & "
                  f"{fx(v['recession8']['auc'])} & {fx(v['altman_z2']['auc'])} \\\\")
 lines += [r"\bottomrule", r"\end{tabular}"]
@@ -348,8 +349,6 @@ m("TailTopErr", big(round(TL["top_cases"][0]["v3"])))
 raw = g["dm_abs_raw"]
 m("GainRawMean", fx(-raw["mean"], 1))  # dm_abs_raw.mean < 0: the combination is WORSE on raw loss; this is "worse by"
 m("GainRawP", pv(raw["p"]))
-from math import comb
-
 npos, ny = g["positive_years"], g["n_years"]
 m("GainSignP", pv(sum(comb(ny, j) for j in range(npos, ny + 1)) / 2 ** ny))
 m("FcfGainPos", gf["positive_years"])
