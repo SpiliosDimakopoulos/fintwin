@@ -27,6 +27,7 @@ import time
 import warnings
 from functools import lru_cache
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -71,6 +72,7 @@ def shard_modules() -> list[str]:
         for i in range(1, len(parts)):  # importing a.b.c runs a/__init__ and a/b/__init__
             todo.append(".".join(parts[:i]))
         path = _module_file(root, mod)
+        assert path is not None  # checked at the top of the loop
         pkg = parts if path.name == "__init__.py" else parts[:-1]
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Import):
@@ -90,7 +92,7 @@ def _code_digest() -> str:
     """Digest of the code and inputs that can change a shard: the shard modules, the committed data files
     (*.csv / *.json in fintwin/data, read on the shard path) and the snapshot."""
     root = Path(__file__).resolve().parents[1]
-    files = [_module_file(root, m) for m in shard_modules()]
+    files = [cast(Path, _module_file(root, m)) for m in shard_modules()]
     h = hashlib.sha256()
     for p in sorted({*files, *DATA.glob("*.csv"), *DATA.glob("*.json")}):
         h.update(p.relative_to(root).as_posix().encode())

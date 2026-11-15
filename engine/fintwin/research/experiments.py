@@ -21,6 +21,7 @@ import warnings
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -52,7 +53,7 @@ from ..universe import classify
 try:  # workstream B1's switchboard; until it is merged, the local fallback below reads the same variables
     from ..stochastic import spec as _spec_mod  # type: ignore[attr-defined]
 except ImportError:
-    _spec_mod = None
+    _spec_mod = None  # type: ignore[assignment]  # optional module: the local fallback below is used
 
 # ---------------------------------------------------------------- specification (REVISION_PLAN_3 §0.2)
 SPECS = ("v2-pre", "v2-rev", "v3")
@@ -1240,7 +1241,7 @@ def company(
                 outcome = _distress(hist, full_data.quarters, filed, fails)
             with _timed(tm, "structural"):
                 st = structural(hist, raw, full_data.quarters, macro_quarterly(origin), fails=fails)
-            row = {
+            row: dict[str, Any] = {
                 "origin": origin,
                 **runs3,
                 "features": feats,

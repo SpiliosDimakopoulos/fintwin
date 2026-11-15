@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache, partial
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -452,7 +453,8 @@ def _spine(revenue: dict, min_year: int, anchors: list[pd.Timestamp], notes: lis
                 return pd.Timestamp(anchor_arr[i])
         return t
 
-    rows, n_gap, n_break = [], 0, 0
+    rows: list[dict[str, Any]] = []
+    n_gap, n_break = 0, 0
     for i, (e, s) in enumerate(kept):
         brk = False
         if i:

@@ -44,7 +44,7 @@ def cross_spec(a: str, b: str) -> dict:
     if missing:
         raise SystemExit(f"cross-spec: run `stats` for both specifications first (missing {missing})")
     frames = [pd.read_csv(f, dtype={"ticker": str}) for f in files]
-    res = compare(*frames, names=(a, b))
+    res = compare(frames[0], frames[1], names=(a, b))
     # the one confirmatory test of REVISION_PLAN_3: walk-forward v3 against v2-pre, firm units; every other pairing
     # (grid v3, the family pass) is descriptive (round 2, N1; RERUN5_SUPPLEMENT)
     res["role"] = "confirmatory" if (a, b) == ("v3-wf", "v2-pre") else "descriptive"

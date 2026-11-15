@@ -111,7 +111,9 @@ def eligible() -> tuple[list[tuple[str, int]], dict, dict]:
         rec = json.loads(path.read_text(encoding="utf-8"))
         if rec.get("_stamp") == st and rec.get("n_sample") == N_SAMPLE:
             return [tuple(x) for x in rec["keys"]], rec["failed"], rec["excluded"]
-    keys, failed, excluded = [], {}, {}
+    keys: list[tuple[str, int]] = []
+    failed: dict[str, int] = {}
+    excluded: dict[str, int] = {}
     for key, year in sample():
         if len(keys) >= N_SAMPLE:
             break
@@ -205,7 +207,9 @@ def shard(i: int, n: int) -> None:
     keys, failed0, excluded0 = eligible()
     # the selection step's counts are reported once (by shard 0); the design-point failures by every shard, apart
     # from them, with the firm-years they concern (`stats` checks every eligible firm-year is a row or one of these)
-    failed, excluded, lost = {}, {}, []
+    failed: dict[str, int] = {}
+    excluded: dict[str, int] = {}
+    lost: list[str] = []
     done = 0
     for k, (key, year) in enumerate(keys):
         if k % n != i:

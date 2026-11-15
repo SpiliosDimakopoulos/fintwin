@@ -17,6 +17,7 @@ import traceback
 import warnings
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -114,7 +115,7 @@ def build_index(tickers: list[str] | None = None, failed: dict[str, str] | None 
             stale.append(t)
         else:
             companies[t] = index_entry(b)
-    index = {
+    index: dict[str, Any] = {
         "companies": companies,
         "meta": {**meta_block(), "generated": date.today().isoformat(), "n_companies": len(companies)},
     }

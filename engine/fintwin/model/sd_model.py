@@ -16,6 +16,8 @@ Everything is vectorized across the N Monte Carlo paths.
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 
 # revision-3 specification switches: B1's spec module is the single source of truth. M1, M4 and M5 are
@@ -372,14 +374,16 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
             int_ttm = int_hist.sum(1)
             fail = np.zeros(N, bool)
             if cv["cov_max_nd_ebitda"] is not None:
-                fail |= (net_debt > 0) & ((ebitda_ttm <= 0) | (nd_ebitda > cv["cov_max_nd_ebitda"]))
+                fail |= (net_debt > 0) & ((ebitda_ttm <= 0) | (nd_ebitda > cast(float, cv["cov_max_nd_ebitda"])))
             if cv["cov_min_icr"] is not None:  # coverage tested only where interest is material (as MM-F11)
                 material = int_ttm > mat * np.abs(rev_hist.sum(1))
                 fail |= material & (ebitda_ttm / np.maximum(int_ttm, EPS) < cv["cov_min_icr"])
             cov_fail = np.where(fail, cov_fail + 1, 0)
-            cov_breached = cov_breached | (cov_fail > cv["cov_cure_q"])
+            cov_breached = cov_breached | (cov_fail > cast(float, cv["cov_cure_q"]))
             # lenders freeze (or cut to a share of) the undrawn commitment; once cut it is not restored
-            rcap = np.where(cov_breached, np.minimum(rcap, np.maximum(revolver, cv["cov_revolver_avail"] * rcap)), rcap)
+            rcap = np.where(
+                cov_breached, np.minimum(rcap, np.maximum(revolver, cast(float, cv["cov_revolver_avail"]) * rcap)), rcap
+            )
             rev_cap = rcap
         rank = _rank(icr)
         undrawn = np.maximum(rev_cap - revolver, 0.0)

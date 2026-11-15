@@ -22,6 +22,7 @@ capex cuts) for the twin, its loop ablations and a static runway rule with the s
 from __future__ import annotations
 
 import warnings
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -782,7 +783,9 @@ def inference(df: pd.DataFrame, b: int, seed_family: int | None = None, seed_yea
     out: dict = {"B": int(b), "scheme_family": "firm_year", "bounds": "train", "family": {}, "spa": {}, "mcs": {}}
     idx = {k: i for i, k in enumerate(FORECASTERS)}
     ib = idx[FAMILY_BENCH]
-    names, theta, star = [], [], []
+    names: list[str] = []
+    theta: Any = []
+    star: Any = []
     for var in ("cfo", "fcf"):
         r = fy[var]
         out[f"n_{var}"], out[f"test_years_{var}"], out[f"lambda_{var}"] = r["n"], r["test_years"], r["lambda"]

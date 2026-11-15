@@ -358,7 +358,7 @@ def cluster_ols(y: np.ndarray, X: np.ndarray, groups: list[np.ndarray], level: f
     V = bread @ M @ bread
     V = (V + V.T) / 2
     w, Q = np.linalg.eigh(V)
-    psd = bool(w.min() >= -1e-12 * max(abs(w).max(), 1e-300))
+    psd = bool(w.min() >= -1e-12 * max(np.max(np.abs(w)), 1e-300))
     if not psd:
         V = (Q * np.clip(w, 0, None)) @ Q.T
     se = np.sqrt(np.clip(np.diag(V), 0, None))
@@ -1015,6 +1015,7 @@ def provenance() -> dict:
         digest = json.loads(snap.read_text(encoding="utf-8")).get("digest") if snap.exists() else None
     except ValueError:
         digest = None
+    label: str | None
     try:
         from .experiments import spec_label
 

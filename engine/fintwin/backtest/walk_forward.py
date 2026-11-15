@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
@@ -265,7 +267,7 @@ def cross_section(tickers: list[str] = UNIVERSE, n_paths: int = 2000) -> dict:
     if not rows:
         raise RuntimeError(f"cross_section: no ticker produced a row; failures: {failed}")
     df = pd.DataFrame(rows)
-    stats = {}
+    stats: dict[str, dict[str, Any]] = {}
     for x in ["health_stress", "p_breach_stress"]:
         for y in ["realized_min_cum_fcf_pct_rev", "realized_debt_raise_pct_rev"]:
             d = df[[x, y]].dropna()

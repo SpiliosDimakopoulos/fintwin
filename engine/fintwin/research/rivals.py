@@ -133,13 +133,15 @@ def section(p: pd.DataFrame, b: int = S.B_PANEL) -> dict:
             ),
         },
     }
-    ps = {k: v.get("p") for k, v in out["comparisons"].items() if isinstance(v, dict) and v.get("p") is not None}
+    ps: dict[str, float] = {
+        k: v["p"] for k, v in out["comparisons"].items() if isinstance(v, dict) and v.get("p") is not None
+    }
     out["holm"] = _holm(ps)
     return out
 
 
 def _holm(p: dict[str, float]) -> dict[str, float]:
-    order = sorted(p, key=p.get)
+    order = sorted(p, key=lambda k: p[k])
     adj, run = {}, 0.0
     for i, k in enumerate(order):
         run = max(run, min(1.0, (len(order) - i) * p[k]))

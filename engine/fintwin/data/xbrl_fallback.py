@@ -71,7 +71,8 @@ def _instance_name(cik: int, accn: str, primary: str) -> str | None:
         and not n.endswith(("_cal.xml", "_def.xml", "_lab.xml", "_pre.xml"))
     ]
     exact = [n for n in xml if n.startswith(stem)] if stem else []
-    return (exact or xml or [None])[0]
+    pick = exact or xml
+    return pick[0] if pick else None
 
 
 def _index_names(cik: int, accn: str) -> list[str]:
