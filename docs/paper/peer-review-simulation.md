@@ -131,3 +131,146 @@ Compile clean, 31 pages.
 2. Data target: the last panel quarter matches the last filing for 90% of companies, not 98%; disclosed, not fixed.
 3. Naming the commenting researchers needs their permission.
 4. The OECD reference (Roulet 2020) is the closest match found, not confirmed as the intended source.
+
+---
+
+# Round 3 (IJF two-pillar version, v3.0.0; 15-11-2026)
+
+Package reviewed: `fintwin.pdf` (rev3, 39 pages before this round), `fintwin.tex` + sections + tables, `highlights.txt`,
+`abstract.txt`, `SUBMISSION.md`, the Elsevier declarations inside the manuscript, `docs/REVISION_PLAN_3.md` and the git
+history. **There is still no paper-finalizer package:** no cover letter, no separate title page, no submission checklist,
+no manuscript-dev-log. Compliance was therefore checked only against what the manuscript itself contains. The
+official IJF Guide for Authors could not be fetched (HTTP 403), so the abstract and keyword limits are unverified.
+
+Method: a self-review alone is not enough, so this round used three checks. (1) An independent referee subagent read
+the compiled text and the repository with no access to my conclusions. (2) A separate subagent re-verified the
+citations against Crossref and RePEc. (3) I checked the git history by hand. Every claim from the referee subagent
+that is kept below was checked against the files.
+
+## Step 1: Referee report (Persona A)
+
+**Overall: Reject in its current form at IJF.** The reason is structural (A4, A5), not a matter of wording.
+
+### Fatal
+- **A1. The pre-specification could not be verified.** §5.1 cited commits 70c4b17, 6d5ea9c, 6ca96b7, c1f3d1e, ab47c5d
+  and 5ca86d2. None of them is in the published history; after git-filter-repo they exist only in the local
+  `backup/rev3-before-scrub`. The abstract said "committed to a **public** repository before the runs", but `rev3` was
+  first pushed on 15-11 at 13:59, after the full run of 13–14 November. Git dates are set by the committer, and there
+  is no third-party timestamp. The rewrite also changed two words of the plan (a commenter's name became
+  "a referee").
+- **A2. A third, undisclosed supplement.** `RERUN5_SUPPLEMENT.md` (da78dd5, 12-11) contains analysis choices: the
+  decisive B2 cell, the one-sided B1 test, common firm-years for walk-forward, and the W6a/W6b passes. They came after
+  the dry-run statistics, which breaks the plan's own rule. The supplement admits that the year-block CI covers only
+  about 85–88% and promises a firm-block CI, which the paper does not report. The paper said "two supplements".
+- **A3. Undisclosed data changes made after the dry run.** The zero-revenue tag fallback, Q4 from the same vintage
+  (CFO in 289 and capex in 205 of 899 companies), missing short investments set to 0 (about 23% of cash forecasts),
+  and a bound on log growth. All of them change the realized outcomes.
+- **A4. Almost no genuine ex-ante forecast.** Pillar A and the density test receive the realized revenue. The
+  decisive B2 cell scores a Recession-conditional probability against unconditional outcomes. The only ex-ante
+  forecasts are the AUCs, where simulation adds about 0.003.
+- **A5. The contribution is too small for IJF.** It is a negative result about one in-house simulator, which is
+  expected given Fama–French (2000), and there is no second model to make the paper about the protocol.
+
+### Major
+B1 "pre-specified" overstates what was fixed in advance (§5.1, title) · B2 "earlier attempts … produced no
+statistics", whereas the supplement speaks of a quarantined run of 11/12-11 (§5.1) · B3 the limitation on
+winsorization looks like a contradiction with supplement S4 (§9) · B4 the v3 components differ between the plan and
+the paper (F9, M1–M4; M3 undefined) (§4.3) · B5 the H2 rule has no discriminating power: it also passes for v2-pre
+(§6.3) · B6 two two-way t-statistics (8.4 against 7.3, the latter non-PSD), so which one is pre-specified? (§6.3) ·
+B7 the advice "shrink with weight 0.2" is unsafe given forecasts of 1.95M pp (§9) · B8 the abstract rested on the
+median-loss MCS, where there is no gain; the mean-loss MCS is not reported · B9 inference with 8–11 year clusters
+(wild-cluster or randomization inference is missing) · B10 scaling by trailing revenue plus the F3 misfire make the
+means and the CRPS hard to interpret, and "revenue close to zero" sits oddly with the $50M screen · B11 the density
+rivals are weak by construction (pooled, homoskedastic) · B12 the shortfall label is weak (Item 3.01 dominates; a
+15% base rate); recalibration and a cleaner label are missing; the 1,295/1,539 counts come from another sample ·
+B13 survival conditioning: only 15% of firm-years before a petition qualify; the IPW model is not specified · B14
+look-ahead not quantified (NBER, scenario design, current SIC, restatements, the small-firm sample selected on the
+future) · B15 which years each test uses is unclear · B16 "the corrections were bug fixes", yet F1 and F3 are
+re-specifications · B17 legacy appendix material (S&P 500 sample, "prior weight 0.5/8", AUC 0.81 against 0.87) ·
+B18 the earlier evaluation is used throughout but never cited, and 460cdda came after v1 results · B19 the competing
+interest is undeclared (the author develops FinTwin).
+
+### Minor
+C1 "improves … by only 0.017" (that number is a skill score) · C3 the type of p-value is not labelled · C4 5,219
+against 5,309 unexplained · C5 the 98% target is not in REVISION_PLAN_3 · C7 Union Carbide 2019 has v2-pre = 8 ·
+C8 counts from different samples (403/341, 1,651/1,766, 21,075/19,266) · C9 Z against Z'' · C10 "within 20–25%",
+"overshot" · C11 the elasticity has no CI · C12 t = 2.0 against the "above 2" rule; verdicts given to descriptive
+hypotheses · C13 an ambiguous "it" (70% threshold) · C14 the co-registrant pass is "unchanged" with no numbers ·
+C15 "weekly, automatic" against quarterly inputs · C16 S1 continuity line and Sobol N 311 against 320 · C17 the
+4-quarter base is not reported first · D1 artifacts: "Appendix Appendix" (x4), ".." in 10 headings, "p =<0.001",
+"sSRN", "Kenneth r. french" · D2 repository jargon (v2-pre, F1–F14, digests) · D3 B1/B2 label clash · D4 notation
+(base revenue B, pi, lambda against w, the scale of tau) · D7 Table 1 rates FinTwin favourably before any evidence ·
+D8 Wikipedia as a source · E1 the abstract was 257 words · E3 SUBMISSION.md had a different title and keywords · E4
+no postal address · E6 the concept DOI was cited instead of the version DOI · E7 Appendix B should be a separate
+supplementary file.
+
+### Citations (fresh verification, Crossref/RePEc)
+No wrong entries were found. Confirmed: romano2005, hansen2011, hansen2005, clark2001 (nested models; the theory
+assumes quadratic loss), fair1990, cameron2011, murphy1973, gneiting2007b, diebold1995, harvey1998, chong1986,
+bates1969, clemen1989, timmermann2006, claeskens2016, fama2000, kritzinger2018, grieves2017, tao2019, altman1968,
+ohlson1980, zmijewski1984, shumway2001, campbell2008, roulet2020, imf2020, hou2012 and others. Notes:
+- Missing: Diebold–Gunther–Tay 1998 (PIT).
+- 23 bib entries are uncited; BibTeX ignores them.
+- altman1995 is marked "from memory" and is uncited.
+- bhatia2026 exists as an SSRN entry and was not read.
+
+Originality: openfundex (HF, v0.7.0) is a dataset of scores and targets, and its own card puts missing bankruptcies
+at about 21%. It has no simulator and no persistence benchmark. Nothing closer was found, which is a negative result
+of a search, not proof.
+
+## Step 2: Fixes (Persona B)
+
+| # | Fix | Status |
+|---|---|---|
+| A1 | §5.1: new paragraph "How far the record can be verified" (private repo until 15-11, no external timestamp, rewrite of the history, two words changed); the published hashes b7d8c8e, ba2f629, e3c399b, cfadfba, 86da9e3, 333079c; abstract "public repository" → "project repository … and list every later deviation"; intro and data availability updated | **Partly.** The hashes and the disclosure are fixed. Verifiability cannot be fixed retroactively (blocker 1) |
+| A2 | §5.1: three supplements; the third (da78dd5) with its analysis choices; states that the plan's rule was broken; CI undercoverage; the firm-block CI not reported | **Resolved** as disclosure. The firm-block CI is still not computed |
+| A3 | §5.1: the four data changes, with their size | **Resolved** |
+| A4, A5 | Not fixable by text | **Open, structural** |
+| B2 | Run of 11–12-11: outputs set aside, only integrity checks read | **Resolved** |
+| B3 | §9: S4 moved the combinations to training-year limits, not these p-values | **Resolved** |
+| B5 | §6.3: the rule passes for v2-pre as well and has little power | **Resolved** (text) |
+| B7 | §9: the weight-0.2 advice holds only after explosive forecasts are bounded | **Resolved** |
+| B8 | Abstract: MCS removed ("not significant under median loss, reverses on raw loss"); §9 says the mean-loss MCS is not reported | **Partly.** The mean-loss MCS still needs a run |
+| B16 | §9: "most were bug fixes; F1 and F3 re-specified the cost model" | **Resolved** |
+| B18 | New entry `dimakopoulos2026` (Zenodo v2.0.0, 10.5281/zenodo.23603030), cited in the intro, the framework and §5.1; 460cdda came after the S&P 500 transmission results of v1 | **Resolved** |
+| B19 | Competing interest: the author develops and maintains FinTwin and its site | **Resolved** |
+| E6 | Version DOI 10.5281/zenodo.24249768 (v3.0.0) plus the concept DOI, explaining that later versions change numbers | **Resolved** |
+| E1 | Abstract 257 → 242 words | **Partly.** The IJF limit is unverified |
+| E3 | SUBMISSION.md: title, keywords and JEL match the manuscript | **Resolved** |
+| C1, C3, C4, C7, C10, C12, C13, C14 | Brier skill wording; Romano–Wolf p labelled; "companies whose filings the audit loaded"; Caleres/Union Carbide by year; "0.8 and 1.25 times"; "overcorrected"; H1 "not supported … descriptive", H3 "rule written after its first results"; episode t-statistics to two decimals (2.04, 4.04, 4.60, via `research_assets.py`); 70% threshold unambiguous; co-registrant pass "not reported" | **Resolved** (C14 as disclosure) |
+| D1 | `\ref` instead of "Appendix~\ref"; trailing periods removed from 10 headings; new macro `GainDmPrel` in `rev3_assets.py` (fixes "p =<0.001"); {SSRN}, {Kenneth R. French} in the bib | **Resolved** |
+| — | Diebold–Gunther–Tay 1998 added (verified on Crossref) and cited with the PIT | **Resolved** |
+| — | Overfull boxes (tails table, OECD URL) | **Resolved**: 0 overfull, 0 undefined, 40 pages |
+
+## Step 3: Re-check
+- The compiled §5.1 was read again. The new text does not contradict the tables: the 4q Recession cell has 9 blocks
+  against 8, and the supplement figures (289/205/899, 23%) match the source.
+- One new problem was found and fixed: data availability cited §5.1 twice. The "Exploratory additions" bullet
+  repeated the supplement bullet and now refers to it.
+- The regenerated numbers files differ only in the intended macros (EpiTRobust x3, GainDmPrel). The figures were
+  restored to the committed version. The paper-related tests pass (10 passed, 1 skipped).
+- Not re-checked: whether all 19 MCS forecasters are listed anywhere (B8), and the Table 1 hyphenation (D1). Both
+  remain on the list.
+
+## Still open
+**Genuine blockers:**
+1. **An external timestamp of the plan cannot be created retroactively.** If the plan was sent to the commenting
+   researchers before 13-11, that is a third-party witness, and only the author knows. For v3.1, timestamp the plan
+   (OpenTimestamps or Zenodo/OSF) before the run.
+2. **Author's postal address and country** (Elsevier). The TODO remains at `fintwin.tex:31`.
+3. **IJF limits for the abstract and keywords** must be checked on the official guide; it could not be fetched.
+4. **The paper-finalizer package** is missing: cover letter (covering duplicate publication, given Zenodo v2), title
+   page, checklist, and Appendix B as a separate supplementary file.
+
+**Structural (new analysis, so paper-execution-planner first):** A4 genuine unconditional forecasts (revenue forecast
+too) and a prospective hold-out from the weekly archive; A5 a second model under the same protocol, or a reframing
+as a protocol/data paper; B10 a scale-robust outcome; B12 recalibrated shortfall probabilities and a cleaner label;
+B9 wild-cluster/randomization inference; B8 the mean-loss MCS in the text; B14 quantifying the NBER look-ahead; B11
+stronger density rivals. Each of these counts as a new, post-hoc specification and has to be declared as one.
+
+**Other open items, deliberately left:**
+- B4, B6, B13, B15, B17.
+- C5, C8, C9, C11, C15–C17.
+- D2–D4, D7, D8.
+- The title word "Pre-Specified" is the author's decision. After the new disclosure, "with committed decision rules"
+  is the safer wording.

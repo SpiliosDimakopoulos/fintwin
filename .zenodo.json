@@ -1,5 +1,5 @@
 {
-  "title": "FinTwin: does filing-based cash-flow simulation beat persistence? A pre-specified benchmark on a survivorship-free panel of SEC filers",
+  "title": "FinTwin: does filing-based cash-flow simulation beat persistence? A benchmark with committed decision rules on a survivorship-free panel of SEC filers",
   "upload_type": "software",
   "access_right": "open",
   "license": "MIT",

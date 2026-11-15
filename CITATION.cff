@@ -25,7 +25,7 @@ keywords:
   - Monte Carlo simulation
 preferred-citation:
   type: article
-  title: "Does Filing-Based Cash-Flow Simulation Beat Persistence? A Pre-Specified Benchmark on a Survivorship-Free Panel of SEC Filers"
+  title: "Does Filing-Based Cash-Flow Simulation Beat Persistence? A Benchmark with Committed Decision Rules on a Survivorship-Free Panel of SEC Filers"
   authors:
     - family-names: Dimakopoulos
       given-names: Spilios

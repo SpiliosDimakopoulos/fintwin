@@ -13,7 +13,7 @@ Simulation models of firms appear in practitioner and early-stage work \citep{we
 \begin{table}[t]
 \centering\scriptsize
 \setlength{\tabcolsep}{3pt}
-\caption{Models of corporate financial fragility}
+\caption{Models of corporate financial fragility: design features, not performance (the simulator's features are tested in Sections~\ref{sec:pillarA}--\ref{sec:secondary})}
 \label{tab:framework}
 \begin{tabular}{p{0.2\linewidth}p{0.14\linewidth}p{0.14\linewidth}p{0.14\linewidth}p{0.14\linewidth}p{0.14\linewidth}}
 \toprule
@@ -26,13 +26,13 @@ Liquidity timing (maturities, credit lines) & no & no & sometimes & sometimes & 
 Feedback (spreads, market access, management response) & no & endogenous default & no & rarely & 4 loops \\
 Uncertainty & event probability & diffusion & none & scenarios & Monte Carlo \\
 Parameters & pooled estimates & market-implied & analyst & mixed & per firm, from filings \\
-Updating & periodic re-estimation & daily & manual & annual & weekly, automatic \\
+Updating & periodic re-estimation & daily & manual & annual & with each filing, automatic \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Forecast evaluation}
-We score point forecasts with absolute and squared loss and compare them with Diebold--Mariano tests \citep{diebold1995}, test forecast encompassing \citep{chong1986,fair1990,harvey1998,clark2001} with standard errors clustered by firm and year \citep{petersen2009,cameron2008}, and control the error rate of a pre-specified family of comparisons with the stepwise procedure of \citet{romano2005}, the model confidence set of \citet{hansen2011} and the test for superior predictive ability of \citet{hansen2005}. Combinations of forecasts are evaluated against the evidence that simple combinations are hard to beat \citep{bates1969,clemen1989,timmermann2006,claeskens2016}. Predictive distributions are scored with the continuous ranked probability score and probability integral transform histograms \citep{gneiting2007,gneiting2007b}, and event probabilities with the Brier score and its decomposition into reliability and resolution \citep{murphy1973}.
+We score point forecasts with absolute and squared loss and compare them with Diebold--Mariano tests \citep{diebold1995}, test forecast encompassing \citep{chong1986,fair1990,harvey1998,clark2001} with standard errors clustered by firm and year \citep{petersen2009,cameron2008}, and control the error rate of a pre-specified family of comparisons with the stepwise procedure of \citet{romano2005}, the model confidence set of \citet{hansen2011} and the test for superior predictive ability of \citet{hansen2005}. Combinations of forecasts are evaluated against the evidence that simple combinations are hard to beat \citep{bates1969,clemen1989,timmermann2006,claeskens2016}. Predictive distributions are scored with the continuous ranked probability score and probability integral transform histograms \citep{diebold1998,gneiting2007,gneiting2007b}, and event probabilities with the Brier score and its decomposition into reliability and resolution \citep{murphy1973}.
 
 \subsection{Hypotheses}
 The evaluation has two pillars. The first asks whether the simulator's \emph{point} forecast of cash flow, given the revenue that followed, contains information beyond persistence. The second asks whether its \emph{distribution} of outcomes and its liquidity-stress probabilities are better than simple statistical rivals.
@@ -41,4 +41,4 @@ The evaluation has two pillars. The first asks whether the simulator's \emph{poi
 \item[Density (pillar B).] The simulator's predictive distribution of eight-quarter cash flow, given the realized revenue path, has a lower CRPS than a Gaussian and an empirical distribution of residuals around the 16-quarter margin.
 \item[Shortfall (pillar B).] The simulator's probability that cash plus undrawn credit falls below zero is a better forecast of realized liquidity shortfalls, in Brier score, than a logit on opening ratios.
 \end{description}
-\noindent Two further confirmatory tests concern the corrections themselves (Section~\ref{sec:design}): that the corrected specification has a smaller median error than the earlier one (S1), and that its response of cash flow to revenue is within 20--25\% of the realized one. H2 is the transmission hypothesis of an earlier evaluation of this model, kept with its decision rule unchanged; the ranking (H1) and feedback-loop (H3) hypotheses of that evaluation, whose rules were written after their first results had been seen, are reported as descriptive evidence in Section~\ref{sec:secondary}. The plan labels the density and shortfall tests B1 and B2; we use names to avoid a clash with the loops B1 and B2.
+\noindent Two further confirmatory tests concern the corrections themselves (Section~\ref{sec:design}): that the corrected specification has a smaller median error than the earlier one (S1), and that its response of cash flow to revenue is between 0.8 and 1.25 times the realized one. H2 is the transmission hypothesis of an earlier evaluation of this model \citep{dimakopoulos2026}, kept with its decision rule unchanged; the ranking (H1) and feedback-loop (H3) hypotheses of that evaluation, whose rules were written after their first results had been seen, are reported as descriptive evidence in Section~\ref{sec:secondary}. The plan labels the density and shortfall tests B1 and B2; we use names to avoid a clash with the loops B1 and B2.
