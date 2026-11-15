@@ -4,7 +4,7 @@
 #
 # What it checks: the tables, figures and number macros regenerated from the committed research.json are identical to
 # the committed ones (the paper cannot drift from its numbers), the LaTeX builds, and the PDF is stored as an artifact
-# and attached to the GitHub release of the tag. It does NOT rerun the 5,220-firm research (days of CPU); that is
+# and attached to the GitHub release of the tag. It does NOT rerun the 5,309-firm research (days of CPU); that is
 # `make research` on an 8-vCPU machine, see REPRODUCE.md.
 name: paper
 on:
@@ -34,7 +34,7 @@ jobs:
         run: make paper-assets
       - name: Fail on drift between the committed tables/numbers and the regenerated ones
         # figures are PDFs with embedded timestamps, so only the text outputs are compared
-        run: git diff --exit-code -- docs/paper/numbers.tex docs/paper/research_numbers.tex docs/paper/tables
+        run: git diff --exit-code -- docs/paper/numbers.tex docs/paper/research_numbers.tex docs/paper/rev3_numbers.tex docs/paper/abstract.txt docs/paper/tables
       - name: Build the PDF
         run: make paper-pdf
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

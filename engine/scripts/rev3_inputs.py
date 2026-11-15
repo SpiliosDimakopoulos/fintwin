@@ -56,6 +56,38 @@ def main() -> None:
             res["ladder"][k] = headline(json.loads(p.read_text(encoding="utf-8")))
     for p in sorted(SRC.glob("cross_spec_*.json")):
         res["cross_spec"][p.stem.removeprefix("cross_spec_")] = json.loads(p.read_text(encoding="utf-8"))
+    # the tails of the firm-year CFO errors (|error|, pp of trailing revenue) of each specification, and the cases that
+    # drive the mean difference between v3 and v2-pre
+    import csv
+
+    def errors(spec):
+        with (SRC / f"{spec}_cfo_errors.csv").open(encoding="utf-8") as f:
+            return {(r["ticker"], r["year"]): float(r["abs_e"]) for r in csv.DictReader(f)}
+
+    def q(xs, p):
+        xs = sorted(xs)
+        return xs[min(len(xs) - 1, int(p * (len(xs) - 1) + 0.5))]
+
+    names = {}
+    with (ROOT / "engine" / "fintwin" / "data" / "universe_edgar.csv").open(encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            names[r[next(iter(r))]] = r.get("name") or r.get("title") or ""
+    err = {s: errors(s) for s in ("v2-pre", "v3", "v3-wf")}
+    res["tails"] = {s: {"n": len(e), "median": q(list(e.values()), 0.5), "mean": sum(e.values()) / len(e),
+                        "q99": q(list(e.values()), 0.99), "q999": q(list(e.values()), 0.999), "max": max(e.values()),
+                        "n_gt_100": sum(v > 100 for v in e.values()), "n_gt_1000": sum(v > 1000 for v in e.values())}
+                    for s, e in err.items()}
+    common = err["v3-wf"].keys() & err["v2-pre"].keys()
+    diff = sorted(((err["v3-wf"][k] - err["v2-pre"][k], k) for k in common), reverse=True)
+    total = sum(d for d, _ in diff)
+    res["tails"]["top_cases"] = [{"cik": k[0], "name": names.get(k[0], ""), "year": int(k[1]), "v3": err["v3-wf"][k],
+                                  "v2_pre": err["v2-pre"][k]} for _, k in diff[:10]]
+    res["tails"]["top20_share_of_mean_diff"] = sum(d for d, _ in diff[:20]) / total
+    # S1's mean difference without the 0.1% largest |differences|
+    keep = sorted(diff, key=lambda t: abs(t[0]))[: int(len(diff) * 0.999)]
+    res["tails"]["mean_diff_trim999"] = sum(d for d, _ in keep) / len(keep)
+    res["tails"]["mean_diff"] = total / len(diff)
+
     sel = SRC.parent / "_selection" / "v3.json"
     if sel.exists():
         d = json.loads(sel.read_text(encoding="utf-8"))

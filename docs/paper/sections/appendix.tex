@@ -1,6 +1,6 @@
 \section{Additional tables}\label{app:tables}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{Calibrated parameters}
 \label{tab:params}
@@ -30,7 +30,7 @@ Short-rate dynamics & Vasicek fit to the 3-month Treasury bill & since 2000 \\
 \end{tabular}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{Forecast encompassing (v3)}
 \label{tab:encompassing}
@@ -41,18 +41,18 @@ Departures: OLS of (realized $-$ four-quarter margin) on each model's departure 
 \end{minipage}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\footnotesize
-\caption{Out-of-sample combinations (v3)}
+\caption{Out-of-sample combinations, implementation of the earlier evaluation (v3)}
 \label{tab:hybrid}
 \input{tables/hybrid.tex}
 \par\smallskip
 \begin{minipage}{\linewidth}\footnotesize
-Each combination's $\lambda$ is chosen on earlier years. Errors in percentage points of trailing revenue (mean: winsorized). Differences: firm-clustered bootstrap CI. The pre-specified inference (firm$\times$year Diebold--Mariano and year-block bootstrap) is in the text and Table~\ref{tab:family}.
+Each combination's weight ($\lambda$ in the table) is chosen on earlier years. Errors in percentage points of trailing revenue (mean: winsorized at full-sample bounds). Differences: firm-clustered bootstrap CI. This implementation is kept for continuity; where its verdicts differ from the pre-specified implementation in the text (winsorization at training-year bounds, firm$\times$year Diebold--Mariano and year-block bootstrap), the latter governs.
 \end{minipage}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{Transmission by firm characteristics and by revenue shock}
 \label{tab:heterogeneity}
@@ -63,9 +63,9 @@ Terciles of each characteristic at the cutoff; revenue over the window relative 
 \end{minipage}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
-\caption{Bankruptcy petitions (8-K Item 1.03), all non-financial filers}
+\caption{Bankruptcy petitions (8-K Item 1.03), all non-financial US-GAAP filers}
 \label{tab:bankruptcy}
 \input{tables/bankruptcy.tex}
 \par\smallskip
@@ -74,7 +74,7 @@ AUC with firm-clustered 95\% CI. Panel: baseline health score at each cutoff; 20
 \end{minipage}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{Distress events over the next eight quarters, 2014--2024}
 \label{tab:panel}
@@ -85,7 +85,7 @@ Twin: baseline health score. Out-of-sample logits trained for each test year on 
 \end{minipage}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{Liquidity events given the realized revenue}
 \label{tab:decisions}
@@ -96,7 +96,7 @@ Twin: share of simulated paths with the event. Static runway: the trailing FCF m
 \end{minipage}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\footnotesize
 \begin{threeparttable}
 \caption{Feedback loops evaluated on the events they are meant to produce}
@@ -108,14 +108,14 @@ Twin: share of simulated paths with the event. Static runway: the trailing FCF m
 \end{threeparttable}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{Liquidity events at other thresholds (given realized revenue)}
 \label{tab:thresholds}
 \input{tables/thresholds.tex}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{Holm-adjusted $p$-values of the secondary comparisons}
 \label{tab:holm}
@@ -123,24 +123,22 @@ Twin: share of simulated paths with the event. Static runway: the trailing FCF m
 \end{table}
 
 \clearpage
-\section*{Online appendix}
-\setcounter{section}{1}
-\renewcommand{\thesection}{OA}
+\section{Supplementary material (for online publication)}\label{app:online}
 
-\subsection{Examples}
+\subsection{Examples}\label{app:examples}
 In 2020, Amazon's revenue over the next eight quarters averaged \ExAmznRev{} above its trailing level; the 16-quarter margin implied cumulative operating cash flow of \ExAmznRule{} of trailing revenue, the simulator \ExAmznTwin, and the company reported \ExAmznReal. For General Electric in 2016 (margin \ExGeRule, simulator \ExGeTwin, realized \ExGeReal) and for Ford and General Motors in 2020 the simulator moved away from the realized value: revenue changes of \ExFordRev{} and \ExGmRev{} made it predict \ExFordTwin{} and \ExGmTwin{}, while the companies reported \ExFordReal{} and \ExGmReal{} (margin: \ExFordRule, \ExGmRule). Their consolidated cash flows include captive finance operations that a revenue-driven model does not represent. Among firm-years of firms with more than \$2 billion of revenue and departures larger than 8 points, the simulator's departure has the sign of the realized one \ExRightSign{} of the time.
 
 \subsection{Sensitivity to assumed parameters}
 Several parameters are judgment calls rather than estimates: the credit line assumed when none is tagged, the prior on the fixed-cost share and its weight, the shrinkage of trend growth and cyclicality, the coverage thresholds of the market-access cliff, the speed of restructuring and the rating-spread table. Table~\ref{tab:sens} varies each in turn. The incremental correlation against the four-quarter margin ranges from \SensIncrLo{} to \SensIncrHi, and the bankruptcy AUC, on the firm-years of the transmission test, from \SensBkLo{} to \SensBkHi. With a fixed-share prior of 20\% the median error is \SensMaeLow{} points and with 50\% it is \SensMaeHigh. When all eight assumptions vary jointly (a Saltelli design of \SobPoints{} points, each recalibrating the simulator for \SobN{} random firm-years; Table~\ref{tab:sobolass}), the median error ranges from \SobMaeMin{} to \SobMaeMax{} and the incremental correlation from \SobIncrMin{} to \SobIncrMax{}. The \SobTopLabel{} alone has a total-effect index of about \SobTopST{} for the error's variance, against \SobRestST{} for all other assumptions together. At the specified values, the same firm-years give a median error of \SobSpecMae{} and an incremental correlation of \SobSpecIncr. Rating spreads come from the version of Damodaran's table published before each cutoff, recovered from the Internet Archive; using the 2026 table instead changes nothing. GDP enters as the vintage published on each cutoff.
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\footnotesize
 \caption{Sensitivity to assumed parameters}
 \label{tab:sens}
 \input{tables/sensitivity.tex}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{Global (Sobol) sensitivity of the transmission result to the assumed parameters}
 \label{tab:sobolass}
@@ -152,11 +150,11 @@ First-order ($S_1$) and total ($S_T$) Sobol indices of the median absolute error
 \end{table}
 
 \subsection{Four-quarter forecasts and calibration}
-For S\&P~500 members (today's, a sample selected on survival, and those of 2020), the simulator's four-quarter predictive distributions of revenue improve on a seasonal random walk by \FcRevRw{} and on exponential smoothing \citep{hyndman2008} by \FcRevEts{} in scaled CRPS ($t$ = \FcRevRwT{} and \FcRevEtsT; Table~\ref{tab:fc}). For cash, both benchmarks are better (\FcCashRw{} and \FcCashEts). Blending the simulator into the random walk for cash, with the weight chosen on earlier origins, \CashHybVerdict{} the pre-specified rule of the second version only trivially: the skill is \CashHybSkill{} (CI \CashHybLo--\CashHybHi).
+For S\&P~500 members (today's, a sample selected on survival, and those of 2020), the simulator's four-quarter predictive distributions of revenue improve on a seasonal random walk by \FcRevRw{} and on exponential smoothing \citep{hyndman2008} by \FcRevEts{} in scaled CRPS ($t$ = \FcRevRwT{} and \FcRevEtsT; Table~\ref{tab:fc}). For cash, both benchmarks are better (\FcCashRw{} and \FcCashEts). Blending the simulator into the random walk for cash, with the weight chosen on earlier origins, \CashHybVerdict{} the rule of the earlier evaluation only trivially: the skill is \CashHybSkill{} (CI \CashHybLo--\CashHybHi).
 
 Raw 90\% intervals are too narrow: they cover \CalRevRaw{} of revenue outcomes and \CalCashRaw{} of cash outcomes. Online conformal rescaling \citep{vovk2005}, using only errors whose target quarter ended at least 90 days before the forecast origin, restores coverage to \CalRevConf{} and \CalCashConf{} on average (Table~\ref{tab:cal}, Figure~\ref{fig:cal}), but not in the stress year: for quarters from 2020Q2 to 2021Q1, conformal revenue intervals cover only \CalRevStress. For cash, the raw intervals do not widen for smaller firms ($t$ = \CalCashWidthSizeT{} for size in a regression of interval width) although their errors are larger ($t$ = \CalCashErrSizeT). Rescaling by size and volatility tercile gives \CalCondCash{} coverage for cash and \CalCondRev{} for revenue, and \CalCondCashOk{} the 85--95\% target in every group for cash; adaptive conformal inference \citep{gibbs2021} reaches \CalAciCash{} and \CalAciRev{} (Table~\ref{tab:cal2}). Neither fixes the regime break: in 2020Q2--2021Q1 revenue coverage is \CalCondRevStress{} and \CalAciRevStress.
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \setlength{\tabcolsep}{3.5pt}
 \begin{threeparttable}
@@ -169,21 +167,21 @@ Raw 90\% intervals are too narrow: they cover \CalRevRaw{} of revenue outcomes a
 \end{threeparttable}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{Calibration of 90\% predictive intervals}
 \label{tab:cal}
 \input{tables/calibration.tex}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{Coverage of 90\% intervals with group-conditional and adaptive conformal calibration}
 \label{tab:cal2}
 \input{tables/calibration2.tex}
 \end{table}
 
-\begin{figure}[h]
+\begin{figure}[!htbp]
 \centering\includegraphics[width=\linewidth]{figures/calibration.pdf}
 \caption{Coverage of raw and conformally rescaled 90\% intervals by forecast origin.}
 \label{fig:cal}
@@ -192,7 +190,7 @@ Raw 90\% intervals are too narrow: they cover \CalRevRaw{} of revenue outcomes a
 \subsection{2020 and two other downturns}
 Table~\ref{tab:covid} repeats the 2020 cross-section for the \CovAllN{} filers alive on 20 February 2020 and for the \CovSpN{} members of the S\&P~500 on that date. The simulator's stress score ranks raw cash burn (\CovAllTwin{} in the full sample, \CovSpTwin{} in the S\&P), the FCF margin ranks it better (\CovAllFcf, \CovSpFcf), and no predictor's correlation with abnormal burn exceeds 0.2 in absolute value. Giving each firm the median realized revenue shock of its industry peers (Table~\ref{tab:exposure}; median depth \ExpDepth), the simulator ranks raw burn at \ExpTwinRaw{} against \ExpUniformRaw{} under the uniform freeze; in a rank regression with the FCF margin and the health formula, clustered by industry, its coefficient for abnormal burn has $t$ = \ExpTwinAbnT, and the formula's $t$ = \ExpFormulaAbnT. Table~\ref{tab:episodes} applies the same design to the eight quarters after the 2015, 2020 and 2022 cutoffs (\EpiFifteenClusters--\EpiTwentyTwoClusters{} industry clusters). Because the shocks are realized, these regressions decompose outcomes; they are not forecasts.
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{2020--21 cash burn, predictors frozen on 20 February 2020}
 \label{tab:covid}
@@ -203,7 +201,7 @@ Spearman correlation between each risk-oriented predictor and realized burn seve
 \end{minipage}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{Fragility and exposure in 2020}
 \label{tab:exposure}
@@ -214,7 +212,7 @@ Industry shock: leave-one-out median of peers' worst year-on-year revenue change
 \end{minipage}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\scriptsize
 \caption{Fragility given exposure in three downturns}
 \label{tab:episodes}

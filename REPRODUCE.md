@@ -35,7 +35,7 @@ Monday, and Dependabot bumps libraries there. Neither can reach the paper:
 ```bash
 git checkout paper-r3            # the tag
 make paper                       # = make paper-assets && make paper-pdf; writes docs/paper/fintwin.pdf
-git diff docs/paper/numbers.tex docs/paper/research_numbers.tex docs/paper/tables   # must be empty
+git diff docs/paper/numbers.tex docs/paper/research_numbers.tex docs/paper/rev3_numbers.tex docs/paper/tables   # must be empty
 ```
 
 Pushing a `paper-*` tag runs `.github/workflows/paper.yml`, which does exactly this on a fixed Ubuntu 24.04 image, fails
@@ -64,6 +64,23 @@ if the regenerated text outputs differ from the committed ones, and attaches the
 
 Environment: Python >= 3.11 (CI tests 3.11 and 3.13), libraries exactly as in `engine/uv.lock` (`uv sync --locked`
 fails if the lock and `pyproject.toml` disagree). Use `uv sync --locked` everywhere, never plain `uv sync`.
+
+## The revision-3 evaluation (several specifications)
+
+The paper compares specifications (v2-pre, v2-rev, v3 with default and with walk-forward hyper-parameters) and a ladder of
+corrections on a fixed 1,000-firm sample. They run as stages of `engine/scripts/rev3_server.sh` (probe, dry, universe,
+sample, select, stats, sobol; the header of the script has the exact commands), on one architecture, all reading the
+frozen snapshot. The stats stage writes one JSON per specification and the cross-specification tests into
+`engine/.cache/research/_results/`.
+
+- `docs/paper/research.json` is the v3 walk-forward result (`v3-wf.json`).
+- `engine/scripts/rev3_inputs.py <results dir>` extracts the small cross-specification inputs (headline numbers of every
+  specification, the ladder, the confirmatory v3-vs-v2-pre test, the walk-forward choices and the error tails) into the
+  committed `docs/paper/rev3/inputs.json`. The full per-specification files are large and are archived with the
+  release, not committed.
+- `engine/scripts/rev3_assets.py` (run by `make paper-assets` after `research_assets.py`) turns `research.json` and
+  `rev3/inputs.json` into `docs/paper/rev3_numbers.tex`, `docs/paper/tables/rev3_*.tex` and
+  `web/public/data/research_rev3.json`.
 
 ## Making a snapshot (the maintainer, once per paper version)
 

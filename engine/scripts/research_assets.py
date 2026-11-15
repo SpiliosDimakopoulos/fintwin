@@ -856,7 +856,12 @@ summary = {
     "ladder": [{"key": k, "label": MODEL[k].replace("$a + b\\cdot$", "a + b·"), "median_ae": cfo["levels"][k]["median_ae"]}
                for k in MODEL],
     "incremental": {"twin_vs_4q": inc["N1"]["T1"]["rho"], "16q_vs_4q": inc["N1"]["N3"]["rho"],
-                    "twin_vs_16q": inc["N3"]["T1"]["rho"], "encompassing_t": cfo["encompassing"]["levels"]["t"]["T1"]},
+                    "twin_vs_16q": inc["N3"]["T1"]["rho"], "encompassing_t": cfo["encompassing"]["levels"]["t"]["T1"],
+                    "encompassing_t_two_way": (cfo["encompassing"].get("all_two_way") or {}).get("t", {}).get("T1")},
+    # which specification the numbers come from (the paper reports v2-pre, v2-rev and v3 side by side)
+    "spec": {"spec": R.get("provenance", {}).get("spec"), "env_spec": R.get("provenance", {}).get("env", {}).get("FINTWIN_SPEC"),
+             "selection": "walk-forward" if R.get("provenance", {}).get("env", {}).get("FINTWIN_SELECTION") else "defaults",
+             "snapshot_digest": R.get("provenance", {}).get("snapshot_digest")},
     "combination": {var: {k: T[var]["hybrid"]["mae_w"][k] for k in ("N3", "N3+N5", "N3+T1")} for var in ("cfo", "fcf")},
     "bankruptcy": {sub: {k: BP[sub]["predictors"][k]["auc"] for k in ("twin", "formula", "ohlson_o", "altman_z2")}
                    for sub in ("all", "weak")} | {"weak_share": BP["weak"]["share_of_events"]},
@@ -868,10 +873,17 @@ def plain_abstract() -> str:
     import re
 
     tex = (PAPER / "fintwin.tex").read_text(encoding="utf-8")
-    body = tex[tex.index("\\begin{abstract}") + len("\\begin{abstract}"): tex.index("\\medskip", tex.index("\\begin{abstract}"))]
+    start = tex.index("\\begin{abstract}") + len("\\begin{abstract}")
+    body = tex[start: tex.index("\\end{abstract}", start)]
+    body = body.split("\\medskip")[0]  # the second version kept the keywords inside the abstract
     body = body.replace("\\noindent", "").replace("\\twin{}", "FinTwin").replace("\\twin", "FinTwin")
-    body = re.sub(r"\\([A-Za-z]+)\{\}", lambda mm: macros.get(mm.group(1), mm.group(0)), body)
-    body = re.sub(r"\\([A-Za-z]+)", lambda mm: macros.get(mm.group(1), mm.group(0)), body)
+    # the revision-3 macros (rev3_assets.py) are used in the abstract too
+    every = dict(macros)
+    rev3 = PAPER / "rev3_numbers.tex"
+    if rev3.exists():
+        every |= dict(re.findall(r"\\newcommand\{\\([A-Za-z]+)\}\{(.*)\}\s*$", rev3.read_text(encoding="utf-8"), re.M))
+    body = re.sub(r"\\([A-Za-z]+)\{\}", lambda mm: every.get(mm.group(1), mm.group(0)), body)
+    body = re.sub(r"\\([A-Za-z]+)", lambda mm: every.get(mm.group(1), mm.group(0)), body)
     for a_, b_ in (("$-$", "-"), ("\\%", "%"), ("{,}", ","), ("---", " - "), ("--", "-"), ("$", ""), ("\\&", "&"),
                    ("~", " "), ("``", '"'), ("''", '"')):
         body = body.replace(a_, b_)

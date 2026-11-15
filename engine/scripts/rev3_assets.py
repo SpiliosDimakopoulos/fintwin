@@ -91,7 +91,7 @@ for key, tag in (("v2-pre", "Vtwopre"), ("v2-rev", "Vtworev"), ("v3", "Vthreedef
     m(f"Crps{tag}", fx(s["crps"]["twin"], 0))
 lines = [r"\begin{tabular}{lrrrrrrr}", r"\toprule",
          r" & \multicolumn{2}{c}{Median abs.\ error} & Elasticity & Incr.\ $\rho$ & Enc.\ $t$ & Bankr. & Mean CRPS \\",
-         r"\cmidrule(lr){2-3}", r"Specification & Twin & 16q margin & ratio & vs 16q & (firm$\times$year) & AUC & (twin) \\",
+         r"\cmidrule(lr){2-3}", r"Specification & Simulator & 16q margin & ratio & vs 16q & (firm$\times$year) & AUC & (simulator) \\",
          r"\midrule"]
 for key, label in SPEC:
     s = sp[key]
@@ -108,7 +108,7 @@ LAD = [("v2-pre-legacydata", "v2-pre, legacy data layer"), ("v2-pre", "v2-pre"),
        ("v3-wf", "v3, walk-forward $\\tau$ and $\\lambda$")]
 lad = X["ladder"]
 lines = [r"\begin{tabular}{lrrrr}", r"\toprule",
-         r"Rung & Firm-years & Twin median abs.\ error & 16q margin & Elasticity ratio \\", r"\midrule"]
+         r"Rung & Firm-years & Simulator median abs.\ error & 16q margin & Elasticity ratio \\", r"\midrule"]
 for key, label in LAD:
     if key in lad:
         s = lad[key]
@@ -126,7 +126,7 @@ m("LadLegacyN", big(lad["v2-pre-legacydata"]["n"]))
 # ------------------------------------------------------------------ pillar A: family of 16, SPA, MCS
 inf = R["transmission"]["panel"]["inference"]
 fam = inf["family"]
-NAME = {"T1": "Twin", "N3+T1": "16q + twin", "N3+N1": "16q + 4q", "N3+N5": "16q + regression"}
+NAME = {"T1": "Simulator", "N3+T1": "16q + simulator", "N3+N1": "16q + 4q", "N3+N5": "16q + regression"}
 lines = [r"\begin{tabular}{llrrrrr}", r"\toprule",
          r"Outcome, loss & Forecast & $\Delta$ vs 16q & 95\% CI & $p$ & Romano--Wolf & Holm \\", r"\midrule"]
 for k, v in fam.items():
@@ -198,8 +198,8 @@ m("ElastVerdict", "inside" if 0.8 <= ov["ratio"] <= 1.25 else "outside")
 # ------------------------------------------------------------------ pillar B1: density
 D = R["density"]
 lines = [r"\begin{tabular}{llrrrrrr}", r"\toprule",
-         r"Outcome & Benchmark & Mean CRPS & Mean CRPS & DM $t$ & $p$ & Years twin & Verdict \\",
-         r" & & (twin) & (benchmark) & (firm$\times$year) & & better & \\", r"\midrule"]
+         r"Outcome & Benchmark & Mean CRPS & Mean CRPS & DM $t$ & $p$ & Years sim. & Verdict \\",
+         r" & & (simulator) & (benchmark) & (firm$\times$year) & & better & \\", r"\midrule"]
 for var in ("cfo", "fcf"):
     for b, lab in (("gaussian", "Gaussian"), ("empirical", "Empirical")):
         v = D[var][f"vs_{b}"]
@@ -231,18 +231,21 @@ m("DenYears", len(dc["test_years"]))
 
 # ------------------------------------------------------------------ pillar B2: liquidity shortfall
 L = R["liquidity"]
-lines = [r"\begin{tabular}{llrrrrrrr}", r"\toprule",
-         r"Horizon & Scenario & Firm-years & Events & \multicolumn{3}{c}{Brier score} & BSS vs & Twin \\",
-         r"\cmidrule(lr){5-7}", r" & & & & Twin & Logit & Altman Z$''$ & logit & rel./res. \\", r"\midrule"]
-SCN = {"realized_shock": "industry's realized shock", "recession": "Recession preset"}
-for k in ("4", "8"):
-    for sc in ("realized_shock", "recession"):
-        v = L["shortfall"][k][sc]
-        t, lg, z = v["twin"], v["logit"], v["altman_z2"]
-        bss = 1 - t["brier"] / lg["brier"]
-        mu = t["murphy"]
-        lines.append(f"{k}q & {SCN[sc]} & {big(t['n'])} & {big(t['events'])} & {fx(t['brier'], 3)} & {fx(lg['brier'], 3)} & "
-                     f"{fx(z['brier'], 3)} & {fx(bss)} & {fx(mu['reliability'], 3)}/{fx(mu['resolution'], 3)} \\\\")
+lines = [r"\begin{tabular}{lllrrrrrrrr}", r"\toprule",
+         r"Label & Horizon & Scenario & Firm-years & Events & \multicolumn{3}{c}{Brier score} & BSS vs & Log score & Sim. \\",
+         r"\cmidrule(lr){6-8}", r" & & & & & Sim. & Logit & Z$''$ & logit & sim./logit & rel./res. \\", r"\midrule"]
+SCN = {"realized_shock": "industry shock", "recession": "Recession"}
+LBL = {"shortfall": "Shortfall", "credit_event": "Credit event"}
+for lab in ("shortfall", "credit_event"):
+    for k in ("4", "8"):
+        for sc in ("realized_shock", "recession"):
+            v = L[lab][k][sc]
+            t, lg, z = v["twin"], v["logit"], v["altman_z2"]
+            bss = 1 - t["brier"] / lg["brier"]
+            mu = t["murphy"]
+            lines.append(f"{LBL[lab]} & {k}q & {SCN[sc]} & {big(t['n'])} & {big(t['events'])} & {fx(t['brier'], 3)} & "
+                         f"{fx(lg['brier'], 3)} & {fx(z['brier'], 3)} & {fx(bss)} & {fx(t['log'])}/{fx(lg['log'])} & "
+                         f"{fx(mu['reliability'], 3)}/{fx(mu['resolution'], 3)} \\\\")
 lines += [r"\bottomrule", r"\end{tabular}"]
 table("rev3_shortfall", lines)
 P = L["primary"]
@@ -270,12 +273,12 @@ C = R["credit_events"]
 LAB = {"ce8": "Credit event (1.03, 2.04, 3.01), 8q", "ce4": "Credit event, 4q", "bk8": "Bankruptcy petition (1.03), 8q",
        "acc8": "Acceleration (2.04), 8q", "delist8": "Delisting notice (3.01), 8q"}
 lines = [r"\begin{tabular}{lrrrrrr}", r"\toprule",
-         r"Event & Firm-years & Events & Twin health & Twin breach prob. & Recession breach prob. & Altman Z$''$ \\", r"\midrule"]
+         r"Event & Firm-years & Events & Simulator health [95\% CI] & Breach prob. & Recession breach prob. & Altman Z$''$ \\", r"\midrule"]
 for k in ("bk8", "ce8", "ce4", "acc8", "delist8"):
     v = C[k]
-    cell = lambda s: f"{fx(v[s]['auc'])} {{\\tiny[{fx(v[s]['ci'][0])}, {fx(v[s]['ci'][1])}]}}"  # noqa: E731
-    lines.append(f"{LAB[k]} & {big(v['n'])} & {big(v['events'])} & {cell('twin')} & {cell('pb_base')} & {cell('recession8')} & "
-                 f"{cell('altman_z2')} \\\\")
+    cell = lambda s: f"{fx(v[s]['auc'])} [{fx(v[s]['ci'][0])}, {fx(v[s]['ci'][1])}]"  # noqa: E731
+    lines.append(f"{LAB[k]} & {big(v['n'])} & {big(v['events'])} & {cell('twin')} & {fx(v['pb_base']['auc'])} & "
+                 f"{fx(v['recession8']['auc'])} & {fx(v['altman_z2']['auc'])} \\\\")
 lines += [r"\bottomrule", r"\end{tabular}"]
 table("rev3_credit", lines)
 m("CeAucTwin", fx(C["ce8"]["twin"]["auc"]))
@@ -310,6 +313,102 @@ m("SelLamMax", fx(max(lams), 1))
 pr = R["provenance"]
 m("SnapDigest", pr["snapshot_digest"][:16])
 m("LockDigest", pr["uv_lock_sha256"][:12])
+
+# ------------------------------------------------------------------ added after the referee round
+# the tails of the CFO errors and the cases that drive S1's mean difference
+TL = X["tails"]
+for key, tag in (("v2-pre", "Vtwopre"), ("v3", "Vthreedef"), ("v3-wf", "Vthree")):
+    t = TL[key]
+    m(f"TailMean{tag}", fx(t["mean"], 1))
+    m(f"TailQnn{tag}", fx(t["q99"], 0))
+    m(f"TailQnnn{tag}", big(round(t["q999"])))
+    m(f"TailMax{tag}", big(round(t["max"])))
+    m(f"TailThousand{tag}", t["n_gt_1000"])
+lines = [r"\begin{tabular}{lrrrrrr}", r"\toprule",
+         r"Specification & Median & Mean & 99th pct. & 99.9th pct. & Maximum & Firm-years $>$ 1{,}000 \\", r"\midrule"]
+for key, label in (("v2-pre", "v2-pre"), ("v3", "v3, default"), ("v3-wf", "v3")):
+    t = TL[key]
+    lines.append(f"{label} & {fx(t['median'], 1)} & {fx(t['mean'], 1)} & {fx(t['q99'], 0)} & {big(round(t['q999']))} & "
+                 f"{big(round(t['max']))} & {t['n_gt_1000']} \\\\")
+lines += [r"\midrule", r"\multicolumn{7}{l}{Largest increases in absolute error, v3 against v2-pre} \\",
+          r"Firm & Cutoff year & v3 & v2-pre & & & \\", r"\midrule"]
+for c in TL["top_cases"][:8]:
+    nm = c["name"].split(" /")[0]
+    nm = (nm.title() if nm.isupper() else nm).replace("&", r"\&")
+    lines.append(f"{nm} & {c['year']} & {big(round(c['v3']))} & {big(round(c['v2_pre']))} & & & \\\\")
+lines += [r"\bottomrule", r"\end{tabular}"]
+table("rev3_tails", lines)
+m("TailTopShare", pct(TL["top20_share_of_mean_diff"], 0))
+m("TailTrimDiff", fx(TL["mean_diff_trim999"]))
+m("TailTopName", TL["top_cases"][0]["name"])
+m("TailTopYear", TL["top_cases"][0]["year"])
+m("TailTopErr", big(round(TL["top_cases"][0]["v3"])))
+
+# the combination gain on raw (unwinsorized) absolute loss, and the sign test over years
+raw = g["dm_abs_raw"]
+m("GainRawMean", fx(-raw["mean"], 1))  # dm_abs_raw.mean < 0: the combination is WORSE on raw loss; this is "worse by"
+m("GainRawP", pv(raw["p"]))
+from math import comb
+
+npos, ny = g["positive_years"], g["n_years"]
+m("GainSignP", pv(sum(comb(ny, j) for j in range(npos, ny + 1)) / 2 ** ny))
+m("FcfGainPos", gf["positive_years"])
+
+# the logit against climatology, log scores, and the number of year blocks in each B2 cell
+cl = c8["twin"]["murphy"]["uncertainty"]
+m("ShortClim", fx(cl, 3))
+m("ShortLogitClimBss", fx(1 - c8["logit"]["brier"] / cl, 3))
+m("ShortLogTwin", fx(c8["twin"]["log"]))
+m("ShortLogLogit", fx(c8["logit"]["log"]))
+m("ShortBlocksFour", len(L["shortfall"]["4"]["recession"]["years"]))
+m("ShortBlocksEight", len(L["shortfall"]["8"]["recession"]["years"]))
+cells = [1 - L[a][k][sc]["twin"]["brier"] / L[a][k][sc]["logit"]["brier"] for a in ("shortfall", "credit_event")
+         for k in ("4", "8") for sc in ("realized_shock", "recession")]
+m("ShortCellsMax", fx(max(cells)))
+m("ShortCellsMin", fx(min(cells)))
+m("CeEvDelist", big(C["delist8"]["events"]))
+m("CeAucTwinLo", fx(C["ce8"]["twin"]["ci"][0]))
+m("CeAucTwinHi", fx(C["ce8"]["twin"]["ci"][1]))
+m("CeAucZLo", fx(C["ce8"]["altman_z2"]["ci"][0]))
+m("CeAucZHi", fx(C["ce8"]["altman_z2"]["ci"][1]))
+m("BkEvThree", big(C["bk8"]["events"]))
+m("BkNThree", big(C["bk8"]["n"]))
+
+# the ladder sample: walk-forward and default v3 differ in the other direction from the full sample
+m("LadThreeWf", fx(lad["v3-wf"]["mae"]["T1"]))
+m("LadThreeDef", fx(lad["v3"]["mae"]["T1"]))
+m("LadElastWf", fx(lad["v3-wf"]["elasticity_ratio"]))
+m("FullThreeWf", fx(sp["v3-wf"]["mae"]["T1"], 3))
+m("FullThreeDef", fx(sp["v3"]["mae"]["T1"], 3))
+m("LadPreExact", fx(lad["v2-pre"]["mae"]["T1"]))
+m("LadOneDrop", fx(lad["v2-pre+F5+F4"]["mae"]["T1"] - lad["v2-pre+F5+F4+F1"]["mae"]["T1"], 1))
+m("LadTotalDrop", fx(lad["v2-pre"]["mae"]["T1"] - lad["v3"]["mae"]["T1"], 1))
+
+m("SOneMedVtwoR", fx(S1["median_own"]["v2-pre"], 1))
+m("SOneMedVthreeR", fx(S1["median_own"]["v3-wf"], 1))
+m("HolmWeak", fx(R["plan2"]["holm"]["bankruptcy_weak_twin_minus_formula"]))
+
+# the two code digests recorded with the results
+pc = R["provenance_code"]
+m("ShardDigest", pc["shard_digest"][:12])
+m("AnalysisDigest", pc["analysis_digest"][:12])
+
+# ------------------------------------------------------------------ the two pillars for the dashboard's evidence page
+web = {
+    "spec": pr["spec"], "snapshot_digest": pr["snapshot_digest"],
+    "s1": {"median_v3": S1["median_own"]["v3-wf"], "median_v2_pre": S1["median_own"]["v2-pre"], "ci": S1["decision"]["ci"],
+           "years_negative": S1["years_negative"], "years": S1["decision"]["G"], "success": S1["success"]},
+    "elasticity": {"ratio": ov["ratio"], "range": [0.8, 1.25], "success": bool(0.8 <= ov["ratio"] <= 1.25)},
+    "specs": {k: {"median_twin": v["mae"]["T1"], "median_16q": v["mae"]["N3"], "elasticity": v["elasticity_ratio"]}
+              for k, v in sp.items()},
+    "combination_gain_pct": g["gain_pct"], "combination_gain_ci": g["gain_pct_ci_year_block"],
+    "density": {"coverage90": dc["coverage90_twin"], "crps": dc["crps"],
+                "success": bool(dc["vs_gaussian"]["success"] or dc["vs_empirical"]["success"])},
+    "shortfall": {"brier_twin": c8["twin"]["brier"], "brier_logit": c8["logit"]["brier"],
+                  "bss": 1 - c8["twin"]["brier"] / c8["logit"]["brier"], "ci": P["year_block_ci"], "success": bool(P["success"])},
+    "credit_events": {k: {s: C[k][s]["auc"] for s in ("twin", "pb_base", "altman_z2")} for k in ("bk8", "ce8")},
+}
+(ROOT / "web" / "public" / "data" / "research_rev3.json").write_text(json.dumps(web), encoding="utf-8")
 
 out = ["% generated by engine/scripts/rev3_assets.py from research.json and rev3/inputs.json"]
 out += [f"\\newcommand{{\\{k}}}{{{v}}}" for k, v in sorted(macros.items())]

@@ -43,6 +43,7 @@ research: sync
 paper-assets: sync
 	cd engine && uv run python scripts/research_assets.py
 	cd engine && uv run python scripts/paper_assets.py
+	cd engine && uv run python scripts/rev3_assets.py
 
 paper-pdf:
 	cd docs/paper && latexmk -pdf -interaction=nonstopmode -halt-on-error fintwin.tex
