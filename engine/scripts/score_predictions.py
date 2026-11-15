@@ -43,7 +43,9 @@ TARGETS = ("T1", "T2a")
 
 
 def _archive_module():
-    spec = importlib.util.spec_from_file_location("archive_predictions", Path(__file__).with_name("archive_predictions.py"))
+    spec = importlib.util.spec_from_file_location(
+        "archive_predictions", Path(__file__).with_name("archive_predictions.py")
+    )
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m
@@ -90,12 +92,12 @@ def roc_auc(y: list[int], s: list[float]) -> float | None:
 
 
 def brier(y: list[int], p: list[float]) -> float:
-    return sum((pi - yi) ** 2 for pi, yi in zip(p, y)) / len(y)
+    return sum((pi - yi) ** 2 for pi, yi in zip(p, y, strict=False)) / len(y)
 
 
 def log_score(y: list[int], p: list[float]) -> float:
     tot = 0.0
-    for pi, yi in zip(p, y):
+    for pi, yi in zip(p, y, strict=False):
         pi = min(max(pi, CLIP), 1 - CLIP)
         tot += -math.log(pi if yi else 1 - pi)
     return tot / len(y)
@@ -106,8 +108,10 @@ def load_events(path: Path) -> list[dict]:
     acc: dict[str, dict] = {}
     with open(path, newline="", encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
-            e = acc.setdefault(r["accession"].strip(),
-                               {"cik": int(r["cik"]), "filed": dt.date.fromisoformat(r["filed"]), "items": set()})
+            e = acc.setdefault(
+                r["accession"].strip(),
+                {"cik": int(r["cik"]), "filed": dt.date.fromisoformat(r["filed"]), "items": set()},
+            )
             e["items"] |= {i.strip() for i in r["items"].replace(",", ";").split(";") if i.strip()}
     return list(acc.values())
 
@@ -143,6 +147,7 @@ def row_status(cik: int, asof: dt.date, end: dt.date, events: list[dict], exits:
 def select_first_in_round(manifests: list[dict], rnd: str) -> dict | None:
     """Official archive of a round = the earliest archive whose asof is within the first 14 days of the quarter.
     None means the round is VOID: there is no fallback to a later week (that would choose the origin by omission)."""
+
     def early(m):
         d = dt.date.fromisoformat(m["asof"])
         return (d - dt.date(d.year, 3 * ((d.month - 1) // 3) + 1, 1)).days < 14
@@ -151,8 +156,9 @@ def select_first_in_round(manifests: list[dict], rnd: str) -> dict | None:
     return cand[0] if cand else None
 
 
-def score_archive(parquet: Path, manifest: dict, events: list[dict], exits: dict, scored_on: dt.date, *,
-                  official: bool) -> dict:
+def score_archive(
+    parquet: Path, manifest: dict, events: list[dict], exits: dict, scored_on: dt.date, *, official: bool
+) -> dict:
     import pyarrow.parquet as pq
 
     digest = hashlib.sha256(parquet.read_bytes()).hexdigest()
@@ -161,7 +167,10 @@ def score_archive(parquet: Path, manifest: dict, events: list[dict], exits: dict
     df = pq.read_table(parquet).to_pandas()
     asof = dt.date.fromisoformat(manifest["asof"])
     res: dict = {
-        "week": manifest["week"], "round": manifest["round"], "asof": manifest["asof"], "scored_on": scored_on.isoformat(),
+        "week": manifest["week"],
+        "round": manifest["round"],
+        "asof": manifest["asof"],
+        "scored_on": scored_on.isoformat(),
         "label": "official (first archive of the round)" if official else "DIAGNOSTIC (not an official round score)",
         "note": "no ranking claims in year one; ~392 large caps give ~0-2 events a year, so many metrics are undefined",
         "horizons": {},
@@ -177,8 +186,13 @@ def score_archive(parquet: Path, manifest: dict, events: list[dict], exits: dict
             counts = {s: status.count(s) for s in sorted(set(status))}
             prim = [i for i, s in enumerate(status) if s in ("event", "survived")]
             y = [1 if status[i] == "event" else 0 for i in prim]
-            entry: dict = {"status_counts": counts, "n_primary": len(prim), "events": sum(y),
-                           "empirical_rate": (sum(y) / len(y)) if y else None, "window_end": end.isoformat()}
+            entry: dict = {
+                "status_counts": counts,
+                "n_primary": len(prim),
+                "events": sum(y),
+                "empirical_rate": (sum(y) / len(y)) if y else None,
+                "window_end": end.isoformat(),
+            }
 
             def usable(name, rows):
                 return [i for i in rows if df[name].iloc[i] == df[name].iloc[i]]  # drops NaN
@@ -188,17 +202,25 @@ def score_archive(parquet: Path, manifest: dict, events: list[dict], exits: dict
                 rows = usable(name, prim)
                 yy = [1 if status[i] == "event" else 0 for i in rows]
                 ss = [float(df[name].iloc[i]) for i in rows]
-                entry[name] = {"n": len(rows), "pr_auc": pr_auc(yy, ss), "roc_auc": roc_auc(yy, ss), "scoring": "rank-only"}
+                entry[name] = {
+                    "n": len(rows),
+                    "pr_auc": pr_auc(yy, ss),
+                    "roc_auc": roc_auc(yy, ss),
+                    "scoring": "rank-only",
+                }
             # sensitivity: exited_unknown counted as negative
             sens = [i for i, s in enumerate(status) if s in ("event", "survived", "exited_unknown")]
             rows = usable(m, sens)
             yy = [1 if status[i] == "event" else 0 for i in rows]
             entry["sensitivity_unknown_as_negative"] = {
-                "n": len(rows), "pr_auc": pr_auc(yy, [float(df[m].iloc[i]) for i in rows])}
+                "n": len(rows),
+                "pr_auc": pr_auc(yy, [float(df[m].iloc[i]) for i in rows]),
+            }
             # reference: committed constant base rate beside the empirical rate
             br = manifest["base_rates"]["stratum"][f"{h}q"]["rate"] if target == "T1" else None  # T2a: none committed
             entry["base_rate_reference"] = {
-                "committed_rate": br, "empirical_rate": entry["empirical_rate"],
+                "committed_rate": br,
+                "empirical_rate": entry["empirical_rate"],
                 "brier": brier(y, [br] * len(y)) if y and br is not None else None,
                 "log_score": log_score(y, [br] * len(y)) if y and br is not None else None,
             }
@@ -229,10 +251,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         m = next((x for x in manifests if x["week"] == a.week), None)
     if m is None:
-        raise SystemExit("round is VOID: no archive with asof in the first 14 days of the quarter" if a.round
-                         else "no matching archive")
-    res = score_archive(a.archive_dir / m["file"], m, load_events(a.labels), load_exits(a.exits), a.scored_on,
-                        official=bool(a.round))
+        raise SystemExit(
+            "round is VOID: no archive with asof in the first 14 days of the quarter"
+            if a.round
+            else "no matching archive"
+        )
+    res = score_archive(
+        a.archive_dir / m["file"], m, load_events(a.labels), load_exits(a.exits), a.scored_on, official=bool(a.round)
+    )
     print(json.dumps(res, indent=2))
     return 0
 

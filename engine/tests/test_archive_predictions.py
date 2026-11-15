@@ -30,23 +30,44 @@ sc = _load("score_predictions")
 
 _UNIV = Path(tempfile.mkdtemp()) / "universe.csv"
 _UNIV.write_text(
-    "\n".join([
-        "key,cik,name,ticker,sic,industry,fy_end,first_year,last_year,last_periodic,bankruptcy_8k",
-        "A,100,A,,1.0,x,1231,2012.0,2024.0,2026-09-29,",
-        "B,200,B,,1.0,x,1231,2012.0,2020.0,2020-04-01,2020-05-12",
-    ]) + "\n"
+    "\n".join(
+        [
+            "key,cik,name,ticker,sic,industry,fy_end,first_year,last_year,last_periodic,bankruptcy_8k",
+            "A,100,A,,1.0,x,1231,2012.0,2024.0,2026-09-29,",
+            "B,200,B,,1.0,x,1231,2012.0,2020.0,2020-04-01,2020-05-12",
+        ]
+    )
+    + "\n"
 )
-KW = dict(built_at="2026-10-26T07:00:00Z", git_sha="abc123", engine_version="3.0.0.dev0", first=True,
-          universe_csv=_UNIV)
+KW = dict(
+    built_at="2026-10-26T07:00:00Z", git_sha="abc123", engine_version="3.0.0.dev0", first=True, universe_csv=_UNIV
+)
 
 
 def _company(cik, ticker, cash=100.0, fcf=-10.0, byq=None):
     return {
-        "ticker": ticker, "cik": cik, "params": {"last_quarter": "2026-06-30", "horizon": 12},
-        "presets": {"base": {"health_score": 50.0, "p_breach": 0.3, "p_icr_below_1_5": 0.2, "p_downgrade_below_ig": 0.1,
-                             "p_breach_by_q": [0.01 * i for i in range(1, 13)] if byq is None else byq}},
-        "history": {"series": {"cash": [cash] * 4, "fcf": [fcf] * 4, "icr": [2.0] * 4, "nd_ebitda": [3.0] * 4,
-                               "ebitda": [5.0] * 4, "rating": [5.0, 5.0, 0.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0]}},
+        "ticker": ticker,
+        "cik": cik,
+        "params": {"last_quarter": "2026-06-30", "horizon": 12},
+        "presets": {
+            "base": {
+                "health_score": 50.0,
+                "p_breach": 0.3,
+                "p_icr_below_1_5": 0.2,
+                "p_downgrade_below_ig": 0.1,
+                "p_breach_by_q": [0.01 * i for i in range(1, 13)] if byq is None else byq,
+            }
+        },
+        "history": {
+            "series": {
+                "cash": [cash] * 4,
+                "fcf": [fcf] * 4,
+                "icr": [2.0] * 4,
+                "nd_ebitda": [3.0] * 4,
+                "ebitda": [5.0] * 4,
+                "rating": [5.0, 5.0, 0.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0],
+            }
+        },
     }
 
 
@@ -124,7 +145,7 @@ def test_hash_chain(tmp_path):
     assert mf2["prev_sha256"] == hashlib.sha256(m1.read_bytes()).hexdigest() and mf2["prev_week"] == "2026-44"
     assert ap.verify_chain([m1, m2, m3]) == []
     assert ap.verify_chain([m1, m3])  # week 45 deleted -> detected
-    m2.write_text(m2.read_text().replace("\"rows\": 3", "\"rows\": 4"))  # altered manifest -> detected
+    m2.write_text(m2.read_text().replace('"rows": 3', '"rows": 4'))  # altered manifest -> detected
     assert any("does not match" in p for p in ap.verify_chain([m1, m2, m3]))
 
 
@@ -170,9 +191,11 @@ def test_status_rules():
 
 
 def test_round_selection_and_metrics():
-    ms = [{"round": "2026Q4", "asof": "2026-11-09", "week": "2026-46"},
-          {"round": "2026Q4", "asof": "2026-10-05", "week": "2026-41"},
-          {"round": "2027Q1", "asof": "2027-01-04", "week": "2027-01"}]
+    ms = [
+        {"round": "2026Q4", "asof": "2026-11-09", "week": "2026-46"},
+        {"round": "2026Q4", "asof": "2026-10-05", "week": "2026-41"},
+        {"round": "2027Q1", "asof": "2027-01-04", "week": "2027-01"},
+    ]
     assert sc.select_first_in_round(ms, "2026Q4")["week"] == "2026-41"
     assert sc.select_first_in_round(ms, "2026Q2") is None
     assert sc.pr_auc([0, 0], [1.0, 2.0]) is None and sc.roc_auc([1, 1], [1.0, 2.0]) is None
@@ -189,8 +212,10 @@ def test_event_rate_derivation_synthetic():
 
 
 def test_round_void_without_early_archive():
-    ms = [{"round": "2026Q4", "asof": "2026-10-26", "week": "2026-44"},  # 25 days into the quarter: too late
-          {"round": "2026Q4", "asof": "2026-11-02", "week": "2026-45"}]
+    ms = [
+        {"round": "2026Q4", "asof": "2026-10-26", "week": "2026-44"},  # 25 days into the quarter: too late
+        {"round": "2026Q4", "asof": "2026-11-02", "week": "2026-45"},
+    ]
     assert sc.select_first_in_round(ms, "2026Q4") is None  # VOID, no fallback to a later week
     ms.append({"round": "2026Q4", "asof": "2026-10-12", "week": "2026-42"})
     assert sc.select_first_in_round(ms, "2026Q4")["week"] == "2026-42"

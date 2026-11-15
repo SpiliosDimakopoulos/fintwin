@@ -231,8 +231,9 @@ def derive_event_rates(universe_csv: Path, stratum_ciks: set[int], horizons: tup
     return out
 
 
-def build_rows(data_dir: Path, *, asof: str, built_at: str, git_sha: str, engine_version: str, data_release: str,
-               base_rates: dict) -> list[dict]:
+def build_rows(
+    data_dir: Path, *, asof: str, built_at: str, git_sha: str, engine_version: str, data_release: str, base_rates: dict
+) -> list[dict]:
     rows = []
     for f in _company_files(data_dir):
         d = json.loads(f.read_text(encoding="utf-8"))
@@ -281,7 +282,9 @@ def write_parquet(rows: list[dict], path: Path) -> None:
     schema = pa.schema([(n, types[t]) for n, t in COLUMNS])
     table = pa.Table.from_pylist(rows, schema=schema)
     # fixed options; no pandas metadata; no dictionary so the bytes do not depend on encoding heuristics
-    pq.write_table(table, path, compression="zstd", use_dictionary=False, write_statistics=False, data_page_version="2.0")
+    pq.write_table(
+        table, path, compression="zstd", use_dictionary=False, write_statistics=False, data_page_version="2.0"
+    )
 
 
 def sha256_file(p: Path) -> str:
@@ -358,10 +361,18 @@ def _engine_version(root: Path) -> str:
     return "unknown"
 
 
-def archive(data_dir: Path, out_dir: Path, *, built_at: str | None = None, git_sha: str | None = None,
-            engine_version: str | None = None, repo_root: Path | None = None,
-            prev_manifest: Path | None = None, first: bool = False,
-            universe_csv: Path | None = None) -> tuple[Path, Path]:
+def archive(
+    data_dir: Path,
+    out_dir: Path,
+    *,
+    built_at: str | None = None,
+    git_sha: str | None = None,
+    engine_version: str | None = None,
+    repo_root: Path | None = None,
+    prev_manifest: Path | None = None,
+    first: bool = False,
+    universe_csv: Path | None = None,
+) -> tuple[Path, Path]:
     if (prev_manifest is None) == (not first):
         raise SystemExit("give exactly one of --prev-manifest FILE or --first (first week of the chain, prev = null)")
     index = json.loads((data_dir / "index.json").read_text(encoding="utf-8"))
@@ -371,7 +382,7 @@ def archive(data_dir: Path, out_dir: Path, *, built_at: str | None = None, git_s
     week = week_label(asof)
     y, w = iso_week(asof)
     data_release = f"{y}.{w:02d}"
-    built_at = built_at or dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    built_at = built_at or dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     git_sha = git_sha or _git_sha()
     root = repo_root or Path(__file__).resolve().parents[2]
     engine_version = engine_version or _engine_version(root)
@@ -401,8 +412,15 @@ def archive(data_dir: Path, out_dir: Path, *, built_at: str | None = None, git_s
     base_rates = derive_event_rates(universe_csv, ciks)
     if base_rates["stratum"]["4q"]["rate"] is None or base_rates["stratum"]["8q"]["rate"] is None:
         raise SystemExit("cannot derive baseline rates: no firm-origins for the dashboard stratum in the universe file")
-    rows = build_rows(data_dir, asof=asof, built_at=built_at, git_sha=git_sha, engine_version=engine_version,
-                      data_release=data_release, base_rates=base_rates)
+    rows = build_rows(
+        data_dir,
+        asof=asof,
+        built_at=built_at,
+        git_sha=git_sha,
+        engine_version=engine_version,
+        data_release=data_release,
+        base_rates=base_rates,
+    )
     if not rows:
         raise SystemExit("no company files with a cik found: nothing to archive")
     write_parquet(rows, pq_path)
@@ -439,7 +457,9 @@ def archive(data_dir: Path, out_dir: Path, *, built_at: str | None = None, git_s
         "script_sha256": sha256_file(Path(__file__)),
         "prev_week": prev_week,
         "prev_sha256": prev_sha,
-        "prev_note": None if prev_sha else "first week of the chain: there is no previous manifest (prev_sha256 = null)",
+        "prev_note": None
+        if prev_sha
+        else "first week of the chain: there is no previous manifest (prev_sha256 = null)",
     }
     mf_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return pq_path, mf_path
@@ -455,9 +475,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--universe-csv", type=Path, help="default: engine/fintwin/data/universe_edgar.csv")
     ap.add_argument("--first", action="store_true", help="this is the first week of the chain (prev = null)")
     a = ap.parse_args(argv)
-    pq_path, mf_path = archive(a.data, a.out, built_at=a.built_at, git_sha=a.git_sha,
-                               prev_manifest=a.prev_manifest, first=a.first,
-                               universe_csv=a.universe_csv)
+    pq_path, mf_path = archive(
+        a.data,
+        a.out,
+        built_at=a.built_at,
+        git_sha=a.git_sha,
+        prev_manifest=a.prev_manifest,
+        first=a.first,
+        universe_csv=a.universe_csv,
+    )
     print(pq_path, mf_path)
     print(json.loads(mf_path.read_text())["sha256"])
     return 0
