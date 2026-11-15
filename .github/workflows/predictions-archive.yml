@@ -128,7 +128,7 @@ jobs:
           else
             ev="Evidence of timing: this release's published_at ONLY. The OpenTimestamps stamp failed; see issue label ots-missing."
           fi
-          gh release create "$tag" "${assets[@]}" --target "$SHA" --title "Predictions $WEEK"             --notes "Prospective-track archive for ISO week $WEEK. parquet SHA256: $sha. $ev See docs/growth/B4_PROSPECTIVE.md."
+          gh release create "$tag" "${assets[@]}" --target "$SHA" --latest=false --title "Predictions $WEEK"             --notes "Prospective-track archive for ISO week $WEEK. parquet SHA256: $sha. $ev See docs/growth/B4_PROSPECTIVE.md."
 
   alert:
     # open an issue when the external anchor is missing; separate job so only it can write issues
