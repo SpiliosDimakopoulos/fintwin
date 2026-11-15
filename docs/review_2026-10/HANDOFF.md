@@ -1,3 +1,15 @@
+# Handoff (15-11-2026 evening, latest)
+
+- RELEASED: tag v3.0.0 (GitHub release, Latest) and paper-r3 (pre-release, PDF built by paper.yml with the drift check
+  passing). Zenodo v3.0.0 DOI 10.5281/zenodo.24249768 (concept 10.5281/zenodo.23434606).
+- Zenodo's GitHub webhook archives EVERY release: it also minted records for ots-upgrades, predictions-2026-44/46 and
+  paper-r3. The owner must deactivate it (repo Settings > Webhooks > zenodo.org > untick Active) before Monday 23-11,
+  or each weekly predictions release gets a DOI. Future versions: re-enable the hook just for the release, or upload by hand.
+- PR #61 rev3 -> main: all CI green, ready to merge (owner). PR #65 (predictions releases not Latest): owner merges.
+- Weekly build fixed (#62); B4 archive live: predictions-2026-44, -2026-46, chain verified.
+- Decided: D1, R2 disclosed in the paper; R1 in BACKTEST.md; W6, R6/R9/R13/R16 and the F3 bound go to v3.1.
+- Still open: author postal address and country in the paper (Elsevier) before journal submission.
+
 # Handoff (15-11-2026, latest; older notes below)
 
 State:
