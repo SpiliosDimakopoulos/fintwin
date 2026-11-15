@@ -349,7 +349,8 @@ def test_shard_refuses_to_overwrite_another_stamp_or_machine(monkeypatch, tmp_pa
     f.write_text(json.dumps(rec | {"_stamp": "old-code"}), encoding="utf-8")
     with pytest.raises(SystemExit, match="another stamp"):
         M.shard(0, 1, limit=3)
-    f.write_text(json.dumps(rec | {"_run": rec["_run"] | {"machine": "aarch64"}}), encoding="utf-8")
+    other = "x86_64" if rec["_run"].get("machine") == "aarch64" else "aarch64"  # differ from whatever runs the test
+    f.write_text(json.dumps(rec | {"_run": rec["_run"] | {"machine": other}}), encoding="utf-8")
     with pytest.raises(SystemExit, match="another run"):
         M.shard(0, 1, limit=3)
     monkeypatch.setenv("FINTWIN_NEW_RUN", "1")  # deliberate recompute

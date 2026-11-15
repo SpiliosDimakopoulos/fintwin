@@ -9,5 +9,9 @@ if ! command -v node >/dev/null || [ "$(node -v | cut -c2- | cut -d. -f1)" -lt 2
 fi
 rc=0
 (cd engine && uv sync --quiet && uv run --quiet python -m pytest -q -p no:cacheprovider) > ci_out/engine.log 2>&1 || rc=1
-(cd web && npm ci --silent && npm test && npm run build) > ci_out/web.log 2>&1 || rc=$((rc+2))
+# the lock is written on Windows and misses rolldown's linux-arm64 binding (npm/cli#4828): add it on ARM servers
+(cd web && npm ci --silent \
+  && { [ "$(uname -m)" != aarch64 ] || npm install --no-save --silent \
+       "@rolldown/binding-linux-arm64-gnu@$(node -p "require('./node_modules/rolldown/package.json').version")"; } \
+  && npm test && npm run build) > ci_out/web.log 2>&1 || rc=$((rc+2))
 tail -5 ci_out/engine.log; tail -15 ci_out/web.log; echo "CI rc=$rc"; exit $rc

@@ -8,7 +8,7 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from test_B1_parity import macro, synthetic_company  # noqa: F401  (fixture)
+from test_B1_parity import synthetic_company  # `macro` is a conftest fixture since the quality merge
 
 from fintwin.research import calibration
 from fintwin.research import experiments as E
