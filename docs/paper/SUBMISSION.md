@@ -17,8 +17,8 @@ gh release create vX.Y.Z docs/paper/dist/fintwin.pdf docs/paper/dist/fintwin-arx
 `arxiv_bundle.py` also writes a plain-text abstract (`abstract.txt`) and compiles the LaTeX source in an empty folder,
 so the bundle is ready if the paper is ever submitted to arXiv, SSRN or a journal.
 
-**Title:** Does Simulation Add Information Beyond Persistence? A Financial Digital Twin Tested on a Survivorship-Free Panel of SEC Filers
+**Title:** Does Filing-Based Cash-Flow Simulation Beat Persistence? A Benchmark with Committed Decision Rules on a Survivorship-Free Panel of SEC Filers
 
-**Keywords:** digital twin; system dynamics; corporate liquidity; cash-flow prediction; bankruptcy prediction; stress testing; XBRL; forecast encompassing
+**Keywords:** forecast evaluation; cash-flow forecasting; density forecasts; stress testing; forecast encompassing; corporate liquidity; XBRL
 
-**JEL:** G32, G33, G17, C53, C63, M41
+**JEL:** C53, G17, G32, G33, M41

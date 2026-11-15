@@ -251,11 +251,11 @@ table("encompassing", [
     *rows[:-1], "\\bottomrule", "\\end{tabular}}"])
 
 HYB = [("N1", "Margin, 4 quarters"), ("N3", "Margin, 16 quarters"), ("N6", "Regression + revenue change"),
-       ("T1", "Twin alone"), ("N1+T1", "4-quarter margin + $\\lambda$(twin $-$ rule)"),
-       ("N3+N1", "16-quarter margin + $\\lambda$(4-quarter margin $-$ rule)"),
-       ("N3+N5", "16-quarter margin + $\\lambda$(regression $-$ rule)"),
-       ("N3+N6", "16-quarter margin + $\\lambda$(regression with timing $-$ rule)"),
-       ("N3+T1", "16-quarter margin + $\\lambda$(twin $-$ rule)")]
+       ("T1", "Twin alone"), ("N1+T1", "4-quarter margin + $w$(twin $-$ rule)"),
+       ("N3+N1", "16-quarter margin + $w$(4-quarter margin $-$ rule)"),
+       ("N3+N5", "16-quarter margin + $w$(regression $-$ rule)"),
+       ("N3+N6", "16-quarter margin + $w$(regression with timing $-$ rule)"),
+       ("N3+T1", "16-quarter margin + $w$(twin $-$ rule)")]
 rows = []
 for k, lab in HYB:
     rows.append(f"{lab} & {f2(hy['mae_w'][k])} & {f2(hy['median_ae'][k])} & {f2(fhy['mae_w'][k])} & "
@@ -653,7 +653,7 @@ if P2:
     for y, tag in (("2015", "Fifteen"), ("2020", "Twenty"), ("2022", "TwentyTwo")):
         if y in ep:
             m(f"Epi{tag}T", f1(ep[y]["y_abn_burn8"]["t"]["twin"]))
-            m(f"Epi{tag}TRobust", f1(ep[y]["y_abn_burn8"]["t_robust"]["twin"]))
+            m(f"Epi{tag}TRobust", f2(ep[y]["y_abn_burn8"]["t_robust"]["twin"]))
             m(f"Epi{tag}FormulaT", f1(ep[y]["y_abn_burn8"]["t_robust"]["formula"]))
             m(f"Epi{tag}Clusters", ep[y]["y_abn_burn8"]["n_clusters"])
             m(f"Epi{tag}Depth", pc(ep[y]["median_depth"]))
