@@ -21,6 +21,16 @@ this plan in `quality_review/` (one file per review; IDs below refer to them).
 
 ## Owner decisions (not implemented)
 
+**Decided 15-11-2026 (owner delegated the call):** nothing below changes the v3.0.0 numbers; all fixes go into v3.1,
+evaluated on new data.
+- D1: disclosed in the paper's limitations (look-ahead around turning points); v3.1 uses a real-time indicator (Sahm
+  rule on ALFRED vintages, or USREC lagged by the announcement delay).
+- R1: `docs/BACKTEST.md` labels the product backtests as partly in-sample; v3.1 routes them through
+  `experiments.calibrate`.
+- R2: disclosed in the paper (Holm table caption and limitations); v3.1 switches to `train_bounds`.
+- R6, R9, R13, R16: v3.1, with the numerical deduplication and a parity run.
+- W6: v3.1 (right after the tag): Python `_rank` uses `ratings.rating_rank`, so NaN coverage is D as in TS.
+
 | ID | Issue | Why it needs you |
 |---|---|---|
 | data D1 | `recession_regime` uses today's NBER USREC dating cut at the cutoff; NBER announces turning points 6-21 months late | Look-ahead in the regime input; fixing it changes the paper's numbers. Options: lag USREC by the announcement delay, or use a real-time indicator (Sahm rule from ALFRED vintages) |
