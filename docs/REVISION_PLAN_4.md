@@ -169,3 +169,20 @@ says that these tests were specified after the results of plan 3 were known.
 3. **Reporting.** Every test is reported whatever its result, in the paper's P4 section and in `docs/paper/rev4/`.
 4. **Compute.** Server only (burst, ARM cax, x86 if that is all there is). Results are pulled before the server is
    deleted.
+
+## Addendum 1 (2026-11-16, before any P4 statistic on real data; the simulations are running, nothing has been read)
+1. **ML1 features.** The plan lists the information ML1 may use (margins, realized revenue, ratios, industry). A
+   linear model cannot form a product, so ML1 also gets the products m4, m8 and m16 × realized eight-quarter revenue.
+   These are the margin forecasts N1–N3 themselves, so no new information enters.
+2. **ML1 quantile levels.** Quantile regression is undefined at τ = 0 and τ = 1. ML1's predictive distribution
+   therefore uses the plan-3 levels (2.5, 5, 10, …, 95, 97.5), and its CRPS uses the same quantile approximation
+   for every forecaster it is compared with.
+3. **Already computed by the plan-3 code.** Two statistics exist in the plan-3 replication file
+   (`docs/paper/research.json`), computed by the plan-3 code in the full run of 13–14 November:
+   - the winsorized mean-loss MCS, P4-3(a);
+   - the firm-block interval of the decisive shortfall cell, P4-7(b).
+   They are reported from there and not recomputed. P4-3(b), the raw mean-loss MCS, is new.
+4. **Analysis code.** The analyses run under the analysis code of the plan-3 run (commit 77f3b7f) plus
+   `fintwin/research/plan4.py`, so that the frames, exclusions and firm-years are those of the paper.
+5. **CRPS from quantiles.** CRPS(F, y) ≈ (2/K) Σ_k ρ_τk(y − q_τk) over the K stored levels. The same formula is
+   used for every forecaster in a comparison.
