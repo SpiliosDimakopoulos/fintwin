@@ -1187,7 +1187,9 @@ def company(
         fails.tried("filed")
         try:
             filed = first_filed(int(full_data.cik))
-        except Exception as e:  # the filing date then falls back to the fixed lag downstream, and the count says how often
+        except (
+            Exception
+        ) as e:  # the filing date then falls back to the fixed lag downstream, and the count says how often
             fails.fail("filed", e)
         fails.tried("credit_events")
         try:
