@@ -1,0 +1,31 @@
+{
+ "code_digest": "9f7e4114b07a1a17c9770ca3747946bd5fec3791290db1e1d206a0b7341b6757",
+ "spec": {
+  "name": "v3",
+  "label": "v3-wf",
+  "fixes": [
+   "F1",
+   "F2",
+   "F3",
+   "F4",
+   "F5",
+   "F6",
+   "F7",
+   "F8",
+   "F10",
+   "F11",
+   "F12",
+   "F13",
+   "F14",
+   "E1"
+  ],
+  "fixes_env": null,
+  "prior": 0.35,
+  "selection": "d20049b4d5b431d8",
+  "data_legacy": false,
+  "b1_spec": true
+ },
+ "machine": "x86_64",
+ "nproc": 8,
+ "platform": "Linux-6.8.0-147-generic-x86_64-with-glibc2.39"
+}

@@ -286,7 +286,8 @@ def history_features(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------- the tests
 def p41(df: pd.DataFrame, u: pd.DataFrame) -> dict:
     d = df.merge(u, on=["ticker", "year"], how="inner")
-    d = d[d["year"].isin(TEST_YEARS)].reset_index(drop=True)
+    # all cutoffs stay in: <= Y-3 trains the rivals and weights, 2017-2024 is tested (addendum 2)
+    d = d.reset_index(drop=True)
     real = d["real_cfo"].to_numpy(float)
     revsum = d["revsum"].to_numpy(float)
     m16 = d["N3_cfo"].to_numpy(float) / revsum
@@ -298,16 +299,17 @@ def p41(df: pd.DataFrame, u: pd.DataFrame) -> dict:
         "R3u": m4 * 200.0,
     }
     years, firms = d["year"].to_numpy(int), unit(d).to_numpy()
-    out: dict = {"n": int(len(d)), "levels": {}}
+    tm = np.isin(years, TEST_YEARS)
+    out: dict = {"n": int(tm.sum()), "levels": {}}
     for k, f in F.items():
         e = f - real
-        ok = np.isfinite(e)
+        ok = np.isfinite(e) & tm
         out["levels"][k] = {
             "n": int(ok.sum()),
             "median_ae": float(np.median(np.abs(e[ok]))),
             "mean_ae": float(np.mean(np.abs(e[ok]))),
         }
-    out["test_A"] = pointwise_test(F["T1u"], F["R1u"], real, years, firms)
+    out["test_A"] = pointwise_test(F["T1u"][tm], F["R1u"][tm], real[tm], years[tm], firms[tm])
     # density, test B: T1u's 21 plan quantiles against R1u + the empirical residuals of R1u on cutoffs <= Y-3
     q_t = np.vstack(d["u_q"].to_numpy())
     resid = real - F["R1u"]
