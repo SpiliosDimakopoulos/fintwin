@@ -1,3 +1,5 @@
+% Online supplement. Review version anonymized (delete the next line for the published version)
+\def\anonbuild{1}
 \documentclass[preprint,12pt,authoryear]{elsarticle}
 \usepackage[margin=1in]{geometry}
 \usepackage[T1]{fontenc}
@@ -19,11 +21,15 @@
 \newif\ifanon\anonfalse
 \ifdefined\anonbuild\anontrue\fi
 \ifanon\setstretch{1.9}\else\setstretch{1.15}\fi
+\newcommand{\twin}{\ifanon\textsc{Sim}\else\twinname\fi}
+% identifiers that lead to the author's repository: withheld in the anonymized build (mapping on the title page)
+\newcommand{\repoid}[1]{\ifanon[withheld]\else\texttt{#1}\fi}
 \newcommand{\selfcitep}{\ifanon\citep{anon2026}\else\citep{dimakopoulos2026}\fi}
 \input{numbers.tex}
 \input{research_numbers.tex}
 \input{rev3_numbers.tex}
-\newcommand{\twin}{FinTwin}
+\input{rev4_numbers.tex}
+\newcommand{\twinname}{FinTwin}
 
 \renewcommand{\thesection}{S\arabic{section}}
 \renewcommand{\thetable}{S\arabic{table}}

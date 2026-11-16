@@ -99,4 +99,37 @@ Rank regression of burn severity over the eight quarters after the cutoff on the
 \end{table}
 
 \subsection{Implementation}
-The Python reference engine (NumPy) performs calibration, experiments and exports. A TypeScript port runs in a Web Worker, so the public dashboard needs no server; golden runs exported from Python with identical pre-drawn shocks must agree to a relative tolerance of $10^{-9}$. The balance-sheet identity is checked by property-based tests, the data pipeline including 52/53-week fiscal calendars is tested end to end on synthetic XBRL, and a synthetic test checks that the transmission statistics reject a predictor that is merely smoother than the base rule. The revision-3 run read the frozen snapshot on x86 servers; each result records the code digest, the lock file (\texttt{\LockDigest}) and the snapshot digest.
+The Python reference engine (NumPy) performs calibration, experiments and exports. A TypeScript port runs in a Web Worker, so the public dashboard needs no server; golden runs exported from Python with identical pre-drawn shocks must agree to a relative tolerance of $10^{-9}$. The balance-sheet identity is checked by property-based tests, the data pipeline including 52/53-week fiscal calendars is tested end to end on synthetic XBRL, and a synthetic test checks that the transmission statistics reject a predictor that is merely smoother than the base rule. The revision-3 run read the frozen snapshot on x86 servers; each result records the code digest, the lock file (\repoid{\LockDigest}) and the snapshot digest.
+
+\clearpage
+\section{Complete output of the second plan}\label{app:plan4}
+The tables below report every descriptive statistic the second plan lists that Section~9 of the paper does not, from \repoid{docs/paper/rev4/}.
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Model confidence sets with the regression added, and scale-free errors (operating cash flow)}
+\label{tab:rev4mcs}
+\input{tables/rev4_mcs.tex}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+$p_{\mathrm{MCS}}$: $\alpha=0.10$, firm$\times$year bootstrap; the raw-mean set uses the 19 forecasters of the first plan on their own common firm-years. GMRAE: geometric mean of the absolute error relative to the 16-quarter margin's, with a firm$\times$year bootstrap interval; ML1 (the regression) is not in the GMRAE computation of the plan. N1+N3 and N3+N1 span the same forecasts.
+\end{minipage}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Shortfall probabilities: every cell of the second plan}
+\label{tab:rev4short}
+\resizebox{\linewidth}{!}{\input{tables/rev4_shortfall.tex}}
+\par\smallskip
+\begin{minipage}{\linewidth}\footnotesize
+Eight-quarter horizon. L1: the first plan's shortfall label; L2: without delisting notices. BSS against the logit refitted on the same label; recal.: isotonic recalibration on cutoffs whose labels were observable. Rel./res.: Murphy reliability and resolution.
+\end{minipage}
+\end{table}
+
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Further statistics of the second plan}
+\label{tab:rev4misc}
+\resizebox{\linewidth}{!}{\input{tables/rev4_misc.tex}}
+\end{table}

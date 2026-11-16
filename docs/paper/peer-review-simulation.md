@@ -274,3 +274,70 @@ stronger density rivals. Each of these counts as a new, post-hoc specification a
 - D2–D4, D7, D8.
 - The title word "Pre-Specified" is the author's decision. After the new disclosure, "with committed decision rules"
   is the safer wording.
+
+---
+
+# Round 4 (16-11-2026): fixing everything from round 3, then a second independent check
+
+## What was done
+- **Text (round 3, open items):** B4, B6, B13, B15, B17, C5, C8, C9, C15–C17, D2–D4 and D7 are fixed in the text.
+  The confirmatory encompassing statistic is now the plan's t(G−1) version. The test calendar, the IPW model, the
+  provenance note in the appendix, the v3 components and the extensions that are off, the notation and the S1
+  continuity line are all stated.
+- **Second pre-specification:** `docs/REVISION_PLAN_4.md`.
+  - It was committed, timestamped with OpenTimestamps and pushed (807409a) before any P4 code or statistic. The
+    proofs are now upgraded: Bitcoin block 976032.
+  - Addendum 1 covers implementation choices. Addendum 2 records the P4-1 training-window bug, found after the
+    first results; it is fixed and disclosed. Addendum 3 corrects addendum 1 and adds the omitted randomization tests
+    and look-ahead counts.
+  - The simulations ran under the exact plan-3 code (77f3b7f, shard digest 9f7e4114b07a). The baseline health
+    score reproduces the plan-3 run on 21,171 of 21,171 firm-years. Server cost: cpx42 about 1.5 h, plus two small
+    reruns.
+- **Results (Section 9).** None of the four confirmatory tests succeeds.
+  - Unconditional point test: the simulator is worse than the margin applied to a random walk of revenue (+0.95
+    [0.09, 1.81], worse in 7 of 8 years).
+  - Unconditional density test: CRPS 19.2 against 14.1; coverage 48% against 84%.
+  - Pooled regression ML1 against the margin: +0.18 [−0.50, 0.86], a tie.
+  - Recalibrated shortfall, label L2: BSS −0.015 [−0.026, −0.005].
+  - Descriptive: ML1 is better than the simulator. The margin applied to the simulator's own revenue path beats the
+    simulator in every year, so the loss lies in the revenue-to-cash mapping. The NBER look-ahead exists only at the
+    2021 cutoff and has no effect given realized revenue. The elasticity interval reaches into the pre-specified
+    range.
+- **IJF compliance (Guide for Authors, read 16-11):**
+  - abstract 147 words (limit 100–150), keywords not repeating the title, AI-declaration heading as the journal
+    asks;
+  - double-anonymized build (`fintwin_anon.tex`): the software is called SIM; hashes, paths, digests, links and the
+    self-citation are withheld;
+  - separate title page with the mapping, online supplement split out and anonymized, double spacing, cover letter,
+    checklist and suggested reviewers (`SUBMISSION_IJF.md`);
+  - author address: Athens, Greece.
+- **Plan-3 outputs that were computed but not reported** are now in the text: the winsorized mean-loss MCS and the
+  firm-block CI of the decisive shortfall cell.
+
+## Second independent check (subagent) and its resolution
+- **M1 (MCS wording) and M2 (N1+N3 ≡ N3+N1):** fixed. The excluded models are named, and the duplicate is
+  disclosed.
+- **M3 (overclaims):** rewritten. The own-revenue comparison is now tested (interval 0.67–1.78), and "every loss"
+  is gone.
+- **M4 (statistic vs interval):** the table reports the mean of the yearly differences.
+- **M5 (mixed samples):** all P4-1 medians are on the 11,274 common firm-years.
+- **M6 (unreported statistics):** every listed statistic is in the supplement (tables S-rev4). The randomization
+  tests have been added.
+- **M7 (near-zero contradiction):** reconciled. The mean is 169 on the full common frame and 165 without the 17
+  near-zero firm-years.
+- **M8 (corrections and CRPS):** stated. The corrections did not cause the undercoverage but did raise CRPS.
+- **M9 (pre-specification claim):** checked against the shard mtimes. The simulations ran 04:30–05:37 under the
+  committed code (cbb41c7, 01:29), so the claim "run from uncommitted code" is wrong. Addendum 1's "running" was
+  inaccurate and is corrected in addendum 3. The proofs are upgraded.
+- **M10 (anonymization):** fixed as above.
+- **M11 (release provenance):** Sections 1–8 come from release 3.0.0, Section 9 from tag `paper-r4`.
+- **Minors 1–15, 17:** fixed.
+- **Minors 16 (full street address) and 18 (label in plan4.json):** left. The address is the author's choice. The
+  label is cosmetic, and the rerun file carries the addendum note.
+
+## Still open (only the author can do these)
+1. Elsevier's declaration-of-interest .docx tool, at submission.
+2. Check the suggested reviewers' affiliations and e-mails.
+3. Press submit.
+4. Structural judgement, the editor's: the paper remains a negative result about one simulator. The second model
+   and the unconditional tests make it a protocol applied twice, not a comparison of independent simulators.
