@@ -1,5 +1,5 @@
-Filing-based cash-flow simulator tested against persistence under pre-set rules
-Bug fixes cut its median cash-flow error but a 16-quarter margin still wins
+Filing-based cash-flow simulator tested against persistence under committed rules
+A 16-quarter cash-flow margin beats it with or without realized revenue
 Its edge over the margin appears only under winsorized or squared loss
-Its predictive distributions are far too narrow: 90% intervals cover 30%
-Its liquidity-shortfall probabilities lose to a three-ratio logit in Brier score
+Its 90% predictive intervals cover 30% of outcomes; simple rivals cover 86%
+Recalibrated shortfall probabilities still do not beat a three-ratio logit

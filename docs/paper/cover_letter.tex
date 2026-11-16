@@ -1,0 +1,31 @@
+\documentclass[11pt]{letter}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,urlcolor={blue!55!black}]{hyperref}
+\signature{Spilios Dimakopoulos\\Independent researcher, Athens, Greece\\\href{mailto:spiliosdimak@gmail.com}{spiliosdimak@gmail.com}}
+\address{Spilios Dimakopoulos\\Independent researcher\\Athens, Greece}
+\begin{document}
+\begin{letter}{The Editors\\International Journal of Forecasting}
+\opening{Dear Editors,}
+
+I submit the manuscript ``Does Filing-Based Cash-Flow Simulation Beat Persistence? A Benchmark with Committed Decision Rules on a Survivorship-Free Panel of SEC Filers'' for consideration as a research article in the \emph{International Journal of Forecasting}.
+
+\textbf{What the paper does.} Structural simulation models of the firm are used and sold for conditional cash-flow and liquidity-stress forecasts, but they are rarely tested against simple benchmarks. The paper tests one such model, calibrated for each firm from point-in-time SEC XBRL filings, against persistence on a survivorship-free panel of 5,309 non-financial US filers (2014--2024). It uses the evaluation tools of this journal's literature: a ladder of simple rivals, encompassing tests under two losses, combinations with weights chosen on earlier years, a family of comparisons controlled with the Romano--Wolf procedure, the model confidence set and the test for superior predictive ability, CRPS and probability integral transforms for predictive distributions, and Brier scores with their decomposition for event probabilities. Point forecasts are evaluated both given the realized revenue path and unconditionally, and the same protocol is applied to a second, statistical model.
+
+\textbf{Why it fits the journal.} The result is negative and, I believe, informative: a 16-quarter cash-flow margin is more accurate than the simulator with or without realized revenue; the simulator's predictive intervals are far too narrow; its shortfall probabilities do not beat a three-ratio logit even after recalibration; a pooled regression on the rules' inputs ties with persistence. The paper shows where the value of such a model is not, and gives other modelers a public, point-in-time benchmark and protocol on which to test theirs.
+
+\textbf{Pre-specification.} The decision rules were committed to the project's repository before the runs, and every later deviation is listed in the paper (Section 5.1), including the limits of what a reader can verify: the repository was private until after the main run and its plan was not independently timestamped. The additional tests of Section 9 follow a second plan that was timestamped with OpenTimestamps and published before its code was written; its two dated addenda, including one bug fix made after first results, are disclosed.
+
+\textbf{Prior dissemination and related work.} The paper has not been published and is not under review elsewhere. An earlier evaluation of the same software, with a different design and sample, was posted with the code on Zenodo (version 2.0.0, October 2026; not peer reviewed), and the current version of the paper is archived with the software release (version 3.0.0). The manuscript cites the earlier evaluation, anonymously in the reviewer version, and explains how the present paper differs: a survivorship-free universe, a bankruptcy census, corrected specifications under committed rules, density and shortfall tests, unconditional forecasts and a second model.
+
+\textbf{Files.} Following the journal's double-anonymized review, I upload a title page with author details, acknowledgements and the declarations, an anonymized manuscript, highlights, and an online supplement. All code, data and the scripts that produce every number are public under the MIT license; the links are on the title page and are available to reviewers through the editor. The software was developed by me, which the title page declares as an interest; the paper received no funding. Generative AI was used to assist with software development, data analysis and drafting, as declared in the manuscript.
+
+\textbf{Suggested reviewers.} Experts in forecast evaluation, distress prediction and cash-flow forecasting who could judge the paper are listed in the submission form.
+
+Thank you for considering the manuscript.
+
+\closing{Yours sincerely,}
+\end{letter}
+\end{document}
