@@ -1,0 +1,37 @@
+\documentclass[preprint,12pt,authoryear]{elsarticle}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{threeparttable}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{setspace}
+\usepackage[font=small,labelfont=bf]{caption}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc}
+\usepackage[colorlinks=true,linkcolor=black,citecolor={blue!55!black},urlcolor={blue!55!black}]{hyperref}
+\setlist{nosep,leftmargin=1.4em}
+% Double-anonymized build (IJF): fintwin_anon.tex defines \anonbuild before \input{fintwin}
+\newif\ifanon\anonfalse
+\ifdefined\anonbuild\anontrue\fi
+\ifanon\setstretch{1.9}\else\setstretch{1.15}\fi
+\newcommand{\selfcitep}{\ifanon\citep{anon2026}\else\citep{dimakopoulos2026}\fi}
+\input{numbers.tex}
+\input{research_numbers.tex}
+\input{rev3_numbers.tex}
+\newcommand{\twin}{FinTwin}
+
+\renewcommand{\thesection}{S\arabic{section}}
+\renewcommand{\thetable}{S\arabic{table}}
+\renewcommand{\thefigure}{S\arabic{figure}}
+\begin{document}
+\begin{center}\Large Online supplementary material\\[4pt]\large Does Filing-Based Cash-Flow Simulation Beat Persistence?\end{center}
+\noindent This supplement reports material of the earlier evaluation of the simulator that is secondary to the paper. Unless a caption says otherwise, it uses v3 with walk-forward hyper-parameters on the frozen snapshot.
+\input{sections/supplement.tex}
+\bibliographystyle{elsarticle-harv}
+\bibliography{references}
+\end{document}

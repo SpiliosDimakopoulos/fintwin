@@ -19,6 +19,6 @@ so the bundle is ready if the paper is ever submitted to arXiv, SSRN or a journa
 
 **Title:** Does Filing-Based Cash-Flow Simulation Beat Persistence? A Benchmark with Committed Decision Rules on a Survivorship-Free Panel of SEC Filers
 
-**Keywords:** forecast evaluation; cash-flow forecasting; density forecasts; stress testing; forecast encompassing; corporate liquidity; XBRL
+**Keywords:** forecast evaluation; density forecasts; model confidence set; stress testing; forecast encompassing; corporate liquidity; XBRL
 
 **JEL:** C53, G17, G32, G33, M41
