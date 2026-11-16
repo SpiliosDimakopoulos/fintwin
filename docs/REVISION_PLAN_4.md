@@ -200,3 +200,18 @@ says that these tests were specified after the results of plan 3 were known.
    alone has fewer, so ML1's test years are 2018–2024 (G = 7), and its combination is tested from 2021. This
    follows from the plan-3 rule. No change.
 3. **Nothing else** is changed or re-run.
+
+## Addendum 3 (2026-11-16, after the first P4 results and an independent second-round check)
+1. **Correction of addendum 1.** Addendum 1 says the simulations were running. At that time the launcher was only
+   waiting for a server. The P4 simulations ran from 04:30 to 05:37 on 16-11-2026, under the code committed at
+   01:29 (cbb41c7). `plan4_run.py` is byte-identical to that commit. `plan4.py` differs only by the addendum-2 fix
+   and the items below.
+2. **Statistics the plan lists that the first run did not compute.** They are computed now, with the P4-1 rerun:
+   - the randomization test over years for T1's encompassing coefficient (exact sign flips of the per-year
+     coefficients) and for the combination gain (per-year mean gains), P4-4 (ii);
+   - the count, by cutoff, of firm-years whose plan-3 opening regime equals the real-time one, P4-8.
+3. **Descriptive additions, asked for by the check.** They compute nothing new about the confirmatory tests:
+   - the P4-1 medians and means on the common firm-years of all four unconditional forecasts;
+   - the simulator against R2u, and R2u against R1u;
+   - the simulator's mean error on the whole common frame of P4-5.
+4. **OpenTimestamps.** The proofs are upgraded on the server; the upgraded proofs are committed.

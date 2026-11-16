@@ -871,6 +871,98 @@ def p49(frames: dict[str, pd.DataFrame]) -> dict:
     return out
 
 
+# ---------------------------------------------------------------- addendum 3: statistics the plan lists, missing in the first run
+def p4_extras(root: Path, df: pd.DataFrame, u: pd.DataFrame) -> dict:
+    out: dict = {}
+    # P4-1 on the common firm-years of all four unconditional forecasts, and the simulator against R2u
+    d = df.merge(u, on=["ticker", "year"], how="inner").reset_index(drop=True)
+    real = d["real_cfo"].to_numpy(float)
+    revsum = d["revsum"].to_numpy(float)
+    m16, m4 = d["N3_cfo"].to_numpy(float) / revsum, d["N1_cfo"].to_numpy(float) / revsum
+    F = {
+        "T1u": d["T1u_cfo"].to_numpy(float),
+        "R1u": m16 * 200.0,
+        "R2u": m16 * d["u_rev_med"].to_numpy(float),
+        "R3u": m4 * 200.0,
+    }
+    yrs, firms = d["year"].to_numpy(int), unit(d).to_numpy()
+    tm = np.isin(yrs, TEST_YEARS) & np.isfinite(real) & np.all([np.isfinite(f) for f in F.values()], axis=0)
+    out["p41_common"] = {
+        "n": int(tm.sum()),
+        **{
+            k: {
+                "median_ae": float(np.median(np.abs(f[tm] - real[tm]))),
+                "mean_ae": float(np.mean(np.abs(f[tm] - real[tm]))),
+            }
+            for k, f in F.items()
+        },
+    }
+    out["p41_T1u_vs_R2u"] = pointwise_test(F["T1u"][tm], F["R2u"][tm], real[tm], yrs[tm], firms[tm])
+    out["p41_R2u_vs_R1u"] = pointwise_test(F["R2u"][tm], F["R1u"][tm], real[tm], yrs[tm], firms[tm])
+    # P4-4 (ii): randomization over years for T1's encompassing coefficient (per-year coefficients) and the gain
+    r = df["real_cfo"].to_numpy(float)
+    y_all = df["year"].to_numpy(int)
+    cols = ("T1", "N3", "N4", "N6")
+    ok = np.isfinite(r) & df[[f"{k}_cfo" for k in cols]].notna().all(1).to_numpy()
+    lo, hi = np.nanpercentile(r[ok], [1, 99])
+    coefs = []
+    for y in sorted(set(y_all[ok].tolist())):
+        mm = ok & (y_all == y)
+        X = np.column_stack([np.ones(mm.sum())] + [np.clip(df[f"{k}_cfo"].to_numpy(float)[mm], lo, hi) for k in cols])
+        beta, *_ = np.linalg.lstsq(X, np.clip(r[mm], lo, hi), rcond=None)
+        coefs.append(float(beta[1]))
+    out["p44_encompassing_by_year"] = {
+        "coefs": coefs,
+        "randomization_p": randomization_p(np.array(coefs)),
+        "positive": int(np.sum(np.array(coefs) > 0)),
+        "G": len(coefs),
+    }
+    c = combine(df["N3_cfo"].to_numpy(float), df["T1_cfo"].to_numpy(float), r, y_all)
+    if "_pred" in c:
+        n3 = df["N3_cfo"].to_numpy(float)
+        lo_y = {
+            y: np.percentile(r[(y_all <= y - LAG) & np.isfinite(r)], [1, 99])
+            for y in TEST_YEARS
+            if ((y_all <= y - LAG) & np.isfinite(r)).sum() >= 20
+        }
+        per = []
+        for y in sorted(lo_y):
+            mm = (y_all == y) & np.isfinite(c["_pred"]) & np.isfinite(r) & np.isfinite(n3)
+            if not mm.any():
+                continue
+            a_, b_ = lo_y[y]
+            e_c = np.abs(np.clip(c["_pred"][mm], a_, b_) - np.clip(r[mm], a_, b_))
+            e_b = np.abs(np.clip(n3[mm], a_, b_) - np.clip(r[mm], a_, b_))
+            per.append(float(e_c.mean() - e_b.mean()))
+        out["p44_gain_by_year"] = {
+            "diffs": per,
+            "randomization_p": randomization_p(np.array(per)),
+            "negative": int(np.sum(np.array(per) < 0)),
+            "G": len(per),
+        }
+    # P4-8: cutoffs whose plan-3 opening regime equals the real-time one (look-ahead zero by construction)
+    cnt: dict[int, list[int]] = {}
+    for f in sorted((root / "research" / "v3-wf").glob("*.json")):
+        rr = json.loads(f.read_text(encoding="utf-8"))
+        for pr in rr.get("panel", []):
+            rt, st0 = pr.get("rec_realtime"), pr.get("rec_state0")
+            if rt is None or st0 is None:
+                continue
+            y = int(pr["origin"][:4])
+            cnt.setdefault(y, [0, 0])
+            cnt[y][0] += 1
+            cnt[y][1] += int(float(st0) != (1.0 if rt else 0.0))
+    out["p48_by_year"] = {str(y): {"n": v[0], "differs": v[1]} for y, v in sorted(cnt.items())}
+    # P4-5: the simulator's mean error on the whole common frame, for the near-zero comparison
+    common = np.isfinite(r) & df[[f"{k}_cfo" for k in T.MODELS]].notna().all(1).to_numpy()
+    out["p45_common_mean"] = {
+        "n": int(common.sum()),
+        "T1": float(np.mean(np.abs(df["T1_cfo"].to_numpy(float)[common] - r[common]))),
+        "N3": float(np.mean(np.abs(df["N3_cfo"].to_numpy(float)[common] - r[common]))),
+    }
+    return out
+
+
 # ---------------------------------------------------------------- main
 def _dens_q(panel: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
     """Attach the conditional density quantiles (plan-3 levels) of T1 to the transmission frame."""
