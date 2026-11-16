@@ -186,3 +186,17 @@ says that these tests were specified after the results of plan 3 were known.
    `fintwin/research/plan4.py`, so that the frames, exclusions and firm-years are those of the paper.
 5. **CRPS from quantiles.** CRPS(F, y) ≈ (2/K) Σ_k ρ_τk(y − q_τk) over the K stored levels. The same formula is
    used for every forecaster in a comparison.
+
+## Addendum 2 (2026-11-16, after the first P4 results were read)
+1. **Bug in P4-1 (density test B and combination).** The code restricted the firm-years to the test years
+   (2017–2024) *before* fitting the rival and choosing the combination weight. Both were therefore trained only on
+   2017+ cutoffs, and the test years shrank to 2020–2024. The plan says earlier cutoffs train the rivals. The fix
+   trains on all cutoffs ≤ Y−3 and tests on 2017–2024, as specified.
+   - The first (buggy) results had been read: test B failed (CRPS 21.7 against 15.7, 5 years) and the combination
+     gain was 3.6% under winsorized MAE.
+   - The paper reports the corrected run and gives the buggy figures in a footnote.
+   - Test A trains nothing and is unaffected.
+2. **ML1's first test year.** ML1 needs 500 training firm-years (the plan-3 walk-forward rule). The cutoff 2014
+   alone has fewer, so ML1's test years are 2018–2024 (G = 7), and its combination is tested from 2021. This
+   follows from the plan-3 rule. No change.
+3. **Nothing else** is changed or re-run.
