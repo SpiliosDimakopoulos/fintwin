@@ -327,3 +327,151 @@ The CRPS and shortfall tests of plan 3, repeated for v4a, v4p and v4t on the sam
 2. **T1 labelling.** The author labels the 200 validation filings alone. The labels are frozen, committed and
    timestamped before the extractor is run on them.
 3. **P5-8 archive.** The archive starts with the first weekly build after this plan's run.
+
+
+---
+
+# Addendum 1 (18-11-2026): implementation choices the plan left open
+
+Written during implementation and after an independent review of the code freeze, before any plan-5 run or statistic. The code is commit 993aca0. The D4 probe result will be recorded in addendum 2, before the full run.
+
+### Model (v4a, v4b)
+
+- **G3 (liquidity).**
+  - Only dividends are smoothed. Buybacks and capex keep their existing binary trigger.
+  - The paid share is clip(ICR/2.5, 0, 1) × clip(cash / (1.5 × floor), 0, 1). The cash ramp is linear from 0 at zero
+    cash to 1 at 1.5 × the floor.
+  - A missing ICR pays 0, consistent with G8.
+  - The existing M5 floor is kept.
+  - The cash-target fraction is the assumption `cash_target_frac`: 0.40 in the main rung, 0.30 and 0.45 in the
+    sensitivity analysis.
+- **G5 (dividend run-rate).**
+  - Each quarter is compared with the original values of the other three quarters.
+  - A missing quarter is dropped, so the run-rate is the mean of the quarters that are reported.
+- **G6 (acquisitions and divestitures).**
+  - A deal counts in a quarter when it exceeds 10% of the four-quarter revenue ending in that quarter.
+  - Tags read for the deals:
+    - `PaymentsToAcquireBusinessesNetOfCashAcquired`, with `PaymentsToAcquireBusinessesGross` as fallback;
+    - `ProceedsFromDivestitureOfBusinessesNetOfCashDivested`, with `ProceedsFromDivestitureOfBusinesses` as fallback.
+  - When the flag is on, fixed costs scale with deseasonalized revenue, F × rev_t / base_rev0.
+  - The scaling replaces the F3 path for that firm-year, so the G7 bound does not apply to it.
+  - The flag is computed and stored in v3 and every later specification. The v2 dictionaries stay unchanged, because
+    they are covered by a parity golden.
+- **G7 (bound on the F3 adjustment).** The bound is set relative to the inflated calibrated value, F × (1+infl)^(t+1).
+- **G10 (negative interest expense).** It is applied in the data layer (`facts._normalise_signs`). Under G10 a
+  negative interest-expense quarter is read as its absolute value, instead of being set to missing.
+
+### Pooled parameters (v4p)
+
+- **Standard errors.**
+  - dso, dio, dpo: the quarterly s.d. over √n.
+  - capex_ratio, ocf_ratio: 1.2533 × the s.d. over √n, the asymptotic standard error of a median.
+  - bb_ratio: the s.d. of quarterly buybacks divided by mean quarterly FCF, over √n.
+  - refi_ratio: no standard error, so it is pooled with a fixed weight of 0.5.
+  - A standard error of exactly 0 (a constant ratio) keeps the firm's own value.
+- **The pooled quantity** is the parameter the model uses, taken after earlier rules such as F5's anchoring of
+  ocf_ratio.
+- **Elasticity.** The pooled elasticity m sets the cost-split prior's fixed share to 1 − m, clipped to [0, 0.95].
+- **Industry.** The industry is the Fama–French 12 industry of the research universe. Firms with an unknown industry
+  use the all-firm prior.
+- **Table.** The table is built from the v4b first-pass panel rows, using cutoffs ≤ Y−3, with at least 30 firm-years
+  per industry.
+
+### Filing text (v4t)
+
+- **Documents.**
+  - Amendments (10-K/A, 10-Q/A) are excluded.
+  - There is no age limit on the latest 10-K before the cutoff; the 10-Qs after it are added.
+- **Sections.** T1 reads only the MD&A and Risk Factors sections.
+- **The dividend feature** counts suspension and initiation as one unit, with the sign carried separately.
+- **Plain-text (non-HTML) filings** keep their hard line wraps.
+- **Extractor lock.**
+  - The extractor fingerprint is locked together with the text-snapshot digest.
+  - The extractor was frozen on 18-11-2026, before any filing was downloaded. Its fingerprint is `b392e579…`, and the
+    lock is in `engine/p5_inputs/extractor.lock.json`.
+- **T1 in the twin.**
+  - **Restructuring.** An announced restructuring cost is added as a one-off cost in the first simulated quarter.
+  - **Market access.**
+    - When the filings contain going-concern language, opening market access is 0.5. When they report a covenant
+      breach or waiver, it is 0.75.
+    - The going-concern value prevails when both apply.
+    - Access returns linearly to normal over four quarters.
+  - **Acquisitions.** An acquisition or divestiture stated in the text turns on G6's scaling, unless an explicit
+    override is given.
+- **T2 in the twin.**
+  - **Margin label.** The realized eight-quarter CFO margin minus the trailing 16-quarter CFO margin, in points of
+    revenue.
+  - **Ridge.** Fit on standardized embeddings with penalty 10. It is not tuned. It needs at least 300 training
+    firm-years.
+  - **Effect on the twin.** The prediction moves the variable-cost ratio by −prediction/100, clipped to ±0.10.
+  - **The other two scores** (shortfall, petition) are built with the same rule in the analysis stage, for ML2 and the
+    Brier/AUC tests. They are not used in the twin.
+  - **Embedding unit.** One embedding per firm-year: the mean over the chunks of all its sections joined.
+- **Pool-only variant.** Each pooled parameter is set to the prior mean, and the cost split's τ is set to 1e-6, so the
+  elasticity equals the pooled one.
+
+### Outcomes and benchmarks (all specifications)
+
+- **O1 (untagged values).**
+  - A firm that never tags dividends in the vintage is a non-payer.
+  - A payer with an untagged quarter on either side of the cutoff has an unknown cut, not "no cut". Removals are
+    counted as `div_pre_untagged`, `div_post_untagged` and `fcf_untagged`.
+  - Buybacks keep the existing rule (zero only if never tagged).
+  - The legacy data layer keeps the old zero-fill.
+- **O3 (Ohlson deflator).**
+  - Uses GDPDEF (FRED, in `data/gdpdef.csv`) in place of Ohlson's GNP deflator.
+  - Applies a 60-day publication lag to today's revised series, so February cutoffs use the third quarter. Real-time
+    deflator vintages are not used.
+- **G2 (real-time recession).**
+  - The calibration passes the last known quarter-end as the regime's date. For the 2014–2024 cutoffs this gives the
+    same announced set as the cutoff.
+  - NBER turning points of 2001 were added to the table, as well as those of 2007–2009 and 2020.
+- **G6 hindsight side result.** `FINTWIN_MA_HINDSIGHT=1` adds the scaling for hindsight-flagged firm-years. Firm-years
+  flagged ex ante still scale under v4b.
+
+### Statistics
+
+- **S2 (Holm p-values).** The p-value is (1+k)/(B+1) from a recentred bootstrap, with B = 10,000 for the 17 secondary
+  tests.
+- **S3 (winsorization).** Early years with no training-year winsorization limits drop out, and their count is
+  reported.
+- **S4 (shrunk-margin rival).** The corrected rival also enters the SPA and model-confidence-set forecaster sets.
+- **S5 (abnormal burn).** The 16-quarter run-rate is the sum of (CFO − capex) over the 16 quarters before the cutoff,
+  divided by 16. It requires all 16 quarters, consecutive and reported. The outcome `abn16_cum8` is the cumulative
+  eight-quarter FCF minus eight times that run-rate, in % of trailing revenue.
+- **S8 (deferred corrections).**
+  - **R6:** floors the worst cumulative FCF at 0; the unfloored values are kept.
+  - **R13:** one log score, with probabilities clipped at 1e-4.
+  - **R16:** Sobol caps are counted in analysis code, because `assumption_sobol.py` is hashed into the shard digest.
+
+### After the code-freeze review (18-11-2026)
+
+- **Pre-specified selection tables are accepted by digest.**
+  - v3, v4a, v4b and the cash variants use rerun 5's v3 table, accepted by its digest `d20049b4d5b431d8`.
+  - v4t uses v4p's own table, accepted by the digest computed when it is written.
+  - Neither is checked against the grid stamp of another pass.
+- **Run stamps hash table contents.** The pool, text and selection tables enter the stamp by content, so a rebuilt
+  table never resumes old shards.
+- **Re-embedding rule.** A vintage must end before the cutoff of the test year it serves, whether that is the firm-year's
+  own year or a later year for which it is training data. A firm-year never serves an earlier test year.
+- **The vintage-difference control** stores every year under the 2024 vintage, in its own directory, named in
+  `control.json`. Both controls carry the T1 features of the filings as filed.
+- **Restructuring one-off.** It is capped at 10% of trailing revenue (4 × deseasonalized quarterly revenue). Savings
+  figures and multi-year totals cannot then dominate.
+- **G6 scope.** G6's revenue scaling applies only when realized revenue is given (the transmission test), as the plan
+  says. Unconditional runs do not use it.
+- **Elasticity.** It is v / median(costs/revenue), as the plan says.
+- **Pooling fallbacks.**
+  - The fixed 0.5 weight also applies when the prior's spread is 0 (e.g. an industry with a median inventory of 0), or
+    when the firm's standard error is undefined (e.g. bb_ratio when mean FCF ≤ 0).
+  - Before 2017 no pooled prior exists (no cutoff ≤ Y−3 with data). Those years run without one, and the panel row
+    records `pool_prior: null`.
+- **Downloads.** Filing download runs in one process, so that the SEC limit holds per client. It stops at the first
+  403.
+- **Embedding.** Each process holds one vintage in memory at a time. A vintage that does not load leaves T2 missing
+  for its test years, and the failure is recorded.
+- **Dry run.** The dry run lowers the T2 minimum training size to 50 firm-years, so that the T2 path runs. The full run
+  keeps 300.
+- **Reproduction check.** It also requires the ARM v3-wf run to cover at least 99% of rerun 5's firm-years.
+- **Dividend payers.** A firm counts as a payer when it paid dividends in the four quarters before the cutoff. A firm
+  that paid earlier but has four untagged quarters before the cutoff is a non-payer, and is counted.
