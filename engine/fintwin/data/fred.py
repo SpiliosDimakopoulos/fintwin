@@ -13,6 +13,11 @@ import pandas as pd
 from .edgar import FrozenMiss, fetch, fill_only, frozen, write_atomic
 
 VINTAGES = Path(__file__).with_name("gdp_vintages.csv")
+# FRED GDPDEF (GDP implicit price deflator, 2017 = 100, quarterly, observations dated at the quarter's start),
+# committed like the GDP vintages so frozen runs and tests need no fetch. Refresh: fred_series("GDPDEF") saved here.
+DEFLATOR = Path(__file__).with_name("gdpdef.csv")
+DEFLATOR_LAG = pd.Timedelta(days=60)  # a quarter's deflator is used 60 days after the quarter ends (advance release
+# about 30 days after; 59 in the 2019 shutdown)
 
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "fred"
 SERIES = {
@@ -69,13 +74,76 @@ def _vintages() -> pd.DataFrame | None:
     return pd.read_csv(VINTAGES, index_col=0) if VINTAGES.exists() else None
 
 
-def recession_regime(asof: str | None = None) -> dict:
+# NBER turning points and the dates they were announced (nber.org/research/business-cycle-dating): (turning-point
+# month, kind, announcement date), in date order. Every point whose announcement could fall after the first cutoffs
+# is listed; earlier points were all announced long before any cutoff, so today's USREC is their real-time history.
+NBER_ANNOUNCED = [
+    ("2001-03-01", "peak", "2001-11-26"),
+    ("2001-11-01", "trough", "2003-07-17"),
+    ("2007-12-01", "peak", "2008-12-01"),
+    ("2009-06-01", "trough", "2010-09-20"),
+    ("2020-02-01", "peak", "2020-06-08"),
+    ("2020-04-01", "trough", "2021-07-19"),
+]
+
+
+def _g2_active() -> bool:
+    from ..stochastic import spec as S  # imports nothing from fintwin: no cycle
+
+    return S.active("G2")
+
+
+def realtime_usrec(usrec: pd.Series, asof: str) -> pd.Series:
+    """USREC (monthly, 0/1) as a forecaster could know it on `asof` (REVISION_PLAN_5, G2).
+
+    Only turning points announced by `asof` are known. From the first unannounced turning point on, every month keeps
+    the regime the last announced point opened: USREC's own value in that point's month (0 in a peak month, 1 in a
+    trough month, FRED's convention), so a recession dated but not yet ended is still running at the cutoff.
+    """
+    t = pd.Timestamp(asof)
+    pending = [pd.Period(d, "M") for d, _, ann in NBER_ANNOUNCED if pd.Timestamp(ann) > t]
+    if not pending:
+        return usrec
+    first = min(pending)
+    months = usrec.index.to_period("M")
+    at_first = usrec[months == first]
+    if at_first.empty:  # the turning point lies after the series' end: nothing to override
+        return usrec
+    out = usrec.copy()
+    out[months > first] = float(at_first.iloc[0])
+    return out
+
+
+@lru_cache(maxsize=1)
+def _deflator() -> pd.Series:
+    df = pd.read_csv(DEFLATOR)
+    s = pd.Series(pd.to_numeric(df.iloc[:, 1], errors="coerce").to_numpy(), index=pd.to_datetime(df.iloc[:, 0]))
+    return s.dropna().resample("QE").last().dropna()
+
+
+def deflator_to_2014(asof: str | None) -> float:
+    """Factor turning dollars of the cutoff into 2014 dollars: the 2014 average GDP deflator over the latest one
+    published by `asof` (today's revised values; no vintage file exists for the deflator). The 2014 level is a fixed
+    base, a unit choice, not information about the cutoff. `asof=None`: the latest value."""
+    d = _deflator()
+    base = float(d[d.index.year == 2014].mean())
+    known = d if asof is None else d[d.index + DEFLATOR_LAG <= pd.Timestamp(asof)]
+    if known.empty:
+        raise ValueError(f"no GDP deflator published by {asof}")
+    return base / float(known.iloc[-1])
+
+
+def recession_regime(asof: str | None = None, realtime: bool | None = None) -> dict:
     """Markov recession regime from NBER-dated US recessions (FRED USREC) and nominal GDP, post-1947.
 
     Returns quarterly entry hazard, exit probability, the nominal-GDP growth shortfall per recession quarter,
     whether the economy is in recession at `asof`, and quarterly YoY nominal GDP growth for beta estimation.
+    `realtime` (default: fix G2 of the active specification) uses only the turning points announced by `asof`.
     """
-    rec = (fred_series("USREC") * 100).resample("QE").max()
+    usrec = fred_series("USREC") * 100
+    if asof and (_g2_active() if realtime is None else realtime):
+        usrec = realtime_usrec(usrec, asof)
+    rec = usrec.resample("QE").max()
     gdp = (fred_series("GDP") * 100).resample("QE").last()
     vint = gdp_vintage(asof) if asof else None
     if vint is not None:  # point in time: the GDP history as it was published on the cutoff, not today's revision

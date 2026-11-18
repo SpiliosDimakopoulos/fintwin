@@ -58,6 +58,27 @@ def cross_spec(a: str, b: str) -> dict:
     return res
 
 
+REPRO_MEDIAN_MAX = 0.05  # REVISION_PLAN_5: median |difference| of firm-year errors, points of revenue
+REPRO_SHARE_MAX = 0.01  # share of firm-years differing by more than REPRO_LARGE
+REPRO_LARGE = 0.5
+
+
+def reproduce(name: str, reference: Path) -> dict:
+    """REVISION_PLAN_5 "Platform": the ARM v3-wf firm-year errors against rerun 5's (x86), on the common firm-years."""
+    mine = pd.read_csv(M.ROOT / "_results" / f"{name}_cfo_errors.csv", dtype={"ticker": str})
+    ref = pd.read_csv(reference, dtype={"ticker": str})
+    j = mine.merge(ref, on=["ticker", "year"], suffixes=("", "_ref"))
+    d = (j["abs_e"] - j["abs_e_ref"]).abs()
+    med = float(d.median()) if len(d) else float("nan")
+    share = float((d > REPRO_LARGE).mean()) if len(d) else float("nan")
+    return {
+        "name": name, "n_common": int(len(j)), "n_mine": int(len(mine)), "n_reference": int(len(ref)),
+        "median_abs_diff": med, "share_large": share,
+        # and the ARM run must cover the reference's firm-years (a lost firm-year is not a reproduced one)
+        "pass": bool(len(j) >= 0.99 * len(ref) and med <= REPRO_MEDIAN_MAX and share <= REPRO_SHARE_MAX),
+    }
+
+
 def main(argv: list[str]) -> None:
     pos, opt = M._opts(argv)
     limit = int(opt["limit"]) if "limit" in opt else None
@@ -75,5 +96,10 @@ def main(argv: list[str]) -> None:
         print(json.dumps(F.summary(fam)), "->", out)
     elif cmd == "cross-spec":  # cross-spec CANDIDATE REFERENCE, e.g. v3-wf v2-pre (each after its own `stats`)
         cross_spec(pos[1], pos[2])
+    elif cmd == "reproduce":  # reproduce NAME REFERENCE_CSV: REVISION_PLAN_5's platform check (exit 1 if it fails)
+        res = reproduce(pos[1], Path(pos[2]))
+        print(json.dumps(res))
+        if not res["pass"]:
+            raise SystemExit(1)
     else:
         raise SystemExit(f"unknown command {cmd}")

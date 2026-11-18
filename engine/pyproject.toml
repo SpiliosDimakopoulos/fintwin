@@ -38,6 +38,12 @@ api = ["fastapi>=0.110", "uvicorn>=0.29"]
 ai = [
     "anthropic>=0.70",
 ]
+# T2 filing-text embeddings (ChronoBERT), server only (scripts/text_probe.py, research/text_features.embed)
+text = [
+    "transformers==4.57.1",
+    "torch==2.9.1",
+    "huggingface-hub>=0.34,<1.0",
+]
 
 [dependency-groups]
 dev = [

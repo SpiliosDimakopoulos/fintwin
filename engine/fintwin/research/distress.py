@@ -18,7 +18,7 @@ from . import stats as S
 from .units import cluster_of, unit
 
 DATA = S.DATA
-EPS_LOG = 1e-4  # probabilities are clipped to [EPS_LOG, 1 - EPS_LOG] for the log score: 500-2000 paths give exact 0s
+EPS_LOG = S.EPS_LOG  # the log score's clip, defined once in stats (QUALITY_PLAN R13)
 
 
 def _risk(df: pd.DataFrame, health: str, pb: str | None) -> pd.DataFrame:
@@ -35,7 +35,11 @@ def _weak(df: pd.DataFrame, by: str | None) -> np.ndarray:
     return ((z <= q) | (df["fcf_margin"].astype(float) < 0)).to_numpy()
 
 
-def auc_table(df: pd.DataFrame, y: np.ndarray, R: pd.DataFrame, firms: np.ndarray | None, b: int) -> dict:
+def auc_table(
+    df: pd.DataFrame, y: np.ndarray, R: pd.DataFrame, firms: np.ndarray | None, b: int, holm: bool = False
+) -> dict:
+    """`holm`: the twin-minus-formula comparison, a member of the secondary Holm family, is also bootstrapped with
+    S.B_HOLM resamples (`twin_minus_holm`, plan 5 S2); `twin_minus` keeps b resamples (H1 reads its interval)."""
     out: dict = {"n": int(np.isfinite(y).sum()), "events": int(np.nansum(y)), "predictors": {}}
     twin = R["twin"].to_numpy(float)
     for k in R.columns:
@@ -50,6 +54,8 @@ def auc_table(df: pd.DataFrame, y: np.ndarray, R: pd.DataFrame, firms: np.ndarra
             "n_events": int(y[m].sum()),
             "twin_minus": None if k == "twin" else S.paired(S.auc, twin, x, y, firms, b),
         }
+        if holm and k == "formula":
+            out["predictors"][k]["twin_minus_holm"] = S.paired_holm(S.auc, twin, x, y, firms)
     return out
 
 
@@ -74,9 +80,11 @@ def bankruptcy_panel(p: pd.DataFrame, b: int) -> dict:
     firms = unit(df).to_numpy()
     R = _risk(df, "h_base", "pb_base")
     R["twin_rec"] = -df["h_rec"].astype(float)
-    out: dict = {"all": auc_table(df, y, R, firms, b)}
+    out: dict = {"all": auc_table(df, y, R, firms, b, holm=True)}
     weak = _weak(df, "year")
-    out["weak"] = auc_table(df[weak].reset_index(drop=True), y[weak], R[weak].reset_index(drop=True), firms[weak], b)
+    out["weak"] = auc_table(
+        df[weak].reset_index(drop=True), y[weak], R[weak].reset_index(drop=True), firms[weak], b, holm=True
+    )
     out["weak"]["share_of_events"] = float(y[weak].sum() / max(y.sum(), 1))
     out["distinct_firms"] = int(df.loc[y == 1, "ticker"].nunique())
     y4 = df["y_bk4"].to_numpy(float) if "y_bk4" in df else np.full(len(df), np.nan)
@@ -118,6 +126,27 @@ def exposure_regression(sev, depth, twin, fcf, formula, cluster) -> dict:
         k: {"coef": float(m2.params[k]), "t": float(m2.tvalues[k])} for k in ("exp", "twin", "fcf", "formula")
     }
     out["n_clusters"] = int(d["g"].nunique())
+    # plan 5, S5 (same firm-years): the univariate rank correlations, then each control added one at a time to the
+    # twin at the shock and to the shock alone (HC3, as `pre_specified`)
+    out["univariate"] = {
+        k: S.rho(d[k].to_numpy(float), d["y"].to_numpy(float)) for k in ("exp", "twin", "fcf", "formula")
+    }
+    ladder: dict = {}
+    for focus in ("twin", "exp"):
+        for ctrl in (None, "exp", "fcf", "formula", "twin"):
+            if ctrl == focus:
+                continue
+            cols = [focus] if ctrl is None else [focus, ctrl]
+            try:
+                mm = sm.OLS(d["y"], sm.add_constant(d[cols])).fit(cov_type="HC3")
+                ladder[f"{focus}|{ctrl or 'alone'}"] = {
+                    "coef": float(mm.params[focus]),
+                    "t": float(mm.tvalues[focus]),
+                    "r2": float(mm.rsquared),
+                }
+            except Exception as e:  # noqa: BLE001
+                ladder[f"{focus}|{ctrl or 'alone'}"] = {"error": f"{type(e).__name__}: {e}"}
+    out["one_control_at_a_time"] = ladder
     return out
 
 
@@ -191,18 +220,8 @@ def _ok(p: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return np.clip(p[m], 0.0, 1.0), y[m]
 
 
-def brier(p: np.ndarray, y: np.ndarray) -> float:
-    p, y = _ok(p, y)
-    return float(np.mean((p - y) ** 2)) if len(y) else np.nan
-
-
-def log_score(p: np.ndarray, y: np.ndarray) -> float:
-    """Mean negative log likelihood (lower is better)."""
-    p, y = _ok(p, y)
-    if not len(y):
-        return np.nan
-    p = np.clip(p, EPS_LOG, 1 - EPS_LOG)
-    return float(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
+brier = S.brier  # one definition of each score (QUALITY_PLAN R13)
+log_score = S.log_score
 
 
 def murphy(p: np.ndarray, y: np.ndarray, bins: int = 10) -> dict:

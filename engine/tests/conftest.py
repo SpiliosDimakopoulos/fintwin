@@ -11,6 +11,7 @@ import fintwin.stochastic.calibrate as calibrate_mod
 # Small bootstraps in tests: the research defaults (B = 10,000 for the test family) take minutes.
 os.environ.setdefault("FINTWIN_B_FAMILY", "200")
 os.environ.setdefault("FINTWIN_B_LAD", "20")
+os.environ.setdefault("FINTWIN_B_HOLM", "200")
 
 # CI runs the property tests on a fixed example sequence (HYPOTHESIS_PROFILE=ci), so a failure reproduces anywhere.
 settings.register_profile("ci", derandomize=True)
@@ -20,6 +21,14 @@ _SWITCHES = (
     "FINTWIN_SPEC",
     "FINTWIN_FIXES",
     "FINTWIN_SELECTION",
+    "FINTWIN_MA_HINDSIGHT",
+    "FINTWIN_POOL",
+    "FINTWIN_TEXT",
+    "FINTWIN_CASH_TARGET",
+    "FINTWIN_POOL_ONLY",
+    "FINTWIN_TEXT_VARIANT",
+    "FINTWIN_SELECTION_DIGEST",
+    "FINTWIN_TEXT_MIN_TRAIN",
     "FINTWIN_DATA_LEGACY",
     "FINTWIN_FROZEN",
     "FINTWIN_FILL_ONLY",

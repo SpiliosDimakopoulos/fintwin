@@ -131,15 +131,31 @@ RUN_ONLY_ENV = frozenset(
 )
 
 
+# switches whose value is a path to a table: they enter the stamp by the table's content, not the machine's path
+BY_CONTENT_ENV = ("FINTWIN_SELECTION", "FINTWIN_POOL", "FINTWIN_TEXT")
+
+
+def _table_digest(path: str) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+
+
 def _env_hash(with_selection: bool = True) -> hashlib._Hash:
     h = hashlib.sha256(_code_digest().encode())
     for k in sorted(os.environ):
         # FINTWIN_SELECTION enters by content below, not by its (machine-specific) absolute path
-        if k.startswith("FINTWIN_") and k not in RUN_ONLY_ENV and k != "FINTWIN_SELECTION":
+        if k.startswith("FINTWIN_") and k not in RUN_ONLY_ENV and k not in BY_CONTENT_ENV:
             h.update(f"{k}={os.environ[k]}".encode())
     sel = os.environ.get("FINTWIN_SELECTION")
     if with_selection and sel and Path(sel).exists():
         h.update(Path(sel).read_bytes())
+    # REVISION_PLAN_5 tables enter by content too: a rebuilt pool or text table never resumes old shards
+    pool = os.environ.get("FINTWIN_POOL")
+    if pool and Path(pool).exists():
+        h.update(b"pool:" + Path(pool).read_bytes())
+    text = os.environ.get("FINTWIN_TEXT")
+    if text:
+        t = Path(text) / "table.json"
+        h.update(b"text:" + (t.read_bytes() if t.exists() else b"none"))
     return h
 
 
@@ -240,7 +256,12 @@ def shard(i: int, n: int, limit: int | None = None, years: set[int] | None = Non
     keys = dry_tickers(limit) if limit is not None else research_tickers()
     run = run_record(limit, years)
     sel = os.environ.get("FINTWIN_SELECTION")
-    if sel:
+    fixed = os.environ.get("FINTWIN_SELECTION_DIGEST")
+    if sel and fixed:  # REVISION_PLAN_5: a pre-specified table from another pass (v3's for v4a/v4b, v4p's for v4t),
+        # accepted by its digest instead of the grid stamp; any other content is refused
+        if _table_digest(sel) != fixed:
+            raise SystemExit(f"selection table {sel} has digest {_table_digest(sel)}, the run expects {fixed}")
+    elif sel:
         made_from = json.loads(Path(sel).read_text(encoding="utf-8")).get("_grid_stamp")
         if made_from != grid_stamp():  # a table from another grid pass (an earlier code, a lost server): this pass
             # is skipped, not run on it; `select` rebuilds the table and `stats` refuses an incomplete "-wf" run
@@ -308,6 +329,60 @@ def check_run(d: Path, limit: int | None = None, years: set[int] | None = None) 
     if len(files) != expected:
         raise SystemExit(f"{len(files)} shards in {d}, expected {expected}: the run is incomplete")
     return files
+
+
+def pool(limit: int | None = None, years: set[int] | None = None) -> Path:
+    """REVISION_PLAN_5 P1: walk-forward pooled priors from this spec's complete first pass (v4b), written next to the
+    selection table as `pool_<tag>.json`; the v4p passes read it through FINTWIN_POOL."""
+    from .pooling import pool_table, write
+
+    tag = run_tag(limit, years)
+    d = spec_dir(tag)
+    check_run(d, limit, years)
+    rows = []
+    for f in sorted(d.glob("*.json")):
+        rows += [r for r in json.loads(f.read_text(encoding="utf-8")).get("panel", []) if r.get("pool_inputs")]
+    if not rows:
+        raise SystemExit(f"no panel row in {d} records pool_inputs: run a plan-5 spec (v4b) first")
+    table = pool_table(rows)
+    from .experiments import spec_label
+
+    path = selection_path(tag=tag).with_name(f"pool_{spec_label()}{tag}.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write(table, path)
+    print(json.dumps({"n_rows": table["n_rows"], "years": sorted(table["prior"])}))
+    return path
+
+
+def text_table(limit: int | None = None, years: set[int] | None = None) -> Path:
+    """REVISION_PLAN_5 T2: the walk-forward ridge of the margin score, trained on this spec's complete pass (v4p-wf)
+    and the embeddings under FINTWIN_TEXT; written to FINTWIN_TEXT/table.json for the v4t pass."""
+    from .text_stage import build_table, root
+
+    base = root()
+    if base is None:
+        raise SystemExit("FINTWIN_TEXT is not set")
+    tag = run_tag(limit, years)
+    d = spec_dir(tag)
+    check_run(d, limit, years)
+    rows = []
+    for f in sorted(d.glob("*.json")):
+        shard = json.loads(f.read_text(encoding="utf-8"))
+        for r in shard.get("panel", []):
+            r = {**r, "cik": r.get("cik") or shard.get("cik")}
+            st = r.get("structural") or {}
+            m16 = (st.get("m") or {}).get("cfo16")
+            if st.get("real_cfo") is None or st.get("rev") is None or m16 is None or r.get("cik") is None:
+                continue
+            rev = float(np.sum(st["rev"]))
+            if rev > 0:  # realized 8-quarter CFO margin minus the trailing 16-quarter margin, points of revenue
+                rows.append({"cik": r["cik"], "origin": r["origin"],
+                             "t2_margin": float(np.sum(st["real_cfo"])) / rev * 100 - 100 * float(m16)})
+    table = build_table(base, rows, sorted({int(str(r["origin"])[:4]) for r in rows} | set(range(2014, 2025))))
+    path = base / "table.json"
+    path.write_text(json.dumps(table), encoding="utf-8")
+    print(json.dumps({"n_rows": len(rows), "years": {y: e.get("n_train") for y, e in table["years"].items()}}))
+    return path
 
 
 def select(limit: int | None = None, years: set[int] | None = None) -> Path:
@@ -379,6 +454,10 @@ def main(argv: list[str]) -> None:
         shard(int(pos[1]), int(pos[2]), limit, years)
     elif cmd == "select":
         select(limit, years)
+    elif cmd == "pool":
+        pool(limit, years)
+    elif cmd == "text-table":
+        text_table(limit, years)
     elif cmd == "ladder":
         extra = [
             *(["--limit", str(limit)] if limit is not None else []),

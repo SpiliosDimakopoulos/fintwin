@@ -151,6 +151,57 @@ TAU_GRID = (0.05, 0.10, 0.15, 0.25, 0.50, 1.0, float("inf"))
 FIXED_ADJ_LAMBDA = 0.2
 LAMBDA_GRID = (0.0, 0.1, 0.2, 0.3, 0.5)
 MA_THRESHOLD = 0.05  # acquisitions over the last 8 quarters above 5% of revenue flag the firm as an acquirer
+# REVISION_PLAN_5 G3: the treasury's cash target as a share of opening cash (60% before G3). The plan's sensitivity
+# analysis runs 0.30 and 0.45 through the assumption "cash_target_frac".
+CASH_TARGET_FRAC_V2 = 0.6
+CASH_TARGET_FRAC_G3 = 0.4
+# REVISION_PLAN_5 G6: acquisition / divestiture flag over the last eight quarters
+G6_QUARTERS = 8
+G6_DEAL_SHARE = 0.10  # a deal above 10% of trailing (four-quarter) revenue
+G6_JUMP = 0.25  # revenue and total assets both move more than 25% quarter on quarter
+
+
+def acquisition_flag(q: pd.DataFrame, n: int = G6_QUARTERS) -> dict:
+    """REVISION_PLAN_5 G6 flag on the last `n` rows of a quarterly frame, with its components.
+
+    Pass the history up to the cutoff for the ex-ante flag, or the frame through the outcome quarters for the
+    hindsight variant. A quarter counts when acquisitions (net of cash acquired, column ``acquisitions``) or
+    divestiture proceeds (``divestitures``) exceed 10% of the four-quarter revenue ending in that quarter, or when
+    revenue and total assets both change by more than 25% q/q. A deal component is None when its column is absent."""
+    rev = q["revenue"].astype(float)
+    ttm = rev.rolling(4, min_periods=4).sum()
+    out: dict = {}
+    for col, key in (("acquisitions", "acq"), ("divestitures", "div")):
+        if col in q:
+            share = (q[col].astype(float).clip(lower=0) / ttm.where(ttm > 0)).tail(n)
+            out[f"g6_{key}_share_max"] = float(share.max()) if share.notna().any() else 0.0
+        else:
+            out[f"g6_{key}_share_max"] = None
+    rq = (rev / rev.shift(1) - 1).abs()
+    aq = (q["assets"].astype(float) / q["assets"].astype(float).shift(1) - 1).abs() if "assets" in q else rq * np.nan
+    out["g6_jump_quarters"] = int(((rq > G6_JUMP) & (aq > G6_JUMP)).tail(n).sum())
+    out["g6_flag"] = float(
+        any(out[k] is not None and out[k] > G6_DEAL_SHARE for k in ("g6_acq_share_max", "g6_div_share_max"))
+        or out["g6_jump_quarters"] > 0
+    )
+    return out
+
+
+def _dividend_run_rate(d: pd.Series) -> float:
+    """REVISION_PLAN_5 G5: trailing four-quarter dividends / 4, a quarter above 3x the median of the other quarters
+    replaced by that median (each quarter judged against the original values). Missing quarters are left out, so
+    with k < 4 reported quarters the run-rate is their mean (the plan's sum / 4 with the missing quarters at it)."""
+    x = d.tail(4).dropna().to_numpy(float)
+    if not len(x):
+        return 0.0
+    if len(x) == 1:
+        return float(x[0])
+    y = x.copy()
+    for i in range(len(x)):
+        med = float(np.median(np.delete(x, i)))
+        if x[i] > 3.0 * med:
+            y[i] = med
+    return float(y.mean())
 N_PARAM_DRAWS = 50  # MM-F9: parameter vectors per firm (one per block of paths)
 # M2 assumption: share of debt at floating rates by sector when no XBRL tag reports it (GICS and Fama-French 12
 # names). Rough midpoints: utilities and staples fund with fixed-rate bonds, real estate and leveraged cyclicals use
@@ -495,7 +546,66 @@ ASSUMPTIONS = {
     "t_df_pooled": None,  # MM-F7 panel df to shrink the firm's df toward (research supplies it walk-forward)
     "t_df_pool_weight": 0.5,
     "n_param_draws": N_PARAM_DRAWS,  # MM-F9
+    # REVISION_PLAN_5 keys, read only when their switch is active
+    "cash_target_frac": CASH_TARGET_FRAC_G3,  # G3 cash target / opening cash (sensitivity: 0.30, 0.45)
+    "ma_scale": None,  # G6: None = the ex-ante flag; True / False imposes one (e.g. the hindsight flag)
 }
+
+
+# REVISION_PLAN_5 T1 (addendum 1): opening market access when the filings carry going-concern language or a covenant
+# breach / waiver, returning linearly to normal over four quarters
+TEXT_ACCESS_GOING_CONCERN = 0.5
+TEXT_ACCESS_COVENANT = 0.75
+TEXT_ONEOFF_CAP = 0.10  # an announced restructuring cost above 10% of trailing revenue is capped (savings, totals)
+POOLED = ("elast", "dso", "dio", "dpo", "capex_ratio", "ocf_ratio", "bb_ratio", "refi_ratio")
+POOL_FIXED_WEIGHT = 0.5  # REVISION_PLAN_5 P1: refi_ratio has no window standard error
+
+
+def _plan5() -> bool:
+    return any(S.active(f) for f in ("G2", "G3", "G6", "P1"))
+
+
+def _se_mean(x) -> float:
+    x = np.asarray(x, float)
+    x = x[np.isfinite(x)]
+    return float(np.std(x, ddof=1) / np.sqrt(len(x))) if len(x) >= 2 else np.nan
+
+
+def _se_median(x) -> float:
+    return 1.2533 * _se_mean(x)  # asymptotic s.e. of a median under normality
+
+
+def _pool_inputs(fit, win, t4, t8, cost_t4, rev, explained, fcf8) -> dict:
+    """REVISION_PLAN_5 P1: each pooled parameter's raw firm estimate and standard error (NaN where none exists)."""
+    dq = DAYS_Q
+    ratio = float(np.median(win["costs"] / win["rev"])) if len(win) else np.nan  # REVISION_PLAN_5: median ratio
+    elast = float(fit["v"]) / ratio if ratio and np.isfinite(ratio) else np.nan
+    q8 = (t8["cfo"] - t8["capex"]).clip(lower=0)
+    bb_q = t8["buybacks"] / (q8.mean() if q8.mean() > 0 else np.nan)
+    ocf_q = ((t8["cfo"] - explained.reindex(t8.index)) / rev.reindex(t8.index))
+    return {
+        "elast": (elast, float(fit.get("sd_share", np.nan))),
+        "dso": (float((t4["receivables"] / t4["revenue"]).mean() * dq), _se_mean(t4["receivables"] / t4["revenue"] * dq)),
+        "dio": (float((t4["inventory"] / cost_t4).mean() * dq), _se_mean(t4["inventory"] / cost_t4 * dq)),
+        "dpo": (float((t4["payables"] / cost_t4).mean() * dq), _se_mean(t4["payables"] / cost_t4 * dq)),
+        "capex_ratio": (float(np.nanmedian(t8["capex"] / t8["revenue"])), _se_median(t8["capex"] / t8["revenue"])),
+        "ocf_ratio": (float(np.nanmedian(ocf_q)), _se_median(ocf_q)),
+        "bb_ratio": (float(t8["buybacks"].sum() / fcf8) if fcf8 > 0 else 0.0, _se_mean(bb_q)),
+        "refi_ratio": (np.nan, np.nan),
+    }
+
+
+def _shrink(x: float, se: float, prior: dict) -> float:
+    """Normal-normal empirical Bayes: precision-weighted mean of the firm's value and the pooled prior {m, s}."""
+    m, s = float(prior["m"]), float(prior.get("s", np.nan))
+    if not np.isfinite(m):
+        return x
+    if not np.isfinite(x):
+        return m
+    if not (np.isfinite(se) and se > 0 and np.isfinite(s) and s > 0):
+        return POOL_FIXED_WEIGHT * x + (1 - POOL_FIXED_WEIGHT) * m if not (np.isfinite(se) and se == 0) else x
+    w = (1 / se**2) / (1 / se**2 + 1 / s**2)
+    return w * x + (1 - w) * m
 
 
 def calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int = 12, assumptions: dict | None = None) -> dict:
@@ -507,6 +617,8 @@ def calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int = 12, assumption
 
 def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> dict:
     q = c.quarters.copy()
+    if S.active("G10"):  # REVISION_PLAN_5 G10: interest expense reported negative is a cost, not a sign error
+        q["interest_expense"] = q["interest_expense"].abs()
     src: dict[str, str] = {}
     rev = q["revenue"]
     last = q.iloc[-1]
@@ -639,6 +751,9 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     # ---- cost structure: operating leverage ----
     ebitda = q["operating_income"] + da_used.fillna(0)
     costs = rev - ebitda
+    pool = a.get("pool_prior") if S.active("P1") else None
+    if pool and pool.get("elast") is not None:  # REVISION_PLAN_5 P1: the industry's pooled elasticity is the prior mean
+        a = {**a, "fixed_share_prior": _clip(1.0 - float(pool["elast"]["m"]), 0.0, 0.95, a["fixed_share_prior"])}
     fit = _fit_costs(rev, costs, a, INFL_Q)
     F, v, win = fit["F"], fit["v"], fit["win"]
     src["F,v"] = f"constrained regression of cash operating costs on revenue, {len(win)} quarters"
@@ -760,8 +875,13 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
             src["div_q"] = "no dividends reported in the last 4 quarters, assumed 0"
     else:
         div_q = float(q["dividends"].tail(2).mean())
+    if S.active("G5"):
+        div_q = _dividend_run_rate((reported if new_data else q)["dividends"])
+        src["div_q"] = "trailing four-quarter dividends / 4, a quarter above 3x the median of the others replaced by it"
     fcf8 = (t8["cfo"] - t8["capex"]).clip(lower=0).sum()
     bb_ratio = _clip(t8["buybacks"].sum() / fcf8 if fcf8 > 0 else 0.0, 0.0, 1.2, 0.0)
+
+    pool_inputs = _pool_inputs(fit, win, t4, t8, cost_t4, rev, explained, fcf8) if _plan5() else None
 
     rev_ttm = float(t4["revenue"].sum()) * (4 / k4 if 0 < k4 < 4 else 1.0)
     cap_recent = q["revolver_capacity"].dropna()
@@ -774,6 +894,9 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
 
     # the latest quarter occasionally lacks the cash tag: carry the last reported balance forward
     cash0 = float(q["cash"].ffill().iloc[-1] + q["short_investments"].fillna(0).iloc[-1])
+    if S.active("G9"):  # REVISION_PLAN_5 G9: opening cash under the stale-balance rule of every other stock
+        lk = last if new_data else _last_known(q, ("cash", "short_investments"), STALE_ROWS)[0]
+        cash0 = float(np.nan_to_num(float(lk["cash"])) + np.nan_to_num(float(lk["short_investments"])))
     quarterly_costs = F + v * t4["revenue"].mean()
     # Minimum operating cash revealed by the company's own behaviour: half its 10th-percentile cash balance over
     # three years, bounded by 1% of quarterly revenue and 20% of quarterly costs. (A cost-based floor alone forces
@@ -783,10 +906,16 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
     revealed = 0.5 * float(hist_cash.quantile(0.1)) if len(hist_cash) >= 4 else 0.2 * quarterly_costs
     cash_floor = float(np.clip(revealed, 0.01 * t4["revenue"].mean(), 0.2 * quarterly_costs))
     src["cash_floor"] = "half the company's 10th-percentile cash balance over 12 quarters (revealed minimum)"
-    cash_target = max(0.6 * cash0, 1.5 * cash_floor)
+    g3 = S.active("G3")
+    target_frac = float(a["cash_target_frac"]) if g3 else CASH_TARGET_FRAC_V2
+    cash_target = max(target_frac * cash0, 1.5 * cash_floor)
     cash_cap = 1.5 * max(cash0, cash_target)
     src["cash_cap"] = "assumption: cash above 150% of today's level is swept into debt paydown"
-    src["cash_target"] = "assumption: treasury raises new debt when cash falls below 60% of today's level"
+    src["cash_target"] = (
+        f"assumption: treasury raises new debt when cash falls below {target_frac:.0%} of today's level"
+        if g3
+        else "assumption: treasury raises new debt when cash falls below 60% of today's level"
+    )
 
     # maturity ladder (annual -> quarterly). Stale or missing ladders fall back to a 6-year average life.
     ladder_q = np.zeros(horizon)
@@ -978,6 +1107,20 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
         if "acquisitions" in q:
             acq = float(q["acquisitions"].tail(8).fillna(0).clip(lower=0).sum())
             p["ma_flag"] = 1.0 if acq > MA_THRESHOLD * float(rev.tail(8).sum()) else 0.0
+    if S.active("F3") or S.active("G6"):
+        # REVISION_PLAN_5 G6: the ex-ante flag is data in every revision-3+ specification (the v2 dicts stay exact);
+        # only G6 lets it change the model (fixed costs scale with revenue, sd_model)
+        g6 = acquisition_flag(q)
+        p.update({k: val for k, val in g6.items() if val is not None})
+        src["g6_flag"] = (
+            "acquisitions / divestitures > 10% of TTM revenue, or revenue and assets both > 25% q/q, last 8 quarters"
+            + "".join(f"; {col} not in the data" for col in ("acquisitions", "divestitures") if col not in q)
+        )
+    if S.active("G6"):
+        ma_scale = a.get("ma_scale")
+        p["ma_scale"] = float(p["g6_flag"] if ma_scale is None else bool(ma_scale))
+        if p["ma_scale"]:
+            src["ma_scale"] = "acquisitions/divestitures: fixed costs scale with deseasonalized revenue (G6)"
     if S.active("M3"):
         p["ladder_unknown"] = 0.0 if ladder_known else 1.0
     bad = [k for k, val in p.items() if isinstance(val, (float, np.floating)) and not np.isfinite(val)]
@@ -992,6 +1135,36 @@ def _calibrate(c: CompanyData, macro: pd.DataFrame, horizon: int, a: dict) -> di
             f"{len(p['_param_draws'])} residual-bootstrap parameter vectors (mu, phi, sigma_g, F, v, rho_m, sigma_m)"
         )
     from ..universe import classify, sector_tolerance
+
+    txt = a.get("text") or {}
+    if S.active("T1") and txt:
+        # REVISION_PLAN_5 T1: facts stated in the cutoff's filings (research/text_stage.py)
+        if txt.get("t1u_acquisition_divestiture") and "ma_scale" in p and a.get("ma_scale") is None:
+            p["ma_scale"] = 1.0
+            src["ma_scale"] = "T1: an acquisition or divestiture stated in the filings; fixed costs scale with revenue"
+        cost = txt.get("t1_restructuring_cost_usd")
+        cap = TEXT_ONEOFF_CAP * 4.0 * max(float(p.get("base_rev0", 0.0)), 0.0)  # addendum 1: at most 10% of TTM rev
+        p["text_oneoff"] = min(float(cost), cap) if cost and np.isfinite(float(cost)) and cost > 0 else 0.0
+        p["text_access0"] = TEXT_ACCESS_GOING_CONCERN if txt.get("t1u_going_concern") else (
+            TEXT_ACCESS_COVENANT if txt.get("t1u_covenant") else 1.0
+        )
+        src["text"] = f"T1: one-off {p['text_oneoff']:.3g}, opening market access x{p['text_access0']:.2f}"
+    if S.active("T2") and txt.get("t2_margin") is not None and np.isfinite(float(txt["t2_margin"])):
+        # T2: the walk-forward ridge prediction of the change in the CFO margin (points of revenue) moves the
+        # variable-cost ratio's mean the other way
+        p["text_vshift"] = _clip(-float(txt["t2_margin"]) / 100.0, -0.1, 0.1, 0.0)
+        src["text_vshift"] = f"T2: variable-cost ratio shifted {p['text_vshift']:+.3f} by the dated text model"
+    if pool_inputs is not None:
+        # the pooled quantity is the parameter the model uses (after F5's anchoring etc.), with the window's s.e.
+        pool_inputs = {k: ((float(p[k]) if k in p and k != "elast" else x), se) for k, (x, se) in pool_inputs.items()}
+        p["pool_inputs"] = {k: list(v) for k, v in pool_inputs.items()}
+        p["pool_industry"] = classify(c.ticker)[0] or "_all"
+    if pool:
+        for k, (x, se) in pool_inputs.items():
+            if k == "elast" or k not in pool or k not in p:
+                continue
+            p[k] = float(pool[k]["m"]) if a.get("pool_only") else _shrink(float(p[k]), se, pool[k])
+        src["pool"] = "P1: dso, dio, dpo, capex, ocf, buyback and refinancing ratios shrunk toward the industry prior"
 
     p["sector_tol"] = sector_tolerance(c.ticker)
     src["sector_tol"] = (

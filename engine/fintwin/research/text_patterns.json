@@ -1,0 +1,98 @@
+{
+ "version": 1,
+ "note": "T1 extractor patterns (revision plan 5, 'T1 and T2'). Published with the paper. A sentence counts for a feature if it matches any pattern and no exclusion. Patterns are Python regular expressions, matched case-insensitively on one sentence. Frozen before any outcome is read: text_features.extractor_fingerprint() hashes this file with the extractor source.",
+ "units": ["going_concern", "covenant", "acquisition_divestiture", "restructuring", "dividend_change"],
+ "features": {
+  "going_concern": {
+   "unit": "going_concern",
+   "patterns": [
+    "substantial doubt\\b[^.]{0,120}\\bability to continue as a going concern",
+    "\\bgoing concern (?:qualification|opinion|paragraph|uncertainty|explanatory paragraph)",
+    "\\b(?:raise|raises|raised) substantial doubt\\b"
+   ],
+   "exclude": [
+    "\\bno substantial doubt\\b",
+    "\\b(?:not|nor|never)\\b[^.]{0,40}\\bsubstantial doubt\\b",
+    "\\bsubstantial doubt\\b[^.]{0,80}\\b(?:alleviated|does not exist|did not exist|was not|is not)\\b",
+    "\\b(?:could|(?-i:may)|might|would)\\b[^.]{0,60}\\b(?:raise|result in|cause)\\b[^.]{0,40}\\bsubstantial doubt\\b",
+    "\\b(?:could|(?-i:may)|might|would) (?:receive|include|contain)\\b[^.]{0,60}\\bgoing concern\\b",
+    "\\b(?:evaluat\\w*|assess\\w*|required to (?:evaluate|assess))\\b[^.]{0,80}\\bwhether there (?:is|are)\\b[^.]{0,60}\\bsubstantial doubt\\b",
+    "\\bASU\\s*(?:No\\.\\s*)?2014-15\\b"
+   ]
+  },
+  "covenant": {
+   "unit": "covenant",
+   "patterns": [
+    "\\b(?:obtained|received|entered into|executed|granted)\\b[^.]{0,80}\\bwaivers?\\b[^.]{0,120}\\bcovenants?\\b",
+    "\\bwaive[ds]?\\b[^.]{0,120}\\bcovenants?\\b",
+    "\\bcovenants?\\b[^.]{0,120}\\b(?:were|was|had been) waived\\b",
+    "\\b(?:were|was|are|is|remain(?:ed)?) not in compliance with\\b[^.]{0,120}\\bcovenants?\\b",
+    "\\b(?:breached|violated|failed to (?:comply|meet|satisfy))\\b[^.]{0,120}\\bcovenants?\\b",
+    "\\bcovenants?\\b[^.]{0,120}\\b(?:were|was|had been) (?:breached|violated)\\b",
+    "\\b(?:breach|violation|non-?compliance) of (?:the |certain |a |one of the |these |our |its )?(?:financial |debt |maintenance )?covenants?\\b",
+    "\\b(?:an |the )?event of default (?:has |had )?(?:occurred|exists|existed)\\b"
+   ],
+   "exclude": [
+    "^\\s*(?:if|should|in the event|failure to|any failure|a failure)\\b",
+    "\\b(?:could|(?-i:may)|might|would|will|cannot assure|no assurance|there can be no)\\b",
+    "(?<!not )(?<!non-)\\bin compliance with (?:all|each|the|these|our|its|such)\\b[^.]{0,60}\\bcovenants?\\b",
+    "\\bno (?:event of )?default\\b",
+    "\\bwaiver of (?:jury|notice|trial)\\b"
+   ]
+  },
+  "acquisition_divestiture": {
+   "unit": "acquisition_divestiture",
+   "patterns": [
+    "\\b(?:completed|consummated|closed|finalized)\\b[^.]{0,80}\\b(?:acquisition|purchase|merger|divestiture|disposition|sale|spin-?off|separation)\\b of\\b",
+    "\\b(?:completed|consummated|closed|finalized) (?:its|our|the) (?:previously announced )?(?:acquisition|merger|divestiture|disposition|sale|spin-?off)\\b",
+    "\\b(?:entered into|signed|announced)\\b[^.]{0,40}\\b(?:a |an )?(?:definitive |stock purchase |asset purchase |share purchase )?(?:agreement|merger agreement|agreement and plan of merger)\\b[^.]{0,80}\\b(?:to acquire|to sell|to divest|to be acquired|to merge|for the (?:acquisition|sale|divestiture))\\b",
+    "\\b(?:we|the company|it) (?:acquired|divested|sold)\\b[^.]{0,60}\\b(?:all of the|substantially all|the outstanding|business|businesses|subsidiary|division|segment|operations)\\b",
+    "\\b(?:announced|approved) (?:a |its |our |the )?(?:plan|intention|decision) to (?:sell|divest|spin off|exit|acquire)\\b"
+   ],
+   "exclude": [
+    "\\b(?:(?-i:may)|might|could|would|if we|future acquisitions?|potential acquisitions?|from time to time|seek to|opportunistic)\\b",
+    "\\b(?:sale|sales) of (?:products|goods|services|common stock|shares|notes|inventory|receivables)\\b",
+    "\\bacquisition of (?:property|equipment|fixed assets|treasury)\\b"
+   ]
+  },
+  "restructuring": {
+   "unit": "restructuring",
+   "amount": true,
+   "patterns": [
+    "\\b(?:announced|approved|committed to|initiated|implemented|adopted|began|launched|undertook|commenced)\\b[^.]{0,80}\\b(?:restructuring|reorganization|cost reduction|workforce reduction|realignment)(?: plan| program| initiative| actions?| activities)\\b",
+    "\\b(?:restructuring|reorganization|realignment)(?: plan| program| initiative)\\b[^.]{0,80}\\b(?:announced|approved|initiated|implemented|adopted|commenced)\\b",
+    "\\b(?:recorded|recognized|incurred|expect(?:s|ed)? to (?:incur|record|recognize))\\b[^.]{0,80}\\brestructuring (?:charges?|costs?|expenses?)\\b",
+    "\\brestructuring (?:charges?|costs?|expenses?) of (?:approximately |about )?\\$"
+   ],
+   "exclude": [
+    "\\b(?:(?-i:may)|might|could|if we|future restructuring|any restructuring|no restructuring)\\b",
+    "\\b(?:chapter 11|bankruptcy|debt restructuring|troubled debt)\\b"
+   ]
+  },
+  "dividend_suspension": {
+   "unit": "dividend_change",
+   "patterns": [
+    "\\b(?:suspend(?:ed)?|eliminat(?:ed|e)|discontinu(?:ed|e)|halt(?:ed)?|ceased? paying|stopped paying)\\b[^.]{0,60}\\b(?:quarterly |regular |cash |common )*(?:stock )?dividends?\\b",
+    "\\bdividends?\\b[^.]{0,60}\\b(?:was|were|has been|have been|had been) (?:suspended|eliminated|discontinued)\\b",
+    "\\bsuspension of (?:the |our |its )?(?:quarterly |regular |cash )*dividends?\\b"
+   ],
+   "exclude": [
+    "\\b(?:(?-i:may)|might|could|would|if|no assurance|cannot assure|there can be no)\\b",
+    "\\bdividend reinvestment\\b",
+    "\\bpreferred\\b"
+   ]
+  },
+  "dividend_initiation": {
+   "unit": "dividend_change",
+   "patterns": [
+    "\\b(?:initiated|initiation of|instituted|commenced paying|began paying|began to pay|started paying|reinstated|reinstatement of)\\b[^.]{0,60}\\b(?:quarterly |regular |cash |common )*(?:stock )?dividends?\\b",
+    "\\b(?:declared|announced|paid) (?:its|our|the) first (?:ever )?(?:quarterly |regular |cash )*dividend\\b",
+    "\\bfirst (?:ever )?(?:quarterly |regular )?cash dividend in (?:its|our|the company's) history\\b"
+   ],
+   "exclude": [
+    "\\b(?:(?-i:may)|might|could|would|if|do not anticipate|does not anticipate|never (?:declared|paid)|no assurance|cannot assure)\\b",
+    "\\bpreferred\\b"
+   ]
+  }
+ }
+}

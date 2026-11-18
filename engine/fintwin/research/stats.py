@@ -34,6 +34,10 @@ B_PANEL = _env_int("FINTWIN_B_PANEL", 500)  # firm-clustered panel bootstraps ar
 # sets FINTWIN_B_FAMILY to a small number.
 B_FAMILY = _env_int("FINTWIN_B_FAMILY", 10_000)
 B_LAD = _env_int("FINTWIN_B_LAD", 199)  # firm bootstrap of the LAD encompassing regression (one fit per resample)
+# the 17 secondary comparisons of the Holm family (REVISION_PLAN_5, S2): their inputs are bootstrapped again with B_HOLM
+# resamples, p = (1 + k) / (B + 1); the B_PANEL numbers that the reported verdicts read are left as they are. 0 skips.
+B_HOLM = _env_int("FINTWIN_B_HOLM", 10_000)
+EPS_LOG = 1e-4  # probabilities are clipped to [EPS_LOG, 1 - EPS_LOG] for the log score: 500-2000 paths give exact 0s
 
 # Every random draw in research/stats, transmission and plan2 starts its own Generator from one of these seeds, so a
 # result does not depend on which statistics were computed before it (the old module-global RNG did). Written to
@@ -60,7 +64,7 @@ def seeds_table() -> dict:
     """The seeds and bootstrap sizes of this run (research.json `seeds`)."""
     return {
         "seeds": {k: {"seed": v[0], "used_by": v[1]} for k, v in SEEDS.items()},
-        "B": {"B": B, "B_PANEL": B_PANEL, "B_FAMILY": B_FAMILY, "B_LAD": B_LAD},
+        "B": {"B": B, "B_PANEL": B_PANEL, "B_FAMILY": B_FAMILY, "B_LAD": B_LAD, "B_HOLM": B_HOLM},
     }
 
 
@@ -159,6 +163,147 @@ def p_centered(est: float, x: np.ndarray) -> float:
     if not len(x) or not np.isfinite(est):
         return np.nan
     return float((1 + np.sum(np.abs(x - est) >= abs(est))) / (len(x) + 1))
+
+
+HOLM_P_DEFINITION = "(1 + #{|x* - est| >= |est|}) / (B + 1), recentred bootstrap (p_centered)"
+
+
+def holm_boot(stat, cols: list[np.ndarray], firms: np.ndarray | None, est: float, b: int | None = None) -> dict:
+    """A Holm-family input (REVISION_PLAN_5, S2): the firm bootstrap of `stat` with B_HOLM resamples (same seed as
+    `boot`) and p = (1 + k) / (B + 1), which is never below 1 / (B + 1)."""
+    b = B_HOLM if b is None else int(b)
+    x = boot(stat, cols, firms, b=b)
+    xf = x[np.isfinite(x)]
+    k = int(np.sum(np.abs(xf - est) >= abs(est))) if np.isfinite(est) else None
+    return {
+        "est": float(est),
+        "p": p_centered(est, x),
+        "k": k,
+        "B": int(len(xf)),
+        "B_requested": b,
+        "ci": ci(x),
+        "p_floor": 1 / (len(xf) + 1) if len(xf) else np.nan,
+        "p_definition": HOLM_P_DEFINITION,
+    }
+
+
+def paired_holm(stat, a: np.ndarray, b: np.ndarray, y: np.ndarray, firms: np.ndarray | None = None) -> dict | None:
+    """`paired`'s comparison as a Holm-family input (`holm_boot`); None when B_HOLM is 0."""
+    if B_HOLM <= 0:
+        return None
+    m = np.isfinite(a) & np.isfinite(b) & np.isfinite(y)
+    if m.sum() < 2:
+        return None
+    est = float(stat(a[m], y[m]) - stat(b[m], y[m]))
+    out = holm_boot(
+        lambda u, v, t: stat(u, t) - stat(v, t), [a[m], b[m], y[m]], None if firms is None else firms[m], est
+    )
+    out["n"] = int(m.sum())
+    return out
+
+
+def holm_bound(adj: float | None, m: int, b: int) -> tuple[str, float]:
+    """How to print a Holm-adjusted p computed from m bootstrap p-values on B resamples: ("<", m/(B+1)) when it is
+    below the smallest value the bootstrap can resolve (a raw p of 0 from a share of resamples), else ("=", adj)."""
+    floor = m / (b + 1)
+    if adj is None or not np.isfinite(adj):
+        return "=", np.nan
+    return ("<", floor) if adj < floor else ("=", float(adj))
+
+
+# ---------------------------------------------------------------- probability scores (QUALITY_PLAN R13: one definition)
+def _prob_ok(p: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    p, y = np.asarray(p, float), np.asarray(y, float)
+    m = np.isfinite(p) & np.isfinite(y)
+    return np.clip(p[m], 0.0, 1.0), y[m]
+
+
+def brier(p: np.ndarray, y: np.ndarray) -> float:
+    p, y = _prob_ok(p, y)
+    return float(np.mean((p - y) ** 2)) if len(y) else np.nan
+
+
+def log_score(p: np.ndarray, y: np.ndarray) -> float:
+    """Mean negative log likelihood (lower is better), probabilities clipped to [EPS_LOG, 1 - EPS_LOG]: the log score
+    of the paper's shortfall tables and, since plan 5, of every out-of-sample log loss in research.json."""
+    p, y = _prob_ok(p, y)
+    if not len(y):
+        return np.nan
+    p = np.clip(p, EPS_LOG, 1 - EPS_LOG)
+    return float(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
+
+
+def floor_drawdown(x) -> np.ndarray:
+    """Worst cumulative cash flow as a drawdown, floored at zero (QUALITY_PLAN R6); NaN stays NaN."""
+    x = np.asarray(x, float)
+    return np.where(np.isfinite(x), np.minimum(x, 0.0), np.nan)
+
+
+def tau_neighbours(evidence: dict, grid_key: str = "tau") -> dict:
+    """Plan 5, S7: for each walk-forward year, the selected grid value's score beside its neighbours' in the grid.
+
+    `evidence`: `{year: {"choice": "tau_0.50", "median_ae": {"tau_0.25": e, ...}, ...}}` (the `tau_evidence` of a
+    selection table, experiments.select_from_panel). A grid value is "tau_<x>"; "inf" sorts last."""
+    out: dict = {}
+    for y, ev in sorted(evidence.items()):
+        err = (ev or {}).get("median_ae") or {}
+        choice = (ev or {}).get("choice")
+        if not err or choice not in err:
+            out[str(y)] = {"choice": choice, "skipped": bool((ev or {}).get("skipped"))}
+            continue
+        names = sorted(err, key=lambda k: float(k.split("_", 1)[1]))
+        i = names.index(choice)
+        cell: dict = {
+            "choice": float(choice.split("_", 1)[1]),
+            "median_ae": err[choice],
+            "n_past": (ev or {}).get("n_past"),
+            "grid": {k.split("_", 1)[1]: err[k] for k in names},
+        }
+        for side, j in (("below", i - 1), ("above", i + 1)):
+            if 0 <= j < len(names):
+                cell[side] = {
+                    grid_key: float(names[j].split("_", 1)[1]),
+                    "median_ae": err[names[j]],
+                    "gap": err[names[j]] - err[choice],
+                }
+        gaps = [cell[s]["gap"] for s in ("below", "above") if s in cell]
+        cell["nearest_gap"] = float(min(gaps)) if gaps else None
+        cell["at_grid_edge"] = i in (0, len(names) - 1)
+        out[str(y)] = cell
+    return out
+
+
+def sobol_caps(sb: dict) -> dict:
+    """QUALITY_PLAN R16, counted on the analysis side (assumption_sobol is in the shard closure, whose digest covers
+    its bytes): the bootstrap draws and the distinct firm-year resamples behind the Sobol intervals, read from
+    `assumption_sobol.stats`, and the indices a table must clip to [0, 1] (or S1 to ST)."""
+    import inspect
+    import re
+
+    from . import assumption_sobol as A
+
+    draws = inspect.signature(A.stats).parameters["n_boot"].default
+    cap = re.search(r"range\(min\(n_boot, (\d+)\)\)", inspect.getsource(A.stats))
+    resamples = min(draws, int(cap.group(1))) if cap else None
+    out: dict = {
+        "boot_draws": draws,
+        "firm_year_resamples": resamples,
+        "resample_cap": int(cap.group(1)) if cap else None,
+        "capped": bool(resamples is not None and resamples < draws),
+        "draws_per_resample": draws / resamples if resamples else None,
+    }
+    for name in ("median_ae", "incremental"):
+        rows = (sb.get(name) or {}).get("indices") or []
+        c = {"S1_below_0": 0, "ST_below_0": 0, "ST_above_1": 0, "S1_above_ST": 0, "ST_ci_outside_0_1": 0}
+        for r in rows:
+            s1, st, ci_ = r.get("S1", np.nan), r.get("ST", np.nan), r.get("ST_ci") or []
+            c["S1_below_0"] += bool(s1 < 0)
+            c["ST_below_0"] += bool(st < 0)
+            c["ST_above_1"] += bool(st > 1)
+            c["S1_above_ST"] += bool(s1 > st)
+            c["ST_ci_outside_0_1"] += bool(any(x < 0 or x > 1 for x in ci_))
+        out[f"clipped_{name}"] = c | {"n_indices": len(rows)}
+    return out
 
 
 def pct(x: np.ndarray) -> np.ndarray:
@@ -604,6 +749,62 @@ def _secondary_pvalues(res: dict) -> dict[str, float]:
     return out
 
 
+def _secondary_pvalues_holm(res: dict) -> dict[str, float]:
+    """The same 17 comparisons as `_secondary_pvalues`, from their B_HOLM bootstraps (REVISION_PLAN_5, S2)."""
+    out: dict[str, float] = {}
+    tp = res.get("transmission", {}).get("panel", {})
+    for var in ("cfo", "fcf"):
+        h = tp.get(var, {}).get("hybrid_train", {})
+        for k in ("N3+T1_vs_N3+N1", "N3+T1_vs_N3+N5", "N3+T1_vs_N3+N6"):
+            if (h.get(k) or {}).get("holm"):
+                out[f"hybrid_{var}_{k}"] = h[k]["holm"]["p"]
+    for e, d in tp.get("decisions", {}).items():
+        if (d.get("oos") or {}).get("delta_twin_holm"):
+            out[f"decision_{e}"] = d["oos"]["delta_twin_holm"]["p"]
+    for e, d in res.get("panel", {}).items():
+        if isinstance(d, dict) and (d.get("out_of_sample") or {}).get("delta_twin_beyond_formula_holm"):
+            out[f"panel_{e}"] = d["out_of_sample"]["delta_twin_beyond_formula_holm"]["p"]
+    for sub in ("all", "weak"):
+        f = res.get("bankruptcy_panel", {}).get(sub, {}).get("predictors", {}).get("formula", {})
+        if (f or {}).get("twin_minus_holm"):
+            out[f"bankruptcy_{sub}_twin_minus_formula"] = f["twin_minus_holm"]["p"]
+    return out
+
+
+def holm_section(res: dict) -> dict:
+    """Plan 5, S2: the secondary Holm family on the B_HOLM p-values, beside the reported one (`plan2.holm`, B_PANEL
+    resamples, p as a doubled share of resamples, which can be 0). Both carry m and B, so a printed bound is exact."""
+    from .plan2 import holm
+
+    old = _secondary_pvalues(res)
+    new = _secondary_pvalues_holm(res)
+    adj_old, adj_new = holm(old), holm(new)
+    out = {
+        "reported": {"m": len(old), "B": B_PANEL, "p_definition": "2 * min(share <= 0, share >= 0) (p_two_sided)",
+                     "smallest_resolvable_adjusted": len(old) / (B_PANEL + 1)},
+        "corrected": {"m": len(new), "B": B_HOLM, "p_definition": HOLM_P_DEFINITION, "raw": new,
+                      "adjusted": adj_new, "smallest_possible_adjusted": len(new) / (B_HOLM + 1) if new else None},
+    }  # fmt: skip
+    common = sorted(set(adj_old) & set(adj_new))
+    out["flips_at_5pct"] = [k for k in common if (adj_old[k] < 0.05) != (adj_new[k] < 0.05)]
+    out["missing_from_corrected"] = sorted(set(old) - set(new))
+    return out
+
+
+def tau_section(cache: Path) -> dict:
+    """Plan 5, S7, from the walk-forward selection table of this run: `<cache>/../_selection/<first pass>.json`, where
+    the first pass of `v3-wf<tag>` is `v3<tag>` (__main__.select writes it under the first pass's label)."""
+    path = cache.parent / "_selection" / f"{cache.name.replace('-wf', '')}.json"
+    if not path.exists():
+        return {"missing": f"no selection table at {path}"}  # not a failure: grid-only rungs have none
+    sel = json.loads(path.read_text(encoding="utf-8"))
+    out = {}
+    for key in ("tau", "lambda"):
+        if sel.get(f"{key}_evidence"):
+            out[key] = tau_neighbours(sel[f"{key}_evidence"], key)
+    return out
+
+
 def _industry(key: str) -> str:
     from ..universe import classify
 
@@ -773,7 +974,9 @@ def _events(p: pd.DataFrame) -> dict[str, np.ndarray]:
     icr0, icrmin = p["y_icr0"].to_numpy(float), p["y_icr_min"].to_numpy(float)
     cov = np.where(icr0 >= 1.5, (icrmin < 1.5).astype(float), np.nan)
     cov[~np.isfinite(icrmin)] = np.nan
-    div = np.where(p["y_div_payer"].fillna(False).astype(bool), p["y_div_cut"].fillna(False).astype(float), np.nan)
+    # O1: an untagged dividend quarter makes the cut unknown (None -> NaN), never "no cut"
+    cut = pd.to_numeric(p["y_div_cut"].astype(object).where(p["y_div_cut"].notna()), errors="coerce").astype(float)
+    div = np.where(p["y_div_payer"].fillna(False).astype(bool), cut, np.nan)
     burn = p["y_burn8"].to_numpy(float)
     abn = _col(p, "y_abn_burn8").to_numpy(float)
     return {
@@ -896,8 +1099,10 @@ def panel_section(p: pd.DataFrame) -> dict:
             for k, v in P.items():
                 oos[k] = {
                     "auc": auc(v, yy),
-                    "brier": float(np.mean((v - yy) ** 2)),
-                    "log_loss": float(
+                    "brier": brier(v, yy),
+                    "log_loss": log_score(v, yy),  # one definition (QUALITY_PLAN R13)
+                    # plans 1-4: probabilities clipped at 1e-6 instead of EPS_LOG
+                    "log_loss_clip1e6": float(
                         -np.mean(yy * np.log(np.clip(v, 1e-6, 1)) + (1 - yy) * np.log(np.clip(1 - v, 1e-6, 1)))
                     ),
                 }
@@ -907,6 +1112,10 @@ def panel_section(p: pd.DataFrame) -> dict:
             )
             oos["delta_twin_beyond_formula"] = paired(
                 auc, P["benchmarks_formula_twin"], P["benchmarks_formula"], yy, ff, B_PANEL
+            )
+            # the Holm-family input with B_HOLM resamples and p = (1 + k) / (B + 1) (plan 5, S2)
+            oos["delta_twin_beyond_formula_holm"] = paired_holm(
+                auc, P["benchmarks_formula_twin"], P["benchmarks_formula"], yy, ff
             )
             oos["n_test"] = int(len(yy))
             oos["test_years"] = [yr for yr in out["years"] if ((p["year"] <= yr - 3).to_numpy() & m).sum() >= 300]
@@ -1106,7 +1315,15 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_
         "covid_abnormal": {
             k: covid_section(xs[v].reset_index(drop=True), abn_col) for k, v in samples.items() if v.sum() >= 30
         },
+        # the worst cumulative value floored at zero (QUALITY_PLAN R6); `covid_worst_unfloored` is plans 1-4
         "covid_worst": {
+            k: covid_section(
+                xs[v].reset_index(drop=True).assign(real_burn=lambda d: floor_drawdown(d["real_burn"])), "real_burn"
+            )
+            for k, v in samples.items()
+            if v.sum() >= 30
+        },
+        "covid_worst_unfloored": {
             k: covid_section(xs[v].reset_index(drop=True), "real_burn") for k, v in samples.items() if v.sum() >= 30
         },
         "bankruptcy_2020": distress.bankruptcy_2020(xs, B),
@@ -1146,7 +1363,9 @@ def main(cache: Path, b_family: int | None = None, out: Path | None = None, cfo_
 
         res["exploratory_rivals"] = _safe(rivals.section, panel)
     res["plan2"]["verdicts"] = plan2.verdicts(res)
-    res["plan2"]["holm"] = plan2.holm(_secondary_pvalues(res))
+    res["plan2"]["holm"] = plan2.holm(_secondary_pvalues(res))  # as reported (plans 3-4)
+    res["plan2"]["holm_corrected"] = _safe(holm_section, res)  # plan 5, S2
+    res["walk_forward_neighbours"] = _safe(tau_section, cache)  # plan 5, S7
     for line in _error_paths(res):  # a failed section must not pass as a finished run
         print(f"WARNING section failed: {line}", file=sys.stderr, flush=True)
     from ..clean import _clean

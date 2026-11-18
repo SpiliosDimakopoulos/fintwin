@@ -60,11 +60,30 @@ def sgn(x, d=2):
     return (f"{x:+.{d}f}".replace("-", "$-$")) if ok(x) else "--"
 
 
-def pv(p):
-    """p-value with its relation, for running text: $p\\Macro$ renders as p = 0.019 or p < 0.001."""
+def pv(p, b=None):
+    """p-value with its relation, for running text: $p\\Macro$ renders as p = 0.019 or p < 0.001.
+
+    `b`: the bootstrap resamples behind p. A bootstrap cannot resolve p below 1/(B+1) (a share of 0 out of 500 is not
+    "below 0.001"), so such a value prints as "<1/(B+1)" (plan 5, S2)."""
     if not ok(p):
         return "=\\text{--}"
-    return "<0.001" if p < 0.001 else f"={p:.3f}"
+    floor = 1 / (b + 1) if b else 0.0
+    if p < floor:
+        return f"<{floor:.3f}" if floor >= 0.001 else f"<{floor:.1e}"
+    return "<0.001" if p < 0.001 else f"={p:.3f}"  # p >= floor here, so "<0.001" only when B can resolve it
+
+
+def hp(x):
+    """(p, B) of a Holm-family comparison: its B_HOLM bootstrap when the run has one (plan 5, S2), else the
+    B_PANEL share-of-resamples p the earlier runs reported."""
+    h = x.get("holm") or {}
+    if ok(h.get("p")):
+        return h["p"], h.get("B")
+    return x["p"], R.get("seeds", {}).get("B", {}).get("B_PANEL")
+
+
+def pvh(x):
+    return pv(*hp(x))
 
 
 def pc(x, d=0):
@@ -189,12 +208,12 @@ m("TrHybGainLo", f2(-hy["N3+T1_vs_N3"]["ci"][1]))
 m("TrHybGainHi", f2(-hy["N3+T1_vs_N3"]["ci"][0]))
 m("TrHybGainPct", pc(-hy["N3+T1_vs_N3"]["diff"] / hy["mae_w"]["N3"], 1))
 m("TrHybVsNull", f2(-hy["N3+T1_vs_N3+N6"]["diff"]))
-m("TrHybVsNullP", pv(hy["N3+T1_vs_N3+N6"]["p"]))
+m("TrHybVsNullP", pvh(hy["N3+T1_vs_N3+N6"]))
 m("TrHybSixteenRegFive", f2(hy["mae_w"]["N3+N5"]))
 m("TrHybVsRegFive", f2(-hy["N3+T1_vs_N3+N5"]["diff"]))
-m("TrHybVsRegFiveP", pv(hy["N3+T1_vs_N3+N5"]["p"]))
+m("TrHybVsRegFiveP", pvh(hy["N3+T1_vs_N3+N5"]))
 m("TrHybVsFour", f2(-hy["N3+T1_vs_N3+N1"]["diff"]))
-m("TrHybVsFourP", pv(hy["N3+T1_vs_N3+N1"]["p"]))
+m("TrHybVsFourP", pvh(hy["N3+T1_vs_N3+N1"]))
 m("TrHybRegFiveGainPct", pc((hy["mae_w"]["N3"] - hy["mae_w"]["N3+N5"]) / hy["mae_w"]["N3"], 1))
 lams = list(hy["lambda"]["N3+T1"].values())
 m("TrLambdaLo", f2(min(lams)))
@@ -205,9 +224,25 @@ best_null_fcf = min(("N3+N1", "N3+N2", "N3+N5", "N3+N6"), key=lambda k: fhy["mae
 m("TrFcfVsBestNull", f2(-fhy[f"N3+T1_vs_{best_null_fcf}"]["diff"]))
 m("TrFcfVsBestNullLo", f2(-fhy[f"N3+T1_vs_{best_null_fcf}"]["ci"][1]))
 m("TrFcfVsBestNullHi", f2(-fhy[f"N3+T1_vs_{best_null_fcf}"]["ci"][0]))
-m("TrFcfVsBestNullP", pv(fhy[f"N3+T1_vs_{best_null_fcf}"]["p"]))
-m("TrFcfVsWorstP", pv(max(fhy[f"N3+T1_vs_{k}"]["p"] for k in ("N3+N1", "N3+N2", "N3+N5", "N3+N6"))))
+m("TrFcfVsBestNullP", pvh(fhy[f"N3+T1_vs_{best_null_fcf}"]))
+m("TrFcfVsWorstP", pv(*max((hp(fhy[f"N3+T1_vs_{k}"]) for k in ("N3+N1", "N3+N2", "N3+N5", "N3+N6")),
+                           key=lambda t: t[0])))
 
+# plan 5, S1: `levels` is one common set of firm-years per cash measure (earlier runs: each model's own sample)
+m("TrLevelsN", big(lv["T1"]["n"]))
+m("TrLevelsFcfN", big(fcf["levels"]["T1"]["n"]))
+if "levels_permodel" in cfo:
+    sup = []
+    for k, label in MODEL.items():
+        a, b = cfo["levels_permodel"][k], fcf["levels_permodel"][k]
+        sup.append(f"{label} & {big(a['n'])} & {f1(a['median_ae'])} & {f1(a['mae_w'])} & {f1(a['mae_w_fullwinsor'])} & "
+                   f"{big(b['n'])} & {f1(b['median_ae'])} \\\\")
+    table("transmission_permodel", [
+        "\\resizebox{\\linewidth}{!}{%", "\\begin{tabular}{lrrrrrr}", "\\toprule",
+        " & \\multicolumn{4}{c}{Operating cash flow} & \\multicolumn{2}{c}{Free cash flow} \\\\",
+        "\\cmidrule(lr){2-5}\\cmidrule(lr){6-7}",
+        "Model & Firm-years & Median & Mean (train limits) & Mean (all-year limits) & Firm-years & Median \\\\",
+        "\\midrule", *sup, "\\bottomrule", "\\end{tabular}}"])
 rows = []
 for k, label in MODEL.items():
     a, b = cfo["levels"][k], fcf["levels"][k]
@@ -714,20 +749,51 @@ if P2:
           "panel_bankruptcy": "Distress: bankruptcy, twin beyond formula",
           "bankruptcy_all_twin_minus_formula": "Bankruptcy AUC: twin minus formula, all firms",
           "bankruptcy_weak_twin_minus_formula": "Bankruptcy AUC: twin minus formula, weak firms"}
+    hc = P2.get("holm_corrected") or {}
+    b_old = (hc.get("reported") or {}).get("B") or R.get("seeds", {}).get("B", {}).get("B_PANEL")
+    new = (hc.get("corrected") or {}).get("adjusted") or {}
+    b_new = (hc.get("corrected") or {}).get("B")
+
+    def holm_txt(adj, m_, b_):
+        """Never below what B resamples can resolve, m/(B+1) for a Holm-adjusted bootstrap p (plan 5, S2): the
+        corrected p = (1+k)/(B+1) cannot go below it, the reported share-of-resamples p is 0 there."""
+        if adj is None or not ok(adj):
+            return "--"
+        if adj <= 0:  # every resample on one side: a share of 0, which B resamples cannot tell from m/(B+1)
+            return f"$<${m_ / (b_ + 1):.3f}" if b_ else "$<$0.001"
+        return f"{adj:.4f}" if adj < 0.01 else f"{adj:.3f}"
+
     rows = []
     for k, adj in sorted(hl.items(), key=lambda kv: kv[1]):
         lab = HN.get(k, k.replace("hybrid_", "Combination: ").replace("_N3+T1_vs_", " twin vs. ").replace("N3+", "16q + ")
                      .replace("cfo", "OCF").replace("fcf", "FCF").replace("N1", "4q").replace("N5", "regression")
                      .replace("N6", "regression with timing"))
-        rows.append(f"{lab} & {'$<$0.001' if adj < 0.001 else f'{adj:.3f}'} \\\\")
-    table("holm", ["\\begin{tabular}{lr}", "\\toprule", "Secondary comparison & Holm-adjusted $p$ \\\\", "\\midrule",
+        cell = holm_txt(adj, len(hl), b_old)
+        if new:
+            cell += f" & {holm_txt(new.get(k), len(new), b_new)}"
+        rows.append(f"{lab} & {cell} \\\\")
+    head = ("Secondary comparison & Holm-adjusted $p$ \\\\" if not new else
+            f"Secondary comparison & Holm $p$, $B={big(b_old)}$ (reported) & Holm $p$, $B={big(b_new)}$, "
+            f"$p=(1+k)/(B+1)$ \\\\")
+    table("holm", [f"\\begin{{tabular}}{{l{'r' if not new else 'rr'}}}", "\\toprule", head, "\\midrule",
                    *rows, "\\bottomrule", "\\end{tabular}"])
+    if new:
+        m("HolmBNew", big(b_new))
+        m("HolmFlips", len(hc.get("flips_at_5pct") or []))
 
 # ------------------------------------------------------------------ 10. global sensitivity to the assumptions
 SOB = PAPER / "sobol_assumptions.json"
 if SOB.exists():
     SB = json.loads(SOB.read_text(encoding="utf-8"))
     m("SobN", SB["n_firm_years"])
+    sys.path.insert(0, str(ROOT / "engine"))
+    from fintwin.research.stats import sobol_caps  # QUALITY_PLAN R16
+
+    caps = sobol_caps(SB)
+    m("SobBootDraws", caps["boot_draws"])
+    m("SobBootResamples", caps["firm_year_resamples"] if caps["firm_year_resamples"] is not None else "--")
+    m("SobClipped", sum(v for c in ("clipped_median_ae", "clipped_incremental") for k, v in caps[c].items()
+                        if k != "n_indices"))
     m("SobPoints", SB["n_points"])
     m("SobMaeMin", f1(SB["median_ae"]["min"]))
     m("SobMaeMax", f1(SB["median_ae"]["max"]))

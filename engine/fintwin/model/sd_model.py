@@ -110,8 +110,11 @@ OUTPUTS = [
 ]
 
 
-def _rank(icr):
-    return np.searchsorted(ICR_LOWER, icr, side="right") - 1
+def _rank(icr, nan_is_d: bool = False):
+    r = np.searchsorted(ICR_LOWER, icr, side="right") - 1
+    # REVISION_PLAN_5 G8: searchsorted puts NaN after every bound (AAA); a missing coverage is rated D, as in
+    # ratings.rating_rank and the web model
+    return np.where(np.isnan(icr), 0, r) if nan_is_d else r
 
 
 def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
@@ -165,6 +168,17 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
 
     # revision-3 switches; every branch below is skipped when they are off, so v2-pre outputs are unchanged
     on_m1, on_f11, on_m5 = _switch(levers, "M1"), _switch(levers, "F11"), _switch(levers, "M5")
+    # REVISION_PLAN_5 switches (v4a: G3 liquidity, G4 loss carryforward, G7 F3 bound, G8 NaN coverage; v4b: G6)
+    on_g3, on_g4, on_g8 = _switch(levers, "G3"), _switch(levers, "G4"), _switch(levers, "G8")
+    on_g7 = _switch(levers, "G7")
+    # REVISION_PLAN_5 G6: only in the realized-revenue (transmission) test, where the revenue bought or sold is given
+    on_g6 = _switch(levers, "G6") and bool(p.get("ma_scale", 0.0)) and scn.get("revenue_override") is not None
+    # REVISION_PLAN_5 T1 / T2 (filing text, v4t): inputs set by the calibration from the cutoff's filings
+    on_t1, on_t2 = _switch(levers, "T1"), _switch(levers, "T2")
+    text_oneoff = float(p.get("text_oneoff", 0.0)) if on_t1 else 0.0  # announced restructuring cost, quarter 1
+    text_access0 = float(p.get("text_access0", 1.0)) if on_t1 else 1.0  # going concern / covenant: access at t=0
+    text_vshift = float(p.get("text_vshift", 0.0)) if on_t2 else 0.0  # shift of the variable-cost ratio's mean
+    nol = np.zeros(N, f)  # G4: opening carryforward 0 (deferred-tax tagging too sparse to calibrate it)
     mat = p.get("icr_materiality", ICR_MATERIALITY)
     lam_up = lam_dn = 0.0  # MM-F3 off: lambda 0 is exactly the v2 recursion
     if _switch(levers, "F3"):
@@ -219,18 +233,26 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
 
         # --- costs: fixed (inflating, cuttable) + variable ratio with mean-reverting shocks ---
         m_dev = p["rho_m"] * m_dev + p["sigma_m"] * e_m
-        v = np.maximum(p["v"] + m_dev + scn["cost_shift"][t], 0.0)
-        if lam_up > 0 or lam_dn > 0:
+        v = np.maximum(p["v"] + m_dev + scn["cost_shift"][t] + text_vshift, 0.0)
+        if on_g6:
+            # REVISION_PLAN_5 G6: an acquirer / divester's fixed cost comes and goes with the revenue bought or sold,
+            # F_t = F x rev_t / rev_0 on deseasonalized revenue (no seasonal swing in a fixed cost; nominal revenue
+            # carries the inflation). It replaces the MM-F3 path, so the G7 bound does not apply.
+            fixed = p["F"] * (rev / seasonal[(p["season0"] + t) % 4]) / max(p["base_rev0"], EPS) * cut_mult
+        elif lam_up > 0 or lam_dn > 0:
             # MM-F3: fixed costs adjust partially (lambda per quarter) toward f_adj x deseasonalized revenue;
             # the revenue is taken after the override, so realized revenue drives it in the transmission test
             F_t = F_t * (1.0 + p["infl"])
             rbar = rev / seasonal[(p["season0"] + t) % 4]
             gap = f_adj * rbar - F_t
             F_t = F_t + np.where(gap > 0, lam_up, lam_dn) * gap
+            if on_g7:  # REVISION_PLAN_5 G7: within [0.5, 2] x the calibrated fixed cost (inflated, as without F3)
+                f_cal = p["F"] * (1.0 + p["infl"]) ** (t + 1)
+                F_t = np.clip(F_t, min(0.5 * f_cal, 2.0 * f_cal), max(0.5 * f_cal, 2.0 * f_cal))
             fixed = F_t * cut_mult
         else:
             fixed = p["F"] * (1.0 + p["infl"]) ** (t + 1) * cut_mult
-        costs = fixed + v * rev
+        costs = fixed + v * rev + (text_oneoff if t == 0 else 0.0)
         ebitda = rev - costs
         da = p["dep_rate"] * ppe
         ebit = ebitda - da
@@ -241,14 +263,19 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
         icr_prev = ebit_hist.sum(1) / np.maximum(int_hist.sum(1), EPS)
         if on_f11:
             icr_prev = effective_icr(icr_prev, int_hist.sum(1), rev_hist.sum(1), cash - debt - revolver, mat)
-        spread = spreads[_rank(icr_prev if loop_r1 else icr_fixed)] * spread_scale + scn["spread_shift"][t]
+        spread = spreads[_rank(icr_prev if loop_r1 else icr_fixed, on_g8)] * spread_scale + scn["spread_shift"][t]
         mkt_rate = r_eff + p["term_premium"] + spread
 
         eff_rate = (1.0 - p["floating"]) * coupon + p["floating"] * (r_eff + spread)
         interest = debt * eff_rate / 4.0 + revolver * (r_eff + spread + REVOLVER_SPREAD) / 4.0
         int_income = np.maximum(cash, 0.0) * r_eff * CASH_YIELD_SHARE / 4.0
         ebt = ebit - interest + int_income
-        tax = p["tax_rate"] * np.maximum(ebt, 0.0)
+        if on_g4:  # REVISION_PLAN_5 G4: losses build a carryforward that offsets later taxable income
+            used = np.minimum(nol, np.maximum(ebt, 0.0))
+            tax = p["tax_rate"] * (np.maximum(ebt, 0.0) - used)
+            nol = nol - used + np.maximum(-ebt, 0.0)
+        else:
+            tax = p["tax_rate"] * np.maximum(ebt, 0.0)
         ni = ebt - tax
 
         # --- working capital: receivables and inventory adjust toward targets with first-order delays
@@ -275,7 +302,18 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
 
         div = np.full(N, p["div_q"], f)
         bb = p["bb_ratio"] * np.maximum(cfo - capex, 0.0)
-        if levers.get("cut_payouts", True):
+        if levers.get("cut_payouts", True) and on_g3:
+            # REVISION_PLAN_5 G3: the dividend is cut in proportion to the shortfall, not all-or-nothing. Paid share =
+            # clip(ICR / 2.5, 0, 1) x clip(cash / (1.5 x floor), 0, 1): the cash-floor condition smoothed the same way
+            # (a linear ramp from 0 at zero cash to 1 at the old trigger). A NaN coverage pays nothing (G8). Buybacks
+            # and capex keep the binary B1 trigger: the plan names only the dividend.
+            icr_share = np.where(np.isnan(icr_prev), 0.0, np.clip(icr_prev / STRESS_ICR, 0.0, 1.0))
+            cash_share = np.clip(cash / max(STRESS_CASH_MULT * p["cash_floor"], EPS), 0.0, 1.0)
+            div = div * icr_share * cash_share
+            bb = np.where(stressed, 0.0, bb)
+            if on_m5:  # M5: utilities keep part of the dividend under stress
+                div = np.where(stressed, np.maximum(div, po["payout_keep_div"] * p["div_q"]), div)
+        elif levers.get("cut_payouts", True):
             div = np.where(stressed, 0.0, div)
             bb = np.where(stressed, 0.0, bb)
             if on_m5:  # M5: utilities keep part of the dividend under stress
@@ -293,6 +331,8 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
             else np.ones(N, f)
         )
         access = access * scn["refi_access"][t]
+        if text_access0 < 1.0:  # T1: the filing's going-concern / covenant language; back to normal over 4 quarters
+            access = access * (text_access0 + (1.0 - text_access0) * min(t, 4) / 4.0)
         refi = maturing * p["refi_ratio"] * access
         cash = cash + cfo - capex - div - bb - maturing + refi
         issued_debt = np.zeros(N, f)
@@ -385,7 +425,7 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
                 cov_breached, np.minimum(rcap, np.maximum(revolver, cast(float, cv["cov_revolver_avail"]) * rcap)), rcap
             )
             rev_cap = rcap
-        rank = _rank(icr)
+        rank = _rank(icr, on_g8)
         undrawn = np.maximum(rev_cap - revolver, 0.0)
         liquidity = cash + undrawn
         breached = breached | (cash < 0)
@@ -404,7 +444,7 @@ def simulate(p: dict, scn: dict, eps: np.ndarray, levers: dict) -> dict:
         # sector tolerance: sectors that structurally carry more leverage (utilities, telecom, rail) are scored
         # against their own norms; the dynamics (spreads, market access) still use the raw coverage
         tol = p.get("sector_tol", 1.0)
-        s_cov = _rank(icr * tol) / 14.0 * 100
+        s_cov = _rank(icr * tol, on_g8) / 14.0 * 100
         lev_cap = LEV_CAP * tol
         s_lev = np.where(ebitda_ttm > 0, np.clip((lev_cap - nd_ebitda) / lev_cap, 0.0, 1.0), 0.0) * 100
         s_solv = np.clip((z - Z_DISTRESS) / Z_SPAN, 0.0, 1.0) * 100

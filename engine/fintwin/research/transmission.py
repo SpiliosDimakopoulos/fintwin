@@ -137,7 +137,10 @@ def frame(rows: pd.DataFrame) -> pd.DataFrame:
             for k, path in paths.items():
                 x = np.asarray(path if path is not None else [np.nan] * len(rev), float)
                 rec[f"{k}_{var}"] = float(x.sum())
-                rec[f"{k}_{var}_w"] = float(np.min(np.cumsum(x)))
+                # worst cumulative value as a drawdown floored at zero (QUALITY_PLAN R6): a firm whose cumulative
+                # cash flow never turns negative has no burn, not the first quarter's inflow; `_wraw` is plans 1-4
+                rec[f"{k}_{var}_wraw"] = float(np.min(np.cumsum(x)))
+                rec[f"{k}_{var}_w"] = min(rec[f"{k}_{var}_wraw"], 0.0)
             # the twin's totals are the specification's point forecast; the v2 sum of medians is kept beside it
             rec[f"T1sm_{var}"] = rec[f"T1_{var}"]
             if st.get(f"twin_{var}") is not None:
@@ -199,32 +202,68 @@ def _mpath(m, rev: np.ndarray) -> np.ndarray:
     return np.full(len(rev), np.nan) if m is None else float(m) * rev
 
 
+SHRINK_GRID = np.round(np.arange(0.0, 0.91, 0.1), 1)  # plan 5, S4: 1.0 would make N4 the 4-quarter margin itself
+SHRINK_GRID_PRIOR = np.round(np.arange(0.0, 1.01, 0.1), 1)  # plans 2-4 (N4 = N1 when 1.0 is chosen)
+
+
 def add_shrunk(df: pd.DataFrame) -> pd.DataFrame:
     """N4: the 4-quarter margin shrunk toward the leave-one-out industry median of the same cutoff year.
 
     The weight on the company's own margin is chosen, for each year, to minimize the median absolute error on
     earlier years only (0.5 for the first year), so N4 never uses information from the year it predicts.
+    `N4_*` uses SHRINK_GRID; `N4g10_*` the prior grid with 1.0, kept for the verdicts of plans 3 and 4.
     """
     df = df.copy()
     for var in ("cfo", "fcf"):
         m = df[f"m4_{var}"]
         loo = df.groupby(["year", "industry"])[f"m4_{var}"].transform(loo_median)
-        weights = np.round(np.arange(0.0, 1.01, 0.1), 1)
-        pred = {w: (w * m + (1 - w) * loo) * df["revsum"] for w in weights}
-        out = pd.Series(np.nan, index=df.index)
-        chosen = {}
-        for y in sorted(df["year"].unique()):
-            past = df["year"] <= y - 3  # outcomes of later cutoffs were not yet reported
-            if past.sum() >= 100:
-                err = {w: np.nanmedian(np.abs(pred[w][past] - df.loc[past, f"real_{var}"])) for w in weights}
-                w = min(err, key=lambda k: err[k])
-            else:
-                w = 0.5
-            chosen[int(y)] = float(w)
-            out[df["year"] == y] = pred[w][df["year"] == y]
-        df[f"N4_{var}"] = out
-        df.attrs[f"N4_weights_{var}"] = chosen
+        for col, grid in ((f"N4_{var}", SHRINK_GRID), (f"N4g10_{var}", SHRINK_GRID_PRIOR)):
+            pred = {w: (w * m + (1 - w) * loo) * df["revsum"] for w in grid}
+            out = pd.Series(np.nan, index=df.index)
+            chosen = {}
+            for y in sorted(df["year"].unique()):
+                past = df["year"] <= y - 3  # outcomes of later cutoffs were not yet reported
+                if past.sum() >= 100:
+                    err = {w: np.nanmedian(np.abs(pred[w][past] - df.loc[past, f"real_{var}"])) for w in grid}
+                    w = min(err, key=lambda k: err[k])
+                else:
+                    w = 0.5
+                chosen[int(y)] = float(w)
+                out[df["year"] == y] = pred[w][df["year"] == y]
+            df[col] = out
+            df.attrs[f"{col.split('_')[0]}_weights_{var}"] = chosen
     return df
+
+
+def prior_grid(df: pd.DataFrame) -> pd.DataFrame:
+    """The frame with N4 from the prior weight grid (0, ..., 1.0), for the statistics behind the old verdicts."""
+    d = df.copy()
+    for var in ("cfo", "fcf"):
+        if f"N4g10_{var}" in d:
+            d[f"N4_{var}"] = d[f"N4g10_{var}"]
+    return d
+
+
+def effective_rivals(df: pd.DataFrame, var: str, rivals: tuple[str, ...] = tuple(NULLS)) -> dict[int, dict]:
+    """Per cutoff year, the number of distinct rivals: one whose prediction equals another's on every firm-year of the
+    year (N4 with weight 1.0 is N1) counts once. On the firm-years where every rival is finite."""
+    out: dict[int, dict] = {}
+    for y, g in df.groupby("year"):
+        X = np.column_stack([g[f"{k}_{var}"].to_numpy(float) for k in rivals])
+        X = X[np.isfinite(X).all(axis=1)]
+        if not len(X):
+            out[int(y)] = {"n": 0, "effective": 0, "duplicates": []}
+            continue
+        reps: list[int] = []
+        dup: list[str] = []
+        for j in range(X.shape[1]):
+            same = next((i for i in reps if np.allclose(X[:, i], X[:, j], rtol=0, atol=1e-9)), None)
+            if same is None:
+                reps.append(j)
+            else:
+                dup.append(f"{rivals[j]}={rivals[same]}")
+        out[int(y)] = {"n": int(len(X)), "effective": len(reps), "duplicates": dup}
+    return out
 
 
 # ---------------------------------------------------------------- statistics
@@ -232,27 +271,59 @@ def _wins(x: np.ndarray, lo: float, hi: float) -> np.ndarray:
     return np.clip(x, lo, hi)
 
 
-def levels(df: pd.DataFrame, var: str) -> dict:
+def row_bounds(real: np.ndarray, yrs: np.ndarray, mode: str = "train") -> tuple[np.ndarray, np.ndarray]:
+    """Per-row winsorization limits (NaN where the row's cutoff year has no training limits)."""
+    bnd = train_bounds(real, yrs, mode)
+    lo = np.array([bnd.get(int(y), (np.nan, np.nan))[0] for y in yrs], float)
+    hi = np.array([bnd.get(int(y), (np.nan, np.nan))[1] for y in yrs], float)
+    return lo, hi
+
+
+def common_mask(df: pd.DataFrame, var: str, models: list[str] | tuple[str, ...] = tuple(MODELS)) -> np.ndarray:
+    """Firm-years where the realized value and every model's prediction are finite (plan 5, S1)."""
+    m = np.isfinite(df[f"real_{var}"].to_numpy(float))
+    for k in models:
+        m &= np.isfinite(df[f"{k}_{var}"].to_numpy(float))
+    return m
+
+
+def levels(df: pd.DataFrame, var: str, sample: str = "common", bounds: str = "train") -> dict:
+    """Errors in levels of every model.
+
+    `sample="common"` (plan 5, S1): every model on one set of firm-years, the intersection of their finite
+    predictions; `"per_model"`: each model on the firm-years it forecasts (plans 1-4). `bounds="train"` (S3): the mean
+    winsorized error takes each cutoff year's 1/99 limits from earlier years only (rows without such years drop out
+    of `mae_w`, counted in `n_mae_w`); `"full"`: limits from every year. Per-model entries also carry
+    `mae_w_fullwinsor`, the plans 1-4 number."""
     real = df[f"real_{var}"].to_numpy(float)
-    lo, hi = np.nanpercentile(real, [1, 99])
-    out = {}
+    yrs = df["year"].to_numpy() if "year" in df else np.zeros(len(df), int)
+    flo, fhi = np.nanpercentile(real, [1, 99]) if np.isfinite(real).any() else (np.nan, np.nan)
+    lo, hi = row_bounds(real, yrs, bounds) if bounds == "train" else (np.full(len(df), flo), np.full(len(df), fhi))
+    common = common_mask(df, var)
+    out: dict = {}
     base = df[f"N1_{var}"].to_numpy(float)
     for k in MODELS:
         x = df[f"{k}_{var}"].to_numpy(float)
-        ok = np.isfinite(x) & np.isfinite(real)
+        ok = common if sample == "common" else np.isfinite(x) & np.isfinite(real)
+        okw = ok & np.isfinite(lo)
         e = np.abs(x - real)
         out[k] = {
             "label": LABELS[k],
             "n": int(ok.sum()),
-            "median_ae": float(np.nanmedian(e[ok])),
-            "mae_w": float(np.nanmean(np.abs(_wins(x, lo, hi) - _wins(real, lo, hi))[ok])),
-            "mae": float(np.nanmean(e[ok])),  # unwinsorized
-            "rho": S.rho(x, real),
+            "sample": sample,
+            "median_ae": float(np.median(e[ok])) if ok.any() else np.nan,
+            "mae_w": float(np.mean(np.abs(_wins(x, lo, hi) - _wins(real, lo, hi))[okw])) if okw.any() else np.nan,
+            "n_mae_w": int(okw.sum()),
+            "winsor": bounds,
+            "mae": float(np.mean(e[ok])) if ok.any() else np.nan,  # unwinsorized
+            "rho": S.rho(x[ok], real[ok]),
             "share_closer_than_N1": float(np.nanmean((e < np.abs(base - real))[ok & np.isfinite(base)])),
         }
+        if sample == "per_model":
+            out[k]["mae_w_fullwinsor"] = float(np.nanmean(np.abs(_wins(x, flo, fhi) - _wins(real, flo, fhi))[ok]))
     if f"T1sm_{var}" in df:  # the twin as the sum of per-quarter medians (the v2-pre estimator), for comparison
         x = df[f"T1sm_{var}"].to_numpy(float)
-        ok = np.isfinite(x) & np.isfinite(real)
+        ok = np.isfinite(x) & np.isfinite(real) & (common if sample == "common" else True)
         if ok.any():
             out["T1_sum_of_medians"] = {
                 "n": int(ok.sum()),
@@ -294,11 +365,13 @@ def incremental(df: pd.DataFrame, var: str, firms: np.ndarray, b: int) -> dict:
     return out
 
 
-def encompassing(df: pd.DataFrame, var: str) -> dict:
+def encompassing(df: pd.DataFrame, var: str, bounds: str = "full", lad: bool = True) -> dict:
     """OLS of (realized - N1) on each model's departure from N1, with year effects and firm-clustered errors.
 
     If the twin's coefficient survives the smoother rules (N3, N4) and the timing rule (N6), its departures from the
-    four-quarter rule carry information they do not.
+    four-quarter rule carry information they do not. `bounds="full"`: 1/99 winsorization limits from every year
+    (plans 1-4); `"train"` (plan 5, S3): each row's limits from the years <= its cutoff year - 3, rows of years without
+    such years drop out (`n_dropped_no_train_limits`). `lad=False` skips the bootstrapped LAD regression.
     """
     import statsmodels.api as sm
 
@@ -312,8 +385,14 @@ def encompassing(df: pd.DataFrame, var: str) -> dict:
             *(["cluster"] if "cluster" in df else []),
         ]
     ].dropna()
+    n_all = int(len(d))
+    if bounds == "train":
+        lo, hi = row_bounds(d[f"real_{var}"].to_numpy(float), d["year"].to_numpy(), "train")
+        keep = np.isfinite(lo)
+        d, lo, hi = d[keep], lo[keep], hi[keep]
     real = d[f"real_{var}"]
-    lo, hi = np.nanpercentile(real, [1, 99])
+    if bounds != "train":
+        lo, hi = np.nanpercentile(real, [1, 99])
     y = _wins(real, lo, hi) - _wins(d[f"N1_{var}"], lo, hi)
     X = pd.DataFrame({k: _wins(d[f"{k}_{var}"], lo, hi) - _wins(d[f"N1_{var}"], lo, hi) for k in cols})
     X = pd.concat([X, pd.get_dummies(d["year"], prefix="y", drop_first=True, dtype=float)], axis=1)
@@ -364,7 +443,9 @@ def encompassing(df: pd.DataFrame, var: str) -> dict:
             "n": int(m.nobs),
             "t_two_way": {k: float(m2.tvalues[k]) for k in use},
         }
-    out |= _encompassing_v3(d, var, X, lo, hi, cols)
+    out |= _encompassing_v3(d, var, X, lo, hi, cols, lad)
+    out["winsor"] = bounds
+    out["n_dropped_no_train_limits"] = n_all - int(len(d))
     return out
 
 
@@ -374,7 +455,7 @@ def _one_sided(t: float, df: int) -> float:
     return float(t_dist.sf(t, df))
 
 
-def _encompassing_v3(d: pd.DataFrame, var: str, X: pd.DataFrame, lo: float, hi: float, cols: list[str]) -> dict:
+def _encompassing_v3(d: pd.DataFrame, var: str, X: pd.DataFrame, lo, hi, cols: list[str], lad: bool = True) -> dict:
     """The two-way clustered tests with t(G-1) critical values and a PSD check, beside the firm-only ones.
     Also encompassing and DM under absolute loss, the loss lambda is chosen on, and a LAD (median) regression."""
     firms, years = unit(d).to_numpy(), d["year"].to_numpy()
@@ -416,7 +497,8 @@ def _encompassing_v3(d: pd.DataFrame, var: str, X: pd.DataFrame, lo: float, hi: 
         eb = np.abs(real - d[f"{b_}_{var}"].to_numpy(float))
         dm[f"{a_}_vs_{b_}"] = S.two_way_mean(ea - eb, firms, years)  # negative mean = a better
     out["hln_tG1"], out["abs_loss_encompassing"], out["dm_abs"] = hln, absl, dm
-    out["lad_levels"] = _lad(d, var, ["N1", *cols], yfe, X)
+    if lad:
+        out["lad_levels"] = _lad(d, var, ["N1", *cols], yfe, X)
     return out
 
 
@@ -469,12 +551,18 @@ def train_bounds(real: np.ndarray, yrs: np.ndarray, mode: str = "train") -> dict
     return out
 
 
-def hybrid(df: pd.DataFrame, var: str, firms: np.ndarray, b: int, bounds: str = "full") -> dict:
+# the combination comparisons of the secondary Holm family (stats._secondary_pvalues)
+HOLM_HYBRID = (("N3+T1", "N3+N1"), ("N3+T1", "N3+N5"), ("N3+T1", "N3+N6"))
+
+
+def hybrid(df: pd.DataFrame, var: str, firms: np.ndarray, b: int, bounds: str = "train") -> dict:
     """Out-of-sample combinations base + lambda * (adjuster - base), lambda chosen on earlier cutoff years.
 
     Evaluated on years with at least 200 earlier observations; the null hybrid (N1 adjusted by N6) is the control.
-    `bounds="full"` is the revision-2 computation (winsorization limits from every year, test years included);
-    `bounds="train"` takes each test year's limits from its training years only and adds unwinsorized errors.
+    `bounds="train"` (the default since plan 5, S3) takes each test year's limits from its training years only and
+    adds unwinsorized errors; `bounds="full"` is the revision-2 computation (limits from every year, test years
+    included). With train limits, the Holm-family comparisons also get `holm`: the same bootstrap with S.B_HOLM
+    resamples and p = (1 + k) / (B + 1) (plan 5, S2), beside the B = b numbers that the reported verdicts used.
     """
     real = df[f"real_{var}"].to_numpy(float)
     yrs = df["year"].to_numpy()
@@ -543,6 +631,10 @@ def hybrid(df: pd.DataFrame, var: str, firms: np.ndarray, b: int, bounds: str = 
             "est": est,
             "p_centered": S.p_centered(est, d),
         }
+        if bounds != "full" and (a, c) in HOLM_HYBRID and S.B_HOLM > 0:
+            out[f"{a}_vs_{c}"]["holm"] = S.holm_boot(
+                lambda u, v, t, lo, hi: mae(u, t, lo, hi) - mae(v, t, lo, hi), cols, f, est
+            )
     return out
 
 
@@ -883,8 +975,13 @@ def by_year(df: pd.DataFrame, var: str) -> dict:
         for k, base in (("T1", "N1"), ("N3", "N1"), ("N4", "N1"), ("N6", "N1"), ("T1", "N6"), ("T1", "N4")):
             x, bx = g[f"{k}_{var}"].to_numpy(float), g[f"{base}_{var}"].to_numpy(float)
             cell[f"{k}|{base}"] = S.rho(x - bx, real - bx)
+        # median errors on one common set of firm-years (plan 5, S1); plans 1-4 used each model's own
+        cm = common_mask(g, var, ("N1", "N6", "T1"))
+        cell["n_mae"] = int(cm.sum())
         for k in ("N1", "N6", "T1"):
-            cell[f"mae_{k}"] = float(np.nanmedian(np.abs(g[f"{k}_{var}"] - g[f"real_{var}"])))
+            e = np.abs(g[f"{k}_{var}"].to_numpy(float) - real)
+            cell[f"mae_{k}"] = float(np.median(e[cm])) if cm.any() else np.nan
+            cell[f"mae_{k}_own_sample"] = float(np.nanmedian(e))
         out[int(y)] = cell
     return out
 
@@ -909,8 +1006,12 @@ def heterogeneity(df: pd.DataFrame, var: str) -> dict:
             for k, base in (("T1", "N1"), ("T1", "N6"), ("N3", "N1"), ("N6", "N1")):
                 x, bx = df[f"{k}_{var}"].to_numpy(float)[m], df[f"{base}_{var}"].to_numpy(float)[m]
                 cell[f"{k}|{base}"] = S.rho(x - bx, r - bx)
+            cm = common_mask(df[m], var, ("N1", "N6", "T1"))  # one common set (plan 5, S1)
+            cell["n_mae"] = int(cm.sum())
             for k in ("N1", "N6", "T1"):
-                cell[f"mae_{k}"] = float(np.nanmedian(np.abs(df[f"{k}_{var}"].to_numpy(float)[m] - r)))
+                e = np.abs(df[f"{k}_{var}"].to_numpy(float)[m] - r)
+                cell[f"mae_{k}"] = float(np.median(e[cm])) if cm.any() else np.nan
+                cell[f"mae_{k}_own_sample"] = float(np.nanmedian(e))
             cells[str(lev)] = cell
         out[name] = cells
     return out
@@ -982,6 +1083,8 @@ def _oos_events(df: pd.DataFrame, preds: dict, y: np.ndarray, firms: np.ndarray,
         "n": int(len(yy)),
         "auc": {k: S.auc(v, yy) for k, v in P2.items()},
         "delta_twin": S.paired(S.auc, P2["rule_score_twin"], P2["rule_score"], yy, ff, b),
+        # the Holm-family input with B_HOLM resamples and p = (1 + k) / (B + 1) (plan 5, S2)
+        "delta_twin_holm": S.paired_holm(S.auc, P2["rule_score_twin"], P2["rule_score"], yy, ff),
     }
 
 
@@ -1018,6 +1121,101 @@ def sensitivity(df: pd.DataFrame, firms: np.ndarray, b: int) -> dict:
     return out
 
 
+# ---------------------------------------------------------------- H2 rule (docs/REVISION_PLAN.md, 2.6)
+H2_NULLS = ("N3", "N4", "N6")
+
+
+def h2_inputs(df: pd.DataFrame, firms: np.ndarray, b: int) -> dict:
+    """The incremental correlations the H2 rule reads (operating cash flow): every rule against N1, and the twin
+    against each of N3, N4 and N6 with firm-bootstrap intervals (the same cells as `incremental`)."""
+    real, n1 = df["real_cfo"].to_numpy(float), df["N1_cfo"].to_numpy(float)
+    inc: dict = {"N1": {k: {"rho": S.rho(df[f"{k}_cfo"].to_numpy(float) - n1, real - n1)} for k in ("T1", *H2_NULLS)}}
+    t1 = df["T1_cfo"].to_numpy(float)
+    for base in H2_NULLS:
+        bx = df[f"{base}_cfo"].to_numpy(float)
+        ci = S.ci(S.boot(S.rho, [t1 - bx, real - bx], firms, b=b))
+        inc[base] = {"T1": {"rho": S.rho(t1 - bx, real - bx), "ci": ci}}
+    return inc
+
+
+def h2_verdict(inc: dict, enc: dict) -> dict:
+    """The decision rule written down before the run (docs/REVISION_PLAN.md, 2.6), from its inputs."""
+    best_null = max(H2_NULLS, key=lambda k: inc["N1"][k]["rho"])
+    twin_vs_best = inc[best_null]["T1"]
+    t1 = inc["N1"]["T1"]["rho"]
+    v = {
+        "twin_vs_N1": t1,
+        "best_null": best_null,
+        "best_null_vs_N1": inc["N1"][best_null]["rho"],
+        "null_share_of_twin": inc["N1"][best_null]["rho"] / t1 if t1 else None,
+        "twin_vs_best_null": twin_vs_best["rho"],
+        "twin_vs_best_null_ci": twin_vs_best.get("ci"),
+        "encompassing_p_twin": enc["all"]["p"]["T1"],
+        # the same coefficient with firm x year clustering and t(G-1) critical values
+        "encompassing_p_twin_two_way_tG1": enc["all_two_way_tG1"]["p"]["T1"],
+    }
+    v["twin_vs_each_null_ci_low"] = {k: (inc[k]["T1"].get("ci") or [np.nan])[0] for k in H2_NULLS}
+    v["transmission_claim_survives"] = bool(
+        all(np.isfinite(x) and x > 0 for x in v["twin_vs_each_null_ci_low"].values())
+        and v["encompassing_p_twin"] < 0.05
+    )
+    return v
+
+
+def h2_rivals(df: pd.DataFrame, firms: np.ndarray, b: int, bounds: str = "full", var: str = "cfo") -> dict:
+    """Plan 5, S6: the H2 statistics for every rival beside the twin, on one common set of firm-years.
+
+    Each candidate is scored as the twin is: incremental rho against N1 and against each of N3, N4, N6 other than
+    itself (firm-bootstrap 95% intervals), and its coefficient in the encompassing regression of (realized - N1) on
+    the departures from N1 of the candidate and those rules (year effects, firm-clustered). `passes_h2_rule`: every
+    interval's lower end above zero and encompassing p < 0.05. N1 is the reference of both statistics."""
+    import statsmodels.api as sm
+
+    cm = common_mask(df, var)
+    d = df[cm].reset_index(drop=True)
+    f = firms[cm]
+    real, n1 = d[f"real_{var}"].to_numpy(float), d[f"N1_{var}"].to_numpy(float)
+    yrs = d["year"].to_numpy()
+    if bounds == "train":
+        lo, hi = row_bounds(real, yrs, "train")
+    else:
+        q = np.nanpercentile(real, [1, 99]) if len(d) else (np.nan, np.nan)
+        lo, hi = np.full(len(d), q[0]), np.full(len(d), q[1])
+    keep = np.isfinite(lo)
+    groups = pd.factorize(unit(d[keep]))[0]
+    fe = pd.get_dummies(d.loc[keep, "year"], prefix="y", drop_first=True, dtype=float).to_numpy()
+    yv = _wins(real, lo, hi)[keep] - _wins(n1, lo, hi)[keep]
+    out: dict = {"n": int(len(d)), "n_regression": int(keep.sum()), "winsor": bounds, "candidates": {}}
+    for c in [k for k in MODELS if k != "N1"]:
+        x = d[f"{c}_{var}"].to_numpy(float)
+        others = [k for k in H2_NULLS if k != c]
+        e: dict = {"rho_vs_N1": S.rho(x - n1, real - n1), "incremental": {}}
+        for base in others:
+            bx = d[f"{base}_{var}"].to_numpy(float)
+            e["incremental"][base] = {
+                "rho": S.rho(x - bx, real - bx),
+                "ci": S.ci(S.boot(S.rho, [x - bx, real - bx], f, b=b)),
+            }
+        cols = [c, *others]
+        X = np.column_stack(
+            [np.ones(int(keep.sum()))]
+            + [_wins(d[f"{k}_{var}"].to_numpy(float), lo, hi)[keep] - _wins(n1, lo, hi)[keep] for k in cols]
+            + ([fe] if fe.size else [])
+        )
+        try:
+            m = sm.OLS(yv, X).fit(cov_type="cluster", cov_kwds={"groups": groups})
+            e["encompassing"] = {"coef": float(m.params[1]), "t": float(m.tvalues[1]), "p": float(m.pvalues[1])}
+        except Exception as err:  # noqa: BLE001  (a singular design, e.g. a rival identical to another)
+            e["encompassing"] = {"error": f"{type(err).__name__}: {err}"}
+        lows = [v["ci"][0] for v in e["incremental"].values()]
+        e["ci_low_min"] = float(min(lows)) if lows else np.nan
+        p_enc = e["encompassing"].get("p", np.nan)
+        e["passes_h2_rule"] = bool(lows and all(np.isfinite(v) and v > 0 for v in lows) and p_enc < 0.05)
+        out["candidates"][c] = e
+    out["n_passing"] = int(sum(v["passes_h2_rule"] for v in out["candidates"].values()))
+    return out
+
+
 def section(rows: pd.DataFrame, b: int, panel: bool = True, b_family: int | None = None) -> dict:
     """`b_family`: bootstrap size of the pre-specified comparison family (default stats.B_FAMILY); panel only."""
     df = add_shrunk(frame(rows))
@@ -1029,8 +1227,17 @@ def section(rows: pd.DataFrame, b: int, panel: bool = True, b_family: int | None
         "n_firms": int(df["ticker"].nunique()),
         "n4_weights": {v: df.attrs.get(f"N4_weights_{v}") for v in ("cfo", "fcf")},
     }
+    out["n4_weights_prior_grid"] = {v: df.attrs.get(f"N4g10_weights_{v}") for v in ("cfo", "fcf")}
+    out["effective_rivals"] = {v: effective_rivals(df, v) for v in ("cfo", "fcf")}
+    out["effective_rivals_prior_grid"] = {v: effective_rivals(prior_grid(df), v) for v in ("cfo", "fcf")}
     for var in ("cfo", "fcf"):
-        e: dict = {"levels": levels(df, var), "incremental": incremental(df, var, firms, b)}
+        e: dict = {
+            # plan 5, S1 and S3: one common set of firm-years, limits from training years; each model's own sample
+            # (with the plans 1-4 all-year limits as `mae_w_fullwinsor`) for the supplement
+            "levels": levels(df, var),
+            "levels_permodel": levels(df, var, sample="per_model"),
+            "incremental": incremental(df, var, firms, b),
+        }
         e["worst_cumulative"] = {
             k: S.rho(
                 df[f"{k}_{var}_w"].to_numpy(float) - df[f"N1_{var}_w"].to_numpy(float),
@@ -1038,6 +1245,15 @@ def section(rows: pd.DataFrame, b: int, panel: bool = True, b_family: int | None
             )
             for k in MODELS[1:]
             if k != "N4"  # the shrunk margin is built from totals only
+        }
+        # plans 1-4: the minimum of the cumulative sum, not floored at zero (QUALITY_PLAN R6)
+        e["worst_cumulative_unfloored"] = {
+            k: S.rho(
+                df[f"{k}_{var}_wraw"].to_numpy(float) - df[f"N1_{var}_wraw"].to_numpy(float),
+                df[f"real_{var}_wraw"].to_numpy(float) - df[f"N1_{var}_wraw"].to_numpy(float),
+            )
+            for k in MODELS[1:]
+            if k != "N4"
         }
         down = (df["rev_change"] < -10).to_numpy()
         e["revenue_down_10pct"] = (
@@ -1050,9 +1266,12 @@ def section(rows: pd.DataFrame, b: int, panel: bool = True, b_family: int | None
             else {"n": int(down.sum())}
         )
         if panel:
-            e["encompassing"] = encompassing(df, var)
-            e["hybrid"] = hybrid(df, var, firms, b)  # revision 2: winsorization limits from all years
-            e["hybrid_train"] = hybrid(df, var, firms, b, bounds="train")
+            # plan 5, S3: training-year limits by default; the plans 1-4 all-year version under *_fullwinsor
+            e["encompassing"] = encompassing(df, var, bounds="train", lad=False)
+            e["encompassing_fullwinsor"] = encompassing(df, var, bounds="full")  # LAD here (unwinsorized anyway)
+            e["hybrid"] = hybrid(df, var, firms, b)  # training-year limits
+            e["hybrid_train"] = e["hybrid"]  # the key the secondary Holm family has always read
+            e["hybrid_fullwinsor"] = hybrid(df, var, firms, b, bounds="full")  # revision 2: limits from all years
             e["by_year"] = by_year(df, var)
             e["heterogeneity"] = heterogeneity(df, var)
         out[var] = e
@@ -1060,27 +1279,19 @@ def section(rows: pd.DataFrame, b: int, panel: bool = True, b_family: int | None
         out["inference"] = inference(df, S.B_FAMILY if b_family is None else int(b_family))
         out["decisions"] = decisions(df, firms, b)
         out["sensitivity"] = sensitivity(df, firms, b)
-        inc = out["cfo"]["incremental"]
-        best_null = max(("N3", "N4", "N6"), key=lambda k: inc["N1"][k]["rho"])
-        twin_vs_best = inc[best_null]["T1"]
-        out["verdict"] = {
-            # the decision rule written down before the run (docs/REVISION_PLAN.md, 2.6)
-            "twin_vs_N1": inc["N1"]["T1"]["rho"],
-            "best_null": best_null,
-            "best_null_vs_N1": inc["N1"][best_null]["rho"],
-            "null_share_of_twin": inc["N1"][best_null]["rho"] / inc["N1"]["T1"]["rho"]
-            if inc["N1"]["T1"]["rho"]
-            else None,
-            "twin_vs_best_null": twin_vs_best["rho"],
-            "twin_vs_best_null_ci": twin_vs_best.get("ci"),
-            "encompassing_p_twin": out["cfo"]["encompassing"]["all"]["p"]["T1"],
-            # the same coefficient with firm x year clustering and t(G-1) critical values
-            "encompassing_p_twin_two_way_tG1": out["cfo"]["encompassing"]["all_two_way_tG1"]["p"]["T1"],
+        # H2. `verdict` is the reported one (plans 3-4: N4 grid with 1.0, all-year winsorization limits) and stands
+        # as reported; the corrected statistics are beside it, one per correction (REVISION_PLAN_5, prior verdicts)
+        old = prior_grid(df)
+        inc_old, inc_new = h2_inputs(old, firms, b), h2_inputs(df, firms, b)
+        out["verdict"] = h2_verdict(inc_old, encompassing(old, "cfo", bounds="full", lad=False))
+        out["verdict_s4"] = h2_verdict(inc_new, out["cfo"]["encompassing_fullwinsor"])
+        out["verdict_s3"] = h2_verdict(inc_old, encompassing(old, "cfo", bounds="train", lad=False))
+        out["verdict_s3_s4"] = h2_verdict(inc_new, out["cfo"]["encompassing"])
+        out["verdict_corrections_flip"] = {
+            k: out[k]["transmission_claim_survives"] != out["verdict"]["transmission_claim_survives"]
+            for k in ("verdict_s4", "verdict_s3", "verdict_s3_s4")
         }
-        v = out["verdict"]
-        v["twin_vs_each_null_ci_low"] = {k: (inc[k]["T1"].get("ci") or [np.nan])[0] for k in ("N3", "N4", "N6")}
-        v["transmission_claim_survives"] = bool(
-            all(np.isfinite(x) and x > 0 for x in v["twin_vs_each_null_ci_low"].values())
-            and v["encompassing_p_twin"] < 0.05
-        )
+        # plan 5, S6: the same statistics for every rival, under the reported and the corrected specification
+        out["h2_rivals"] = h2_rivals(old, firms, b, bounds="full")
+        out["h2_rivals_corrected"] = h2_rivals(df, firms, b, bounds="train")
     return out

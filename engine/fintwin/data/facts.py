@@ -105,6 +105,12 @@ DURATION = {
     "capex": ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"],
     "dividends": ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock"],
     "buybacks": ["PaymentsForRepurchaseOfCommonStock"],
+    # REVISION_PLAN_5 G6: acquisitions and divestitures of businesses (read by the acquisition flag only)
+    "acquisitions": ["PaymentsToAcquireBusinessesNetOfCashAcquired", "PaymentsToAcquireBusinessesGross"],
+    "divestitures": [
+        "ProceedsFromDivestitureOfBusinessesNetOfCashDivested",
+        "ProceedsFromDivestitureOfBusinesses",
+    ],
     # non-cash impairments, added back to operating income (credit analysts' "adjusted EBIT")
     "imp_total": ["AssetImpairmentCharges"],
     "imp_gw_intang": ["GoodwillAndIntangibleAssetImpairment"],
@@ -507,6 +513,12 @@ def season_of(end: pd.Timestamp) -> int:
     return ((end - pd.Timedelta(days=10)).month - 1) // 3
 
 
+def _g10() -> bool:
+    from ..stochastic import spec as _spec  # local import: the data layer is otherwise spec-free
+
+    return _spec.active("G10")
+
+
 def _normalise_signs(q: pd.DataFrame, notes: list[str], flags: dict) -> None:
     """Payments are positive outflows (D13). A filer tagging most of them negative is flipped; isolated negative
     quarters (usually a YTD restatement de-cumulated into one quarter) become missing."""
@@ -518,6 +530,12 @@ def _normalise_signs(q: pd.DataFrame, notes: list[str], flags: dict) -> None:
             notes.append(f"{k}: reported with a negative sign, flipped")
             flags.setdefault("sign_flipped", []).append(k)
         neg = q[k] < 0
+        if k == "interest_expense" and neg.any() and _g10():
+            # REVISION_PLAN_5 G10: a negative interest expense is a sign convention, not a restatement: read as a cost
+            q.loc[neg, k] = -q.loc[neg, k]
+            notes.append(f"{k}: {int(neg.sum())} negative quarter(s) read as a cost (G10)")
+            flags.setdefault("sign_abs", {})[k] = int(neg.sum())
+            continue
         if neg.any():
             q.loc[neg, k] = np.nan
             notes.append(f"{k}: {int(neg.sum())} negative quarter(s) set to missing")

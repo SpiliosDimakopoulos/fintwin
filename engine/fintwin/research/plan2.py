@@ -335,9 +335,13 @@ def density_combos(g: pd.DataFrame, oy: np.ndarray, m: int = 50, b: int = 300) -
 
 
 # ---------------------------------------------------------------- 3 calibration
-def calibration(fc: pd.DataFrame, panel: pd.DataFrame) -> dict:
+def calibration(fc: pd.DataFrame, panel: pd.DataFrame, filing_dates: bool = True) -> dict:
     """Adaptive conformal inference (Gibbs and Candes 2021) on normalized errors in the order targets were reported,
-    and group-conditional rescaling with factors learned only from already-reported errors."""
+    and group-conditional rescaling with factors learned only from already-reported errors.
+
+    `filing_dates=True` (QUALITY_PLAN R9): an error is seen at its first filing date (`filed`, quarter end + 90 days
+    where unknown), the rule of `calibration.conformal`; False is plans 2-4 (quarter end + 90 days for every error)."""
+    from ..data.edgar import data_legacy
     from .calibration import REPORT_LAG, _norm
 
     feats = panel[["ticker", "year", "log_rev", "rev_vol"]].drop_duplicates(["ticker", "year"])
@@ -348,6 +352,8 @@ def calibration(fc: pd.DataFrame, panel: pd.DataFrame) -> dict:
         d["vol_t"] = pd.qcut(d["rev_vol"].rank(method="first"), 3, labels=False)
         d["stress"] = d["target_ts"].between("2020-03-01", "2021-03-31")
         d["seen"] = d["target_ts"] + REPORT_LAG
+        if filing_dates and "filed" in d and not data_legacy():  # the rule of backtest.batch.seen_by
+            d["seen"] = pd.to_datetime(d["filed"], errors="coerce").fillna(d["seen"])
         d = d.sort_values("origin_ts").reset_index(drop=True)
         res: dict = {}
         # (a) group-conditional split conformal: factor per (size tercile, volatility tercile) from reported errors
@@ -487,6 +493,16 @@ def thresholds(df: pd.DataFrame) -> dict:
 
 
 # ---------------------------------------------------------------- 4.4 other downturns
+# plan 5, S5: the 16-quarter run-rate outcome. The shards hold the 4-quarter one only (`abn_cum8` = `cum8` - 8 x the
+# trailing-four-quarter FCF / 4, in % of trailing revenue); `structural.m.fcf16` is a margin, and turning it into a
+# run-rate in dollars needs the 16 pre-cutoff quarters' revenue relative to the trailing four quarters'.
+ABN16 = "y_abn16_cum8"
+ABN16_NEEDED = (
+    "outcome field `abn16_cum8` (experiments._cumulative with run_rate = (sum of cfo - capex over the 16 pre-cutoff "
+    "quarters) / 16), or pre-cutoff 16-quarter revenue relative to trailing 4-quarter revenue beside structural.m"
+)
+
+
 def episodes(panel: pd.DataFrame, b: int) -> dict:
     """The 2020 exposure design applied to the 2015-16 commodity bust and the 2022 rate shock: each firm gets the
     leave-one-out median realized revenue shock of its industry, the twin is read at that depth."""
@@ -520,10 +536,16 @@ def episodes(panel: pd.DataFrame, b: int) -> dict:
             "share_with_decline": float(np.mean(drop < 0)),
         }
         cum = "y_cum8" in p and p["y_cum8"].notna().any()
-        for o, src in (
+        outcomes = [
             ("y_burn8", "y_cum8" if cum else "y_burn8"),
             ("y_abn_burn8", "y_abn_cum8" if cum else "y_abn_burn8"),
-        ):
+        ]
+        # plan 5, S5: abnormal burn against a 16-quarter run-rate, when the shards carry it (see ABN16_NEEDED)
+        if ABN16 in p and p[ABN16].notna().any():
+            outcomes.append(("y_abn16_burn8", ABN16))
+        else:
+            res["y_abn16_burn8"] = {"missing": ABN16_NEEDED}
+        for o, src in outcomes:
             sev = -p[src].to_numpy(float)
             fcf = -p["fcf_margin"].to_numpy(float)
             reg = exposure_regression(sev, depth, -h, fcf, -p["health_t0"].to_numpy(float), cluster)
@@ -531,10 +553,15 @@ def episodes(panel: pd.DataFrame, b: int) -> dict:
                 "outcome": src,
                 "rho_twin_at_exposure": S.rho(-h, sev),
                 "rho_exposure": S.rho(depth, sev),
+                "n_rho_twin_at_exposure": int((np.isfinite(h) & np.isfinite(sev)).sum()),
+                "n_rho_exposure": int((np.isfinite(depth) & np.isfinite(sev)).sum()),
                 "t": {k: v["t"] for k, v in reg["pre_specified"].items()},
                 "t_robust": {k: v["t"] for k, v in reg["robust"].items()},
                 "n": reg["n"],
                 "n_clusters": reg["n_clusters"],
+                # plan 5, S5: on the regression's firm-years, univariate rank correlations and one control at a time
+                "univariate_regression_sample": reg["univariate"],
+                "one_control_at_a_time": reg["one_control_at_a_time"],
             }
         out[str(year)] = res
     gen = [out[y]["y_abn_burn8"]["t"]["twin"] > 2 for y in ("2015", "2022") if y in out]
@@ -781,7 +808,8 @@ def section(panel_all: pd.DataFrame, panel: pd.DataFrame, fc: pd.DataFrame, b: i
         "revised_spec": _safe(revised_spec, df, firms, b),
         "overreaction": _safe(overreaction, df),
         "cash_hybrid": _safe(cash_hybrid, fc),
-        "calibration": _safe(calibration, fc, panel),
+        "calibration": _safe(calibration, fc, panel, False),  # as reported (plans 2-4): quarter end + 90 days
+        "calibration_filed": _safe(calibration, fc, panel, True),  # QUALITY_PLAN R9: actual filing dates
         "timing": _safe(timing, df, firms, max(b // 5, 50)),
         "thresholds": _safe(thresholds, df),
         "episodes": _safe(episodes, panel, b),

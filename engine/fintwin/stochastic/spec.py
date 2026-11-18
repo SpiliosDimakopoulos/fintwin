@@ -3,7 +3,9 @@
 FINTWIN_SPEC selects a specification:
 - ``v2-pre``: the pre-specified model of paper 2.0.0 (35% fixed-cost prior), no revision-3 fixes;
 - ``v2-rev``: the revised model of revision 2 (5% prior), no revision-3 fixes. The default: it is today's product;
-- ``v3``: every model fix of REVISION_PLAN_3 §1.
+- ``v3``: every model fix of REVISION_PLAN_3 §1;
+- ``v4a``, ``v4b``, ``v4p``, ``v4t``: the ladder of REVISION_PLAN_5 (v3 plus the G corrections, then acquisitions G6,
+  pooled structural parameters P1, filing text T1/T2).
 
 FINTWIN_FIXES overrides the fix set. ``F5,F4`` replaces it; ``+F9`` / ``-F3`` add to or remove from the spec's
 defaults; ``none`` empties it. IDs may carry the ``MM-`` prefix. The research pipeline can also switch in-process with
@@ -16,17 +18,32 @@ import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-SPECS = ("v2-pre", "v2-rev", "v3")
+SPECS = ("v2-pre", "v2-rev", "v3", "v4a", "v4b", "v4p", "v4t")
 DEFAULT_SPEC = "v2-rev"
 
 # Every switchable fix owned by the calibration workstream (B1). Others may register their own IDs: `active` accepts
 # any ID and simply reports whether it is in the active set.
 ALL_FIXES = ("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F12", "F13", "F14", "M2", "M3")
+# REVISION_PLAN_5: model corrections G2-G10 (G1 does not exist: outcome and benchmark corrections O1-O4 apply to every
+# spec), acquisitions G6, pooled structural parameters P1, filing text T1 (stated facts) and T2 (dated language model).
+PLAN5_FIXES = ("G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9", "G10", "P1", "T1", "T2")
 # MM-F9 (parameter uncertainty) and M2 (floating by sector) are §2 extensions: off in v3, so H2 is unaffected.
 # MM-F11 (debt-free loss-makers are not rated D) lives in model/sd_model.py (B2) and is part of v3; M1, M4, M5 are §2
 # extensions, off in every spec.
 V3_FIXES = (frozenset(ALL_FIXES) - {"F9", "M2"}) | {"F11"}
-DEFAULT_FIXES = {"v2-pre": frozenset(), "v2-rev": frozenset(), "v3": V3_FIXES}
+V4A_FIXES = V3_FIXES | {"G2", "G3", "G4", "G5", "G7", "G8", "G9", "G10"}
+V4B_FIXES = V4A_FIXES | {"G6"}
+V4P_FIXES = V4B_FIXES | {"P1"}
+V4T_FIXES = V4P_FIXES | {"T1", "T2"}
+DEFAULT_FIXES = {
+    "v2-pre": frozenset(),
+    "v2-rev": frozenset(),
+    "v3": V3_FIXES,
+    "v4a": V4A_FIXES,
+    "v4b": V4B_FIXES,
+    "v4p": V4P_FIXES,
+    "v4t": V4T_FIXES,
+}
 
 # The cumulative ladder of REVISION_PLAN_3 §0.2, as FINTWIN_FIXES values on top of FINTWIN_SPEC=v2-pre.
 LADDER = (
@@ -40,7 +57,7 @@ LADDER = (
 
 # Fixed-cost prior mean per specification. v3 keeps the pre-specified 35%: the 5% of v2-rev was selected under the
 # broken weighting (MM-F1), where choosing the prior meant choosing the estimate.
-FIXED_SHARE_PRIOR_BY_SPEC = {"v2-pre": 0.35, "v2-rev": 0.05, "v3": 0.35}
+FIXED_SHARE_PRIOR_BY_SPEC = {"v2-pre": 0.35, "v2-rev": 0.05, "v3": 0.35, "v4a": 0.35, "v4b": 0.35, "v4p": 0.35, "v4t": 0.35}
 
 _override: ContextVar[tuple[str | None, str | None] | None] = ContextVar("fintwin_spec_override", default=None)
 

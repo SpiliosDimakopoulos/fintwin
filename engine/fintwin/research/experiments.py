@@ -19,6 +19,7 @@ import re
 import time
 import warnings
 from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ from ..backtest.batch import (
 )
 from ..backtest.scoring import crps_gaussian, crps_samples
 from ..data.facts import CompanyData, contiguous, contiguous_mask, load_company
+from ..data.fred import NBER_ANNOUNCED, deflator_to_2014
 from ..data.fred import macro_quarterly as _macro_quarterly
 from ..model.ratings import rating_rank
 from ..model.ratings import spreads_asof as _spreads_asof
@@ -56,10 +58,11 @@ except ImportError:
     _spec_mod = None  # type: ignore[assignment]  # optional module: the local fallback below is used
 
 # ---------------------------------------------------------------- specification (REVISION_PLAN_3 §0.2)
-SPECS = ("v2-pre", "v2-rev", "v3")
+SPECS = ("v2-pre", "v2-rev", "v3", "v4a", "v4b", "v4p", "v4t")
+V4_SPECS = ("v4a", "v4b", "v4p", "v4t")
 MODEL_FIXES = tuple(f"F{i}" for i in range(1, 15))
 # ids decided in this module: E1 (point = median of path totals) and the opt-in real-time recession state (SW17)
-LOCAL_FIXES = {"E1": ("v3",), "SW17": ()}
+LOCAL_FIXES = {"E1": ("v3", *V4_SPECS), "SW17": V4_SPECS}
 # the cumulative ladder, in the pre-specified order; "+F3" is the full v3 (which also carries F6-F14 and E1)
 LADDER: list[tuple[str, dict[str, str]]] = [
     ("v2-pre", {"FINTWIN_SPEC": "v2-pre"}),
@@ -69,6 +72,14 @@ LADDER: list[tuple[str, dict[str, str]]] = [
     ("v2-pre+F5+F4+F1+F2", {"FINTWIN_SPEC": "v2-pre", "FINTWIN_FIXES": "F5,F4,F1,F2"}),
     ("v3", {"FINTWIN_SPEC": "v3"}),
     ("v2-rev", {"FINTWIN_SPEC": "v2-rev"}),
+    # REVISION_PLAN_5 ladder (v4p/v4t also need FINTWIN_POOL / FINTWIN_TEXT, set by the plan-5 server script)
+    ("v4a", {"FINTWIN_SPEC": "v4a"}),
+    ("v4b", {"FINTWIN_SPEC": "v4b"}),
+    ("v4p", {"FINTWIN_SPEC": "v4p"}),
+    ("v4t", {"FINTWIN_SPEC": "v4t"}),
+    # G3 sensitivity (1,000-firm sample): the cash target at 30% and 45% of opening cash
+    ("v4a+cash30", {"FINTWIN_SPEC": "v4a", "FINTWIN_CASH_TARGET": "0.30"}),
+    ("v4a+cash45", {"FINTWIN_SPEC": "v4a", "FINTWIN_CASH_TARGET": "0.45"}),
 ]
 
 
@@ -93,28 +104,40 @@ def _fixes_env() -> list[str] | None:
 def fix_active(fid: str) -> bool:
     """Is fix `fid` on? FINTWIN_FIXES, when set, replaces the specification's default set."""
     fid = fid.upper().removeprefix("MM-")
-    if fid in MODEL_FIXES and _spec_mod is not None and hasattr(_spec_mod, "active"):
-        return bool(_spec_mod.active(fid))
+    if _spec_mod is not None and hasattr(_spec_mod, "active"):
+        if fid in MODEL_FIXES or fid in getattr(_spec_mod, "PLAN5_FIXES", ()):
+            return bool(_spec_mod.active(fid))
     fx = _fixes_env()
     if fx is not None:
         return fid in fx
     if fid in LOCAL_FIXES:
         return spec_name() in LOCAL_FIXES[fid]
-    return spec_name() == "v3" and fid in MODEL_FIXES
+    return spec_name() in ("v3", *V4_SPECS) and fid in MODEL_FIXES
 
 
 def active_fixes() -> list[str]:
-    return [f for f in (*MODEL_FIXES, *LOCAL_FIXES) if fix_active(f)]
+    plan5 = getattr(_spec_mod, "PLAN5_FIXES", ()) if _spec_mod is not None else ()
+    return [f for f in (*MODEL_FIXES, *LOCAL_FIXES, *plan5) if fix_active(f)]
 
 
 def spec_label() -> str:
     """Name of the cache directory of this specification: the spec, plus the explicit fix list if one is set."""
     fx = _fixes_env()
     label = spec_name() + ("".join(f"+{f}" for f in fx) if fx is not None else "")
+    if os.environ.get("FINTWIN_POOL_ONLY") == "1":
+        label += "+poolonly"
+    if os.environ.get("FINTWIN_TEXT_VARIANT"):  # P5-4 controls (masked placebo, 2024 vintage): never the v4t cache
+        label += "+txt" + os.environ["FINTWIN_TEXT_VARIANT"]
+    if os.environ.get("FINTWIN_CASH_TARGET"):
+        label += f"+cash{round(float(os.environ['FINTWIN_CASH_TARGET']) * 100)}"
     if os.environ.get("FINTWIN_SELECTION"):
         label += "-wf"  # second pass: tau / lambda chosen walk-forward
     if data_legacy():
         label += "-legacydata"
+    if os.environ.get("FINTWIN_POOL") and not fix_active("P1"):
+        label += "-pooltable"  # a table set for a spec that does not use it is recorded, never silently ignored
+    if ma_hindsight():
+        label += "-mahindsight"  # the labelled G6 side result never shares a cache with a rung
     return re.sub(r"[^A-Za-z0-9+._-]", "_", label)
 
 
@@ -132,9 +155,27 @@ def spec_record() -> dict:
         "fixes_env": os.environ.get("FINTWIN_FIXES"),
         "prior": research_prior(),
         "selection": _digest(Path(sel)) if sel else None,
+        "pool": _digest(Path(os.environ["FINTWIN_POOL"])) if os.environ.get("FINTWIN_POOL") else None,
+        "text": _digest(Path(os.environ["FINTWIN_TEXT"]) / "table.json")
+        if os.environ.get("FINTWIN_TEXT") and (Path(os.environ["FINTWIN_TEXT"]) / "table.json").exists()
+        else None,
         "data_legacy": data_legacy(),
         "b1_spec": _spec_mod is not None,
+        "ma_hindsight": ma_hindsight(),
+        "cash_target": os.environ.get("FINTWIN_CASH_TARGET"),
+        "pool_only": os.environ.get("FINTWIN_POOL_ONLY") == "1",
+        "text_variant": os.environ.get("FINTWIN_TEXT_VARIANT"),
     }
+
+
+def ma_hindsight() -> bool:
+    """FINTWIN_MA_HINDSIGHT=1: the G6 hindsight side result (REVISION_PLAN_5). Firm-years flagged on their eight
+    outcome quarters calibrate with `ma_scale`; never a rung or the selection."""
+    return os.environ.get("FINTWIN_MA_HINDSIGHT", "0") == "1"
+
+
+# assumptions added to every calibration of the current firm-year (the hindsight side result sets `ma_scale`)
+_EXTRA_ASSUMPTIONS: ContextVar[dict | None] = ContextVar("fintwin_extra_assumptions", default=None)
 
 
 def _digest(path: Path) -> str | None:
@@ -148,38 +189,60 @@ class Failures:
 
     def __init__(self) -> None:
         self.d: dict[str, dict] = {}
+        # the same counts by cutoff (REVISION_PLAN_5, O2 / O4): {stage: {cutoff: {"n", "failed", "skipped"}}}
+        self.cut: dict[str, dict[str, dict]] = {}
 
-    def _slot(self, where: str) -> dict:
-        return self.d.setdefault(where, {"n": 0, "failed": {}, "skipped": {}})
+    def _slot(self, where: str, cutoff: str | None = None) -> list[dict]:
+        out = [self.d.setdefault(where, {"n": 0, "failed": {}, "skipped": {}})]
+        if cutoff:
+            out.append(self.cut.setdefault(where, {}).setdefault(str(cutoff), {"n": 0, "failed": {}, "skipped": {}}))
+        return out
 
-    def tried(self, where: str) -> None:
-        self._slot(where)["n"] += 1
+    def tried(self, where: str, cutoff: str | None = None) -> None:
+        for s in self._slot(where, cutoff):
+            s["n"] += 1
 
-    def fail(self, where: str, why: BaseException | str) -> None:
+    def fail(self, where: str, why: BaseException | str, cutoff: str | None = None) -> None:
         k = why if isinstance(why, str) else type(why).__name__
-        f = self._slot(where)["failed"]
-        f[k] = f.get(k, 0) + 1
+        for s in self._slot(where, cutoff):
+            s["failed"][k] = s["failed"].get(k, 0) + 1
 
-    def skip(self, where: str, why: str) -> None:
-        s = self._slot(where)["skipped"]
-        s[why] = s.get(why, 0) + 1
+    def skip(self, where: str, why: str, cutoff: str | None = None) -> None:
+        for s in self._slot(where, cutoff):
+            s["skipped"][why] = s["skipped"].get(why, 0) + 1
 
     def to_dict(self) -> dict:
         return self.d
 
+    def by_cutoff(self) -> dict:
+        return self.cut
+
 
 def failure_summary(shards: list[dict]) -> dict:
-    """Pool the shards' failure counts: attempts, failures by type and the failed share, per stage."""
+    """Pool the shards' failure counts: attempts, failures by type and the failed share, per stage; also by cutoff
+    (`by_cutoff`, from the shards' `failures_by_cutoff`) and the number of companies with a failure (`companies`)."""
+
+    def add(o: dict, s: dict) -> None:
+        o["n"] += int(s.get("n", 0))
+        for kind in ("failed", "skipped"):
+            for k, v in (s.get(kind) or {}).items():
+                o[kind][k] = o[kind].get(k, 0) + int(v)
+
     out: dict[str, dict] = {}
-    for r in shards:
+    failed_by: dict[str, set] = {}
+    for i, r in enumerate(shards):
+        who = r.get("cik") or r.get("ticker") or i
         for where, s in (r.get("failures") or {}).items():
+            add(out.setdefault(where, {"n": 0, "failed": {}, "skipped": {}}), s)
+            if s.get("failed"):
+                failed_by.setdefault(where, set()).add(who)
+        for where, cuts in (r.get("failures_by_cutoff") or {}).items():
             o = out.setdefault(where, {"n": 0, "failed": {}, "skipped": {}})
-            o["n"] += int(s.get("n", 0))
-            for kind in ("failed", "skipped"):
-                for k, v in (s.get(kind) or {}).items():
-                    o[kind][k] = o[kind].get(k, 0) + int(v)
-    for o in out.values():
+            for cut, s in cuts.items():
+                add(o.setdefault("by_cutoff", {}).setdefault(cut, {"n": 0, "failed": {}, "skipped": {}}), s)
+    for where, o in out.items():
         o["failed_share"] = sum(o["failed"].values()) / o["n"] if o["n"] else 0.0
+        o["companies"] = len(failed_by.get(where, ()))
     return out
 
 
@@ -325,6 +388,22 @@ def _selection(path: str) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def pooled_prior(asof: str | None, industry: str | None) -> dict:
+    """REVISION_PLAN_5 P1: the industry's walk-forward prior from the table FINTWIN_POOL points at ({} otherwise).
+
+    Under P1 a missing table is an error, never a silent unpooled run (the lesson of the -wf label, round 2 N2)."""
+    path = os.environ.get("FINTWIN_POOL")
+    if not path:
+        if fix_active("P1"):
+            raise RuntimeError("spec with P1 but FINTWIN_POOL is not set: build the table with `pool` first")
+        return {}
+    if not asof:
+        return {}
+    from .pooling import prior_for
+
+    return prior_for(_selection(path), asof, industry or "_all")
+
+
 def selected_assumptions(asof: str | None) -> dict:
     """tau / lambda selected walk-forward for the cutoff's year (FINTWIN_SELECTION points at the table); {} otherwise."""
     path = os.environ.get("FINTWIN_SELECTION")
@@ -339,12 +418,8 @@ def selected_assumptions(asof: str | None) -> dict:
     return out
 
 
-# NBER announcement dates of the turning points after 2008 (nber.org/research/business-cycle-dating): before a
+# NBER turning points with their announcement dates live in data/fred.py (one table for SW17 and G2): before a
 # trough is announced, a forecaster at the cutoff still believes the economy is in recession.
-NBER_ANNOUNCED = [("2007-12-01", "peak", "2008-12-01"), ("2009-06-01", "trough", "2010-09-20"),
-                  ("2020-02-01", "peak", "2020-06-08"), ("2020-04-01", "trough", "2021-07-19")]  # fmt: skip
-
-
 def realtime_recession(asof: str) -> bool | None:
     """In recession as known on `asof` from announced turning points only (None before 2008: not tracked)."""
     t = pd.Timestamp(asof)
@@ -358,7 +433,25 @@ def calibrate(hist: CompanyData, macro: pd.DataFrame, horizon: int = 12, assumpt
     """Calibration with the rating-spread table that was published at the cutoff (the product uses January 2026's)."""
     # research runs keep the pre-specified 35% prior (5% under v2-rev); tau / lambda chosen walk-forward if a table
     # is given, otherwise the calibration defaults
-    a = {"fixed_share_prior": research_prior(), **selected_assumptions(hist.asof), **(assumptions or {})}
+    a = {
+        "fixed_share_prior": research_prior(),
+        **selected_assumptions(hist.asof),
+        **(_EXTRA_ASSUMPTIONS.get() or {}),
+        **(assumptions or {}),
+    }
+    if (fix_active("T1") or fix_active("T2")) and "text" not in a:
+        from .text_stage import root, text_inputs
+
+        if root() is None:
+            raise RuntimeError("spec with T1/T2 but FINTWIN_TEXT is not set: run the text stage first")
+        a["text"] = text_inputs(hist.asof, hist.ticker)
+    if os.environ.get("FINTWIN_CASH_TARGET"):  # the pre-specified G3 sensitivity (REVISION_PLAN_5, choices at approval)
+        a["cash_target_frac"] = float(os.environ["FINTWIN_CASH_TARGET"])
+    if os.environ.get("FINTWIN_POOL_ONLY") == "1" and fix_active("P1"):  # descriptive variant: the prior alone
+        a["pool_only"] = True
+        a[WF_KEYS["tau"]] = 1e-6  # the cost split collapses onto the pooled elasticity
+    if fix_active("P1") and "pool_prior" not in a:
+        a["pool_prior"] = pooled_prior(hist.asof, classify(hist.ticker)[0] or "_all")
     p = _calibrate(hist, macro, horizon, a)
     pit = spreads_asof(hist.asof)
     if pit is not None:
@@ -397,14 +490,62 @@ def _ttm(q: pd.DataFrame, col: str) -> float:
 
 
 def _following(
-    full: pd.DataFrame, last: pd.Timestamp, n: int, fails: Failures | None = None, where: str = ""
+    full: pd.DataFrame,
+    last: pd.Timestamp,
+    n: int,
+    fails: Failures | None = None,
+    where: str = "",
+    cutoff: str | None = None,
 ) -> pd.DataFrame:
     """The next `n` quarters after `last`, or an empty frame if any is unreported or a gap row; the reason
-    is recorded as an exclusion under `where`, never silently."""
+    is recorded as an exclusion under `where` (and its cutoff, O2), never silently."""
     nxt, why = following(full, last, n)
     if why and fails is not None:
-        fails.skip(where, why)
+        fails.skip(where, why, cutoff)
     return nxt
+
+
+def _sum4(s: pd.Series) -> float | None:
+    """Sum of four reported quarters, or None if any is untagged (O1: an untagged quarter is unknown, not zero).
+    The legacy data layer keeps its zero-fill so old runs reproduce."""
+    if data_legacy():
+        return float(s.fillna(0).sum())
+    v = s.to_numpy(float)
+    return float(v.sum()) if len(v) == 4 and np.isfinite(v).all() else None
+
+
+def _div_payer(pre: pd.DataFrame) -> bool | None:
+    """Did the company pay dividends over the four quarters before the cutoff? A company that tags no dividend in any
+    of them is a non-payer (non-payers rarely tag a zero); a positive dividend next to an untagged quarter leaves the
+    run-rate unknown (None)."""
+    s = pre["dividends"].tail(4)
+    if data_legacy():
+        return bool(s.fillna(0).sum() > 0)
+    v = s.to_numpy(float)
+    fin = np.isfinite(v)
+    if len(v) == 4 and fin.all():
+        return bool(v.sum() > 0)
+    return None if (v[fin] > 0).any() else False
+
+
+def _div_outcome(pre: pd.DataFrame, post: pd.DataFrame, fails: Failures, where: str, cutoff: str | None) -> dict:
+    """Dividend run-rate before the cutoff and the cut after it under O1: a cut needs four reported quarters on both
+    sides; every firm-year the rule removes is counted under `where`."""
+    payer = _div_payer(pre)
+    div_pre = _sum4(pre["dividends"].tail(4)) if payer else (0.0 if payer is False else None)
+    div_post = _sum4(post["dividends"].head(4)) if len(post) >= 4 else None
+    if payer is None:
+        fails.skip(where, "div_pre_untagged", cutoff)
+    elif payer and div_post is None:
+        fails.skip(where, "div_post_untagged", cutoff)
+    ok = bool(payer) and div_pre is not None and div_pre > 0 and div_post is not None
+    return {
+        "payer": payer,
+        "div_pre": div_pre,
+        "div_post": div_post,
+        "cut": bool(div_post < 0.5 * div_pre) if ok else None,
+        "ratio": _f(div_post / div_pre) if ok else None,
+    }
 
 
 def health_at_open(p: dict) -> float:
@@ -461,9 +602,13 @@ def _features(c: CompanyData, p: dict) -> dict:
     wc = ca - cl
     # Altman (1968) Z'' for non-manufacturers (book equity); Ohlson (1980) O-score; Zmijewski (1984)
     z2 = 6.56 * wc / ta + 3.26 * re / ta + 6.72 * ebit / ta + 1.05 * eq / tl
+    # O3: Ohlson's size term deflates total assets by a price index (his GNP price-level index); the GDP implicit
+    # price deflator stands in for it (FRED discontinued the GNP deflator), rebased to 2014 dollars as published at
+    # the cutoff. Applies to every specification; the legacy data layer keeps nominal assets.
+    ta_real = ta if data_legacy() else ta * deflator_to_2014(c.asof)
     o = (
         -1.32
-        - 0.407 * np.log(max(ta, 1.0) / 1e6)
+        - 0.407 * np.log(max(ta_real, 1.0) / 1e6)
         + 6.03 * tl / ta
         - 1.43 * wc / ta
         + 0.0757 * cl / ca
@@ -693,19 +838,19 @@ def structural(
     capex cuts) for the twin, each loop ablation, a static runway calculation with the same inputs, and reality.
     """
     fails = fails if fails is not None else Failures()
-    fails.tried("structural")  # the denominator of the exclusion shares
+    fails.tried("structural", hist.asof)  # the denominator of the exclusion shares
     pre = hist.quarters
-    nxt = _following(full, pre.index[-1], n_q, fails, "structural")
+    nxt = _following(full, pre.index[-1], n_q, fails, "structural", hist.asof)
     rev_ttm = _ttm(pre, "revenue")
     if len(nxt) < n_q:
         return {}
     if nxt["revenue"].isna().any() or not np.isfinite(rev_ttm) or rev_ttm <= 0:
-        fails.skip("structural", "revenue")
+        fails.skip("structural", "revenue", hist.asof)
         return {}
     rev = nxt["revenue"].to_numpy(float)
     cfo, capex = nxt["cfo"].to_numpy(float), nxt["capex"].to_numpy(float)
     if not (np.isfinite(cfo).all() and np.isfinite(capex).all()):
-        fails.skip("structural", "cash_flow")
+        fails.skip("structural", "cash_flow", hist.asof)
         return {}
     T = int(p["horizon"])
     scn = build_scenario({}, T)
@@ -768,13 +913,14 @@ def structural(
     # realized liquidity decisions
     cash_like = (nxt["cash"] + nxt["short_investments"].fillna(0)).to_numpy(float)
     debt = nxt["total_debt"].to_numpy(float)
-    div_pre = float(pre["dividends"].tail(4).fillna(0).sum())
+    dv = _div_outcome(pre, nxt, fails, "structural", hist.asof)
+    div_pre = dv["div_pre"]
     out["events"] = {
         "cash_half": bool(np.nanmin(cash_like) < 0.5 * p["cash0"])
         if p["cash0"] > 0 and np.isfinite(cash_like).any()
         else None,
         "debt_raise": bool((np.nanmax(debt) - p["debt0"]) / rev_ttm > 0.05) if np.isfinite(debt).any() else None,
-        "div_cut": bool(nxt["dividends"].head(4).fillna(0).sum() < 0.5 * div_pre) if div_pre > 0 else None,
+        "div_cut": dv["cut"],
         "capex_cut": bool(capex[:4].sum() < 0.75 * capex_pre) if capex_pre > 0 else None,
     }
 
@@ -788,7 +934,7 @@ def structural(
         if p["cash0"] > 0 and np.isfinite(cash_like).any()
         else None,
         "debt_raise_ratio": _f(np.nanmax(raise_real)) if np.isfinite(debt).any() else None,
-        "div_ratio": _f(nxt["dividends"].head(4).fillna(0).sum() / div_pre) if div_pre > 0 else None,
+        "div_ratio": dv["ratio"],
         "capex_ratio": _f(capex[:4].sum() / capex_pre) if capex_pre > 0 else None,
         "t_cash_half": first(cash_like < 0.5 * p["cash0"]) if p["cash0"] > 0 else None,
         "t_debt_raise": first(np.nan_to_num(raise_real, nan=-1) > 0.05),
@@ -796,7 +942,9 @@ def structural(
     # an analyst's static runway with the same inputs: the trailing FCF margin on the realized revenue, minus the
     # current dividend and buyback run-rate and the maturities the company does not usually refinance
     fcf_m = out["m"]["fcf4"]
-    if fcf_m is not None:
+    if fcf_m is not None and div_pre is None:  # O1: the dividend run-rate is unknown, so is the static runway
+        fails.skip("static", "div_pre_untagged", hist.asof)
+    if fcf_m is not None and div_pre is not None:
         payout_q = div_pre / 4 + float(pre["buybacks"].tail(4).fillna(0).sum()) / 4
         mat = np.asarray(p["maturities_q"][:n_q], float) * (1 - p["refi_ratio"])
         path = p["cash0"] + np.cumsum(fcf_m * rev - payout_q - mat)
@@ -812,7 +960,7 @@ def structural(
     if macro is not None:
         sens = {}
         for name, var in SENSITIVITY.items():
-            fails.tried("sens")
+            fails.tried("sens", hist.asof)
             try:
                 pv = calibrate(hist, macro, T, var["calib"]) if "calib" in var else dict(p)
                 pv = {**pv, "sector_tol": 1.0, **var.get("p", {})}
@@ -831,14 +979,14 @@ def structural(
                     "health": summarize(base)["health_score"],
                 }
             except Exception as e:  # a variant that cannot be calibrated is skipped, but counted by type
-                fails.fail("sens", e)
+                fails.fail("sens", e, hist.asof)
                 out.setdefault("sens_failed", {})[name] = type(e).__name__
         out["sens"] = sens
         # walk-forward grids of tau / lambda (only when F1 / F3 are on); `select` picks one per cutoff year from
         # earlier years, and a second pass (FINTWIN_SELECTION) runs the whole shard at the chosen values
         grid = {}
         for name, a in ({} if os.environ.get("FINTWIN_SELECTION") else wf_grid()).items():
-            fails.tried("grid")
+            fails.tried("grid", hist.asof)
             try:
                 pv = {**calibrate(hist, macro, T, a), "sector_tol": 1.0}
                 sim = _finite(simulate(pv, scn, draw_shocks(pv, 500, T, seed=3), DEFAULT_LEVERS))
@@ -848,7 +996,7 @@ def structural(
                     "cfo_sm": round(float(np.sum(np.median(sim["cfo"][:, :n_q], axis=0))) / rev_ttm * 100, 4),
                 }
             except Exception as e:
-                fails.fail("grid", e)
+                fails.fail("grid", e, hist.asof)
         if grid:
             out["grid"] = grid
     return out
@@ -868,6 +1016,17 @@ def _cumulative(pre: pd.DataFrame, window: pd.DataFrame, rev_ttm: float) -> tupl
     if not np.isfinite(run_rate):
         return total, np.nan
     return total, float((fcf.fillna(run_rate) - run_rate).sum() / rev_ttm * 100)
+
+
+def _abn16(pre: pd.DataFrame, window: pd.DataFrame, rev_ttm: float) -> float:
+    """REVISION_PLAN_5 S5: cumulative FCF over the window minus a 16-quarter run-rate (sum of cfo - capex over the 16
+    pre-cutoff quarters / 16), % of trailing revenue; NaN unless all 16 quarters are reported and consecutive."""
+    h = pre.tail(16)
+    hist = (h["cfo"] - h["capex"]).to_numpy(float)
+    fcf = (window["cfo"] - window["capex"]).to_numpy(float)
+    if len(hist) < 16 or not np.isfinite(hist).all() or not contiguous(h, 16) or not np.isfinite(fcf).all():
+        return np.nan
+    return float((fcf - hist.mean()).sum() / rev_ttm * 100)
 
 
 def _fcf_path(window: pd.DataFrame) -> pd.Series | None:
@@ -908,13 +1067,16 @@ def covid_outcomes(hist: CompanyData, full: pd.DataFrame, fails: Failures | None
         fails.skip("covid_outcomes", "gap")  # a hole in the window would shift every cumulative value
         return {}
     path = _fcf_path(win)
+    if path is None:  # O1: an untagged CFO or capex quarter makes the FCF outcomes missing, counted
+        fails.skip("covid_outcomes", "fcf_untagged", hist.asof)
     fcf = path.cumsum() if path is not None else pd.Series(np.nan, index=win.index)
     yoy = (full["revenue"] / full["revenue"].shift(4) - 1).reindex(win.index)
     cash_like = (full["cash"] + full["short_investments"].fillna(0)).reindex(win.index)
     cash_pre = float(pre["cash"].iloc[-1] + np.nan_to_num(pre["short_investments"].iloc[-1]))
-    div_pre = float(pre["dividends"].tail(4).fillna(0).sum())
     post = win[win.index > pd.Timestamp("2020-04-15")].head(4)
-    div_post = float(post["dividends"].fillna(0).sum())
+    dv = _div_outcome(pre, post, fails, "covid_outcomes", hist.asof)
+    if data_legacy() and dv["cut"] is None:  # the legacy rule: fewer than four quarters after April 2020 is no cut
+        dv["cut"] = False
     cum, abn_cum = _cumulative(pre, win, rev_ttm)
     return {
         "burn": _f(fcf.min() / rev_ttm * 100),
@@ -924,8 +1086,8 @@ def covid_outcomes(hist: CompanyData, full: pd.DataFrame, fails: Failures | None
         "rev_drop": _f(yoy.min() * 100),
         "debt_raise": _f((win["total_debt"].max() - pre["total_debt"].iloc[-1]) / rev_ttm * 100),
         "cash_min_ratio": _f(cash_like.min() / cash_pre) if cash_pre > 0 else None,
-        "div_payer": bool(div_pre > 0),
-        "div_cut": bool(div_pre > 0 and len(post) == 4 and div_post < 0.5 * div_pre),
+        "div_payer": dv["payer"],
+        "div_cut": dv["cut"] if dv["payer"] is not False else False,
     }
 
 
@@ -950,16 +1112,18 @@ def _liquidity_realized(pre: pd.DataFrame, nxt: pd.DataFrame, rev_ttm: float) ->
 def _distress(hist: CompanyData, full: pd.DataFrame, filed: dict | None = None, fails: Failures | None = None) -> dict:
     """Outcomes over the eight reported quarters after the cutoff's last known quarter."""
     fails = fails if fails is not None else Failures()
-    fails.tried("outcome")
+    fails.tried("outcome", hist.asof)
     pre = hist.quarters
-    nxt = _following(full, pre.index[-1], 8, fails, "outcome")
+    nxt = _following(full, pre.index[-1], 8, fails, "outcome", hist.asof)
     rev_ttm = _ttm(pre, "revenue")
     if len(nxt) < 8:
         return {}
     if not np.isfinite(rev_ttm) or rev_ttm <= 0:
-        fails.skip("outcome", "revenue")
+        fails.skip("outcome", "revenue", hist.asof)
         return {}
     path = _fcf_path(nxt)
+    if path is None:  # O1: an untagged CFO or capex quarter makes the FCF outcomes missing, counted
+        fails.skip("outcome", "fcf_untagged", hist.asof)
     fcf = path.cumsum() if path is not None else pd.Series(np.nan, index=nxt.index)
     both = pd.concat([pre.tail(4), nxt])
     ebit = (both["operating_income"]).rolling(4).sum().tail(8)
@@ -971,17 +1135,17 @@ def _distress(hist: CompanyData, full: pd.DataFrame, filed: dict | None = None, 
         yoy_ok = contiguous_mask(both, 5)
     icr = (ebit / intr.where(intr > 0)).dropna()
     icr0 = _ttm(pre, "operating_income") / max(_ttm(pre, "interest_expense"), 1e-9)
-    div_pre = float(pre["dividends"].tail(4).fillna(0).sum())
-    div_post = float(nxt["dividends"].head(4).fillna(0).sum())
+    dv = _div_outcome(pre, nxt, fails, "outcome", hist.asof)
     return {
         "burn8": _f(fcf.min() / rev_ttm * 100),
         "cum8": _f(_cumulative(pre, nxt, rev_ttm)[0]),
         "abn_cum8": _f(_cumulative(pre, nxt, rev_ttm)[1]),
+        "abn16_cum8": _f(_abn16(pre, nxt, rev_ttm)),
         "abn_burn8": _f(_abnormal_burn(pre, nxt, rev_ttm)),
         "icr0": _f(icr0),
         "icr_min": _f(icr.min()) if len(icr) else None,
-        "div_payer": bool(div_pre > 0),
-        "div_cut": bool(div_pre > 0 and div_post < 0.5 * div_pre),
+        "div_payer": dv["payer"],
+        "div_cut": dv["cut"] if dv["payer"] is not False else False,
         "rev_drop8": _f(
             ((nxt["revenue"] / both["revenue"].shift(4).reindex(nxt.index) - 1).where(yoy_ok.reindex(nxt.index))).min()
             * 100
@@ -1208,62 +1372,31 @@ def company(
             fails.fail("covid", e)
     if full_data is None:
         res["failures"] = fails.to_dict()
+        res["failures_by_cutoff"] = fails.by_cutoff()
         return res
     hists: dict[str, CompanyData] = {}
     for origin in fc_origins if with_forecasts else panel_origins:
-        fails.tried("load")
+        fails.tried("load", origin)
         try:
             with _timed(tm, "load"):
                 hists[origin] = load_company(ticker, asof=origin)
         except Exception as e:
             res["errors"][origin] = f"{type(e).__name__}: {e}"
-            fails.fail("load", e)
+            fails.fail("load", e, origin)
     panel = []
     for origin in panel_origins:
         hist = hists.get(origin)
         if hist is None or not usable(hist, origin):
             continue
-        fails.tried("panel")
+        fails.tried("panel", origin)
         try:
-            with _timed(tm, "calibrate"):
-                p = calibrate(hist, macro_quarterly(origin), 12)
-            raw = {**p, "sector_tol": 1.0}
-            with _timed(tm, "depth_grid"):
-                dg = {f"{d:.2f}": _run(raw, {**DEMAND, "sales_depth": d}, {}, 1000, 12, 7) for d in DEPTHS}
-            with _timed(tm, "base3"):
-                runs3 = {
-                    "base": _run(raw, {}, {}, 1500, 12, 5),
-                    "recession": _run(raw, PRESETS["recession"]["knobs"], {}, 1500, 12, 5),
-                    "base_no_loops": _run(raw, {}, ABLATIONS["no_loops"], 1500, 12, 5),
-                }
-            feats = features(hist, p)
-            with _timed(tm, "outcome"):
-                outcome = _distress(hist, full_data.quarters, filed, fails)
-            with _timed(tm, "structural"):
-                st = structural(hist, raw, full_data.quarters, macro_quarterly(origin), fails=fails)
-            row: dict[str, Any] = {
-                "origin": origin,
-                **runs3,
-                "features": feats,
-                "outcome": outcome,
-                "structural": st,
-                # stress score under a generic demand shock of each depth (no market closure), so that `stats`
-                # can give each firm its industry's realized shock in any episode (2015-16, 2020, 2022)
-                "depth_grid": {k: v["health"] for k, v in dg.items()},
-                "rec_state0": p.get("rec_state0"),
-                "rec_realtime": realtime_recession(origin),
-                "selected": selected_assumptions(origin) or None,
-            }
-            # P(cash + undrawn < 0 within 4 / 8 quarters) at each shock depth and under the Recession preset
-            row["liquidity"] = {
-                "grid": {k: [v.get("short4"), v.get("short8")] for k, v in dg.items()},
-                "recession": [row["recession"].get("short4"), row["recession"].get("short8")],
-                "base": [row["base"].get("short4"), row["base"].get("short8")],
-            }
-            panel.append(row)
+            hind = ma_hindsight_flag(hist.quarters, following(full_data.quarters, hist.quarters.index[-1], 8)[0])
+            scaled = ma_hindsight() and bool(hind["flag"])
+            with _assume({"ma_scale": True} if scaled else {}):
+                _panel_row(hist, origin, full_data, filed, fails, tm, res, panel, hind, scaled)
         except Exception as e:
             res["errors"][f"panel {origin}"] = f"{type(e).__name__}: {e}"
-            fails.fail("panel", e)
+            fails.fail("panel", e, origin)
     res["panel"] = panel
     if with_forecasts:
         try:
@@ -1273,4 +1406,101 @@ def company(
             res["errors"]["forecasts"] = f"{type(e).__name__}: {e}"
             fails.fail("forecasts", e)
     res["failures"] = fails.to_dict()
+    res["failures_by_cutoff"] = fails.by_cutoff()
     return res
+
+
+@contextmanager
+def _assume(extra: dict):
+    token = _EXTRA_ASSUMPTIONS.set(dict(extra))
+    try:
+        yield
+    finally:
+        _EXTRA_ASSUMPTIONS.reset(token)
+
+
+def ma_hindsight_flag(pre: pd.DataFrame, nxt: pd.DataFrame) -> dict:
+    """G6's acquisition rule (`calibrate.acquisition_flag`, the same code as the ex-ante flag) applied to the eight
+    OUTCOME quarters `nxt`: the hindsight variant of REVISION_PLAN_5, reported in one labelled side result only.
+
+    The four quarters before the cutoff are prepended so the first outcome quarter has its trailing revenue and its
+    q/q change. `legs` lists the deal columns the data provides (the size-jump leg is always evaluated); `flag` is
+    None without outcome quarters.
+    """
+    if nxt is None or len(nxt) == 0:
+        return {"flag": None, "legs": []}
+    both = pd.concat([pre.tail(4), nxt])
+    both = both[~both.index.duplicated(keep="last")]
+    g = _cal_mod.acquisition_flag(both, len(nxt))
+    legs = [c for c in ("acquisitions", "divestitures") if c in both] + ["size_jump"]
+    return {"flag": float(g["g6_flag"]), "legs": legs}
+
+
+def _panel_row(
+    hist: CompanyData,
+    origin: str,
+    full_data: CompanyData,
+    filed: dict,
+    fails: Failures,
+    tm: dict,
+    res: dict,
+    panel: list,
+    hind: dict,
+    scaled: bool,
+) -> None:
+    """One firm-year of the panel design, appended to `panel`. A calibration failure is recorded with its cutoff
+    and company (O4) and re-raised, so the panel stage counts it as before."""
+    fails.tried("calibrate", origin)
+    try:
+        with _timed(tm, "calibrate"):
+            p = calibrate(hist, macro_quarterly(origin), 12)
+    except Exception as e:
+        fails.fail("calibrate", e, origin)
+        res.setdefault("calib_failures", []).append(
+            {"origin": origin, "cik": res.get("cik"), "type": type(e).__name__, "msg": str(e)[:200]}
+        )
+        raise
+    raw = {**p, "sector_tol": 1.0}
+    with _timed(tm, "depth_grid"):
+        dg = {f"{d:.2f}": _run(raw, {**DEMAND, "sales_depth": d}, {}, 1000, 12, 7) for d in DEPTHS}
+    with _timed(tm, "base3"):
+        runs3 = {
+            "base": _run(raw, {}, {}, 1500, 12, 5),
+            "recession": _run(raw, PRESETS["recession"]["knobs"], {}, 1500, 12, 5),
+            "base_no_loops": _run(raw, {}, ABLATIONS["no_loops"], 1500, 12, 5),
+        }
+    feats = features(hist, p)
+    with _timed(tm, "outcome"):
+        outcome = _distress(hist, full_data.quarters, filed, fails)
+    with _timed(tm, "structural"):
+        st = structural(hist, raw, full_data.quarters, macro_quarterly(origin), fails=fails)
+    row: dict[str, Any] = {
+        "origin": origin,
+        **runs3,
+        "features": feats,
+        "outcome": outcome,
+        "structural": st,
+        # stress score under a generic demand shock of each depth (no market closure), so that `stats`
+        # can give each firm its industry's realized shock in any episode (2015-16, 2020, 2022)
+        "depth_grid": {k: v["health"] for k, v in dg.items()},
+        "rec_state0": p.get("rec_state0"),
+        "rec_realtime": realtime_recession(origin),
+        "selected": selected_assumptions(origin) or None,
+        # G6: the ex-ante flag of the calibration and the hindsight flag on the eight outcome quarters (every spec);
+        # `ma_scale_hindsight` marks the firm-years the FINTWIN_MA_HINDSIGHT side result calibrated with ma_scale
+        "ma_flag": p.get("g6_flag"),
+        "ma_flag_hindsight": hind["flag"],
+        "ma_hindsight_legs": hind["legs"],
+        "ma_scale_hindsight": scaled,
+        # P1: the firm's raw estimates and industry, from which `pool` builds the walk-forward priors (v4 specs)
+        "pool_inputs": p.get("pool_inputs"),
+        "industry": p.get("pool_industry"),
+        "pool_prior": pooled_prior(origin, p.get("pool_industry")) or None,
+    }
+    # P(cash + undrawn < 0 within 4 / 8 quarters) at each shock depth and under the Recession preset
+    row["liquidity"] = {
+        "grid": {k: [v.get("short4"), v.get("short8")] for k, v in dg.items()},
+        "recession": [row["recession"].get("short4"), row["recession"].get("short8")],
+        "base": [row["base"].get("short4"), row["base"].get("short8")],
+    }
+    panel.append(row)

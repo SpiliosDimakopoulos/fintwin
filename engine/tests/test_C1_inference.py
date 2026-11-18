@@ -515,7 +515,7 @@ def test_transmission_frame_uses_the_spec_point_forecast():
     assert df["T1_cfo"].tolist() == [17.0, 20.0] and df["T1sm_cfo"].tolist() == [20.0, 20.0]
     assert df["T0_fcf"].tolist() == [14.0, 20.0]
     assert df["S_x_cfo"].tolist() == [13.0, 20.0]
-    assert df["T1_cfo_w"].tolist() == [1.0, 1.0]  # worst cumulative stays path-based
+    assert df["T1_cfo_wraw"].tolist() == [1.0, 1.0]  # worst cumulative stays path-based (R6 floors T1_cfo_w at 0)
 
 
 def test_plan2_frame_uses_the_spec_point_forecast():
