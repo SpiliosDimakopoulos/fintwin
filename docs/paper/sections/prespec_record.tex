@@ -1,0 +1,81 @@
+\section{Pre-specification record}\label{app:prespec}
+% Moved verbatim from the main text (Section 5.1) on 18-11-2026; to be extended with revision plan 5.
+\emph{How far the record can be verified.} The plan and its supplements were committed to the project's git repository, which was kept private during the evaluation and published on 15 November 2026, after the full run. Git commit dates are set by the committer and no third party timestamped the plan, so the order of plan, code and results below rests on the repository history, not on an external registration. Before publication the history was rewritten once to replace the names of commenting researchers with roles; this changed two words of the plan and the commit identifiers, and the identifiers below are those of the published history, which the tag \repoid{rev3-history} keeps.
+
+The decision rule for the transmission hypothesis H2 was committed on 22 October 2026 (commit \repoid{460cdda}), before the full-sample run of the earlier evaluation \selfcitep{} on the EDGAR universe, and is unchanged; a first version of that evaluation had already reported a transmission test on S\&P~500 members, so the rule was written with those results known. The plan for this evaluation (\repoid{docs/REVISION\_PLAN\_3.md}, commit \repoid{b7d8c8e}, 28 October 2026) was committed before any of its code changes or runs. It lists the corrections, the specifications, the ladder, the tests of both pillars and their success criteria, and what the evaluation does not attempt. Three supplements followed. The first (commit \repoid{ba2f629}, the same day) fixed the definition of a realized shortfall, the merger exclusion and the walk-forward grids. The second (commit \repoid{e3c399b}, 10 November) was written after a timing probe of 60 firms that produced no test statistics; it added the confirmatory test of v3 against v2-pre, defined the ladder on the firm-years of a fixed sample of 1{,}000 firms, and kept the Monte Carlo design unchanged. A dry run of the whole pipeline on 300 firms and three cutoffs checked that every test ran. The third (\repoid{docs/review\_2026-10/RERUN5\_SUPPLEMENT.md}, commit \repoid{da78dd5}, 12 November) was written after that dry run's statistics had been computed and before any full-sample statistic; it classifies each later change as a bug fix or an analysis choice. The plan's rule that the dry run's statistics change no rule or constant was therefore not kept: the analysis choices below were made after they existed.
+
+The changes made after the plan are listed here because a reader cannot verify them from the plan alone.
+\begin{itemize}
+\item \emph{Code and data corrections.} Three rounds of code review on 11--12 November (commits \repoid{cfadfba}, \repoid{86da9e3}, \repoid{333079c}) added guards against non-finite values, corrected the annual leg of F2, and left zero-revenue quarters out of the seasonal factors (one firm's base revenue had been inflated 24-fold). They also changed the data layer, and with it the realized outcomes: a revenue tag reported as zero now falls back to a non-zero tag; the fourth quarter is the annual value minus the nine-month value from the same filing vintage (this changed the quarterly series of operating cash flow for 289 and of capex for 205 of 899 sampled companies); missing short-term investments count as zero in realized cash, as they already did in history (about 23\% of cash forecasts were previously lost); and quarterly log revenue growth is bounded at 50 against numerical overflow. A second dry run passed before the full run.
+\item \emph{Analysis choices in the third supplement.} The density criterion $p<0.05$ is applied one-sided, as the code already did; walk-forward candidates are scored on a common set of firm-years; and the corporate-family and non-accounting passes below were added.
+\item \emph{The decisive shortfall cell.} The plan names one shortfall test without saying which of its eight cells (two labels, two horizons, two scenario versions) decides. The third supplement chose the eight-quarter Recession cell of the shortfall label, on the ground that it is the only version with enough cutoff years for a year-block interval; the four-quarter Recession cell, however, has \ShortBlocksFour{} year blocks against \ShortBlocksEight. An internal planning note had named the realized-shock version. A rule added at the same time gives no verdict for cells with fewer than five year blocks, which excludes the realized-shock cells. The supplement also notes that the percentile year-block interval with five to eight blocks undercovers (about 85--88\% in simulation) and undertook to report a firm-block interval beside it: that interval is \ShortFirmLo{} to \ShortFirmHi. All eight cells have negative skill (the shortfall table of the paper).
+\item \emph{The 2015 shock.} The plan lists realized shocks at the February 2015, 2020 and 2022 cutoffs. The 2015 cutoff drops out of the realized-shock cells, because the rivals have no earlier observable labels to train on.
+\item \emph{Exploratory additions.} The two passes of the third supplement, added after a reader's comment, lie outside every confirmatory test: rivals that use no accounting data, and a pass in which co-registrants that share filings count as one firm.
+\end{itemize}
+Two choices predate this evaluation and condition it. The 16-quarter margin N3, which serves as the benchmark of the family, the combinations and the density test, was adopted as a base in the earlier evaluation after its first results showed it to be the most accurate rule; that evaluation's pre-specified base was the four-quarter margin N1. The ridge penalty of the out-of-sample logits is also inherited.
+
+The full run took place on 13--14 November 2026 on x86 servers, every stage on the same architecture. Each result records the shard code digest (\repoid{\ShardDigest}), the analysis digest (\repoid{\AnalysisDigest}), the lock file (\repoid{\LockDigest}) and the snapshot digest. Of the earlier attempts at the full run, one (11--12 November) produced outputs that were set aside before any change of the third supplement: only integrity checks (non-finite values, counts, units) were read from them, and none of its numbers is used; the others were lost before their outputs were retrieved. A few outputs that the plan lists are in the replication files but not in the paper: the reliability curves, the interval score, the per-firm Monte Carlo standard errors, the second point-forecast definition for v2-pre, and the model confidence set for FCF.
+
+\subsection{The corrections and how they were found}
+% Moved from the paper's introduction and Section 4.3 on 18-11-2026.
+A review of the code found implementation errors in the cost model, the cash-flow residual, the shock process and the data layer. Correcting errors after seeing results invites the suspicion of tuning. We therefore committed the corrections, the specifications to report and the decision rules to the repository before changing any code, list every later change and how far the record can be verified (this record), ran every specification on one frozen data snapshot, and report the old and corrected specifications side by side.
+
+A review of the code used in an earlier evaluation found places where the implementation did not do what its documentation or the accounting said. We listed the corrections and committed the list before any code changed. Most are bug fixes; F1 and F3 re-specify the cost model and add the tuned parameters $\tau$ and $\lambda$. Further corrections found by code review before the full run are listed in the first subsection of this record. The corrections of v3 are: the cost prior enters as a Bayesian posterior, so the data's weight rises with the number of quarters and the variance of revenue relative to the residual variance, with the prior's standard deviation $\tau$, on the scale of the fixed share of costs, chosen walk-forward (F1); operating leverage is estimated on four-quarter changes rather than on seasonal swings (F2); fixed costs adjust partially, at a rate $\lambda$ chosen walk-forward, to permanent changes in revenue (F3); the residual of operating cash flow and the tax rate are estimated with the same estimator on the same 16-quarter window (F5); missing depreciation is no longer counted twice (F4); the shock process, the materiality of interest coverage, the grid bounds and the recession drift are corrected (F6--F8, F10--F14); when a firm tags no maturity schedule, its debt matures in equal annual bullets over six years rather than amortizing (M3); and the point forecast is the median of each path's eight-quarter total rather than the sum of quarterly medians (E1). The labels F, M and E number the model corrections and D the data corrections in the plan, so that each one can be traced to its code and tests in the repository. The plan also defines extensions that are switched off in every test of this paper, in both pillars: parameter uncertainty (F9), covenants that cut revolver availability (M1), floating rates by sector (M2) and sector-specific shocks (M4). The data-layer corrections listed in the paper's Section~4.3 are D1--D13. The plan of the earlier evaluation, which had set 98\% as the target for the last quarter of each panel, is \repoid{docs/REVISION\_PLAN\_2.md}.
+
+In the largest explosive case of the paper's table of tails, \repoid{engine/scripts/diagnose\_tail.py} reproduces the simulated loss.
+
+\subsection{The second plan}
+% Moved from the paper's Section 9 on 18-11-2026.
+A second plan (\repoid{docs/REVISION\_PLAN\_4.md}) was written after the results of the first plan were known and before any result of the paper's Section~9 had been computed, with two exceptions it names: the winsorized mean-loss model confidence set and the firm-block interval of the shortfall test, which the first plan's code had already produced and which this record and the transmission section of the paper report. It was committed, timestamped with OpenTimestamps, now anchored in the Bitcoin blockchain, and published before its code was written. A second plan, published before its code was written, adds unconditional forecasts, a second model under the same protocol and the statistics the first plan omitted. Three dated addenda, each timestamped in the same way, record the implementation choices, one bug fix made after the first results had been read, and statistics that the plan lists but the first run had not computed. The bug: the density rival and the combination weight of the unconditional test had been trained on test years only, which also reduced the test years to 2020--2024. Before the fix the mean CRPS was 21.7 for the simulator against 15.7 for the rival, and the combination gain was 3.6\% in winsorized mean absolute error. The corrected run is reported. The simulations ran under the code, data and walk-forward choices of the full run, with one module added. The simulator's baseline health score reproduces that run exactly on all \PRepN{} firm-years.
+
+\subsection{Look-ahead, implementations kept for continuity, and releases}
+% Moved from the paper's limitations, appendix and data availability statement on 18-11-2026.
+Two inputs carry look-ahead that a code review found after the run. The winsorization limits behind the Holm-adjusted secondary $p$-values (the Holm table of the paper's appendix) are computed on all years, including the test year; a correction before the run moved the combinations in that family to training-year limits but left these $p$-values, and the confirmatory family uses training-year limits.
+
+The implementation of the combinations from the earlier evaluation (the appendix table of out-of-sample combinations) is kept for continuity; where its verdicts differ from the pre-specified implementation in the paper (winsorization at training-year bounds, firm$\times$year Diebold--Mariano and year-block bootstrap), the latter governs.
+
+\ifanon\else
+Sections 1--8 of the paper were produced by release 3.0.0, archived on Zenodo at \href{https://doi.org/10.5281/zenodo.24249768}{doi:10.5281/zenodo.24249768}; Section~9 and this version of the paper were produced at the repository tag \repoid{paper-r4}; later versions, which correct the look-ahead noted in the limitations and therefore change some numbers, appear under \href{https://doi.org/10.5281/zenodo.23434606}{doi:10.5281/zenodo.23434606}.
+\fi
+
+\subsection{Internal codes}\label{app:codes}
+% Moved from the paper on 18-11-2026: the paper uses the names, the plans, the replication files and the tables of this supplement use the codes.
+The tables of this supplement and the plans use the codes below; the paper uses the names. T0 is the simulator with its four feedback loops switched off and T1 the full simulator. The plan labels the density and shortfall tests B1 and B2; we use names to avoid a clash with the loops B1 and B2. The 19 forecasters of the model confidence set are the eight models, and the combinations N1+T1, N3+T1, N4+T1, N6+T1, N1+N3, N1+N6, N3+N6, N3+N1, N3+N2, N3+N5 and N3+T0; N1+N3 and N3+N1 span the same forecasts and their losses coincide, so the counts include one model twice.
+\begin{table}[!htbp]
+\centering\scriptsize
+\caption{Internal codes and the names used in the paper}
+\label{tab:codes}
+\begin{tabular}{lp{0.7\linewidth}}
+\toprule
+Code & Name in the paper \\
+\midrule
+N1, N2, N3 & the four-, eight- and 16-quarter margin \\
+N4 & the shrunk margin (four-quarter margin shrunk toward the industry median) \\
+N5 & the cash-revenue regression \\
+N6 & the regression with timing (with the change in revenue) \\
+T0, T1 & the loop-free simulator; the simulator (``Twin'' in tables) \\
+X+Y & base X plus a fraction $w$ of Y's departure from X (e.g.\ N3+T1: the margin plus the simulator) \\
+S1 & the test of v3 against v2-pre \\
+H1, H2, H3 & the ranking, transmission and feedback-loop hypotheses \\
+Pillar A & the transmission test \\
+Pillar B (B1, B2) & the distribution and stress tests (the density test, the shortfall test) \\
+Recession cell & the shortfall cell under the Recession preset \\
+ML1 & the second model: the pooled, walk-forward median regression \\
+L1, L2 & the first plan's shortfall label; the cleaner label without delisting notices \\
+F1 & the posterior cost prior \\
+F2 & operating leverage on four-quarter changes \\
+F3 & the fixed-cost adjustment \\
+F4 & missing depreciation no longer counted twice \\
+F5 & the consistent residual and tax \\
+F6--F8, F10--F14 & the shock process, the materiality of interest coverage, the grid bounds and the recession drift \\
+F9, M1, M2, M4 & extensions switched off: parameter uncertainty, covenants, floating rates by sector, sector-specific shocks \\
+M3 & equal annual bullets over six years when no maturity schedule is tagged \\
+E1 & the point forecast as the median of each path's eight-quarter total \\
+D1--D13 & the corrections to the data layer \\
+P4-1 A, P4-1 B & the unconditional point and density tests of the second plan \\
+P4-2 & the second model \\
+P4-7 & the recalibrated shortfall probabilities \\
+P4-8, P4-9 & the NBER look-ahead and the elasticity interval \\
+\bottomrule
+\end{tabular}
+\end{table}
