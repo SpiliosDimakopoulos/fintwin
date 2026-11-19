@@ -40,6 +40,9 @@ class Audit:
         self.examples: dict[str, list] = defaultdict(list)
         self.units: dict[str, set] = {}
         self.recorded: dict[str, set] = defaultdict(set)  # (firm, origin) with a recorded panel / company error
+        # REVISION_PLAN_5 G9: firm-years v3 cannot calibrate for a stale cash balance (non-finite cash0), which the
+        # v4 specifications' stale-balance rule rescues; an intended difference, counted apart, never RED
+        self.cash_stale: dict[str, set] = defaultdict(set)
         self.firms: dict[str, set] = defaultdict(set)
         self.rows: Counter = Counter()
 
@@ -61,6 +64,8 @@ class Audit:
             if len(origin) == 10 and origin[4] == "-" and origin[7] == "-":
                 self.recorded[run].add((t, origin))
                 self.rows[f"{run}:panel_errors"] += 1
+                if "non-finite calibrated parameters" in str(errs[k]) and "'cash0'" in str(errs[k]):
+                    self.cash_stale[run].add((t, origin))
         panel = r.get("panel") or []
         for pr in panel:
             self.units.setdefault(run, set()).add((t, pr.get("origin")))
@@ -136,6 +141,10 @@ class Audit:
                 if recorded:
                     self.warn[r][f"{len(recorded)} firm-years in another spec, a recorded error here"] += 1
                     self.examples[f"{r}:recorded unit diff"] = [list(m) for m in sorted(recorded)[:5]]
+                g9 = {m for m in recorded if m in self.cash_stale[r]} if any(x.startswith("v4") for x in present) else set()
+                if g9:
+                    self.warn[r][f"{len(g9)} firm-years: stale cash, rescued by G9 in a v4 spec (intended)"] += 1
+                    recorded = recorded - g9
                 if union and len(recorded) > max(MAX_RECORDED_DIFF_SHARE * len(union), 3):
                     self.red[r][f"{len(recorded)} firm-years fail here only (> {MAX_RECORDED_DIFF_SHARE:.0%})"] += 1
         return {
