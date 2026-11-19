@@ -475,3 +475,19 @@ Written during implementation and after an independent review of the code freeze
 - **Reproduction check.** It also requires the ARM v3-wf run to cover at least 99% of rerun 5's firm-years.
 - **Dividend payers.** A firm counts as a payer when it paid dividends in the four quarters before the cutoff. A firm
   that paid earlier but has four untagged quarters before the cutoff is a non-payer, and is counted.
+
+---
+
+# Addendum 2 (19-11-2026): platform
+
+Written before any plan-5 run or statistic. No plan-5 simulation has started.
+
+- **What happened.** From 18-11-2026 the probe waited about 12 hours for an ARM server (Hetzner cax, 8 and 16 GB),
+  across three attempts, and none became orderable. The author decided to run on x86.
+- **Platform.** Every stage of the plan-5 run, v3-wf included, now runs on x86 (Hetzner cpx, 16 GB). This replaces
+  "ARM" in the section "Data and runs". `p5_server.sh` refuses any other machine.
+- **Reproduction check.** It is unchanged, with the same thresholds. It now compares x86 against rerun 5's x86, so it
+  isolates the code changes from the platform.
+- **Cost.** About 3 times the ARM estimate, roughly 4–5 € for the full set. Actual hours and EUR are recorded in each
+  stage's metadata.
+- **Nothing else changes.**

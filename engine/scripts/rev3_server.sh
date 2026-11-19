@@ -25,7 +25,7 @@ uv sync --locked -q
 N=$(nproc --all)  # before the thread pinning: GNU nproc honours OMP_NUM_THREADS and would report 1
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 export FINTWIN_REQUIRE_SPEC=1  # every research command names its spec; the tests below run without this
-export SEC_USER_AGENT="${SEC_USER_AGENT:-FinTwin research spiliosdimakk@gmail.com}"
+[ -f .env ] && set -a && . ./.env && set +a  # SEC_USER_AGENT (the SEC contact) lives in the git-ignored .env
 mkdir -p out
 py() { uv run --quiet python "$@"; }
 t0=$(date +%s)

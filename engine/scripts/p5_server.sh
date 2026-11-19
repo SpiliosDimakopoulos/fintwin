@@ -9,7 +9,7 @@
 #   texttable  T2 ridge table from v4p-wf, then v4t
 #   sample     side results on 1,000 firms: G3 cash 30% / 45%, pool-only, G6 hindsight, text placebo and control
 #   stats      stats of every rung and the plan-5 comparisons (cross-spec), from the shards
-# Platform: ARM (Hetzner cax) for every stage, v3-wf included (REVISION_PLAN_5, "Platform"). The SEC contact comes
+# Platform: x86 (Hetzner cpx, --x86 --ram 16) for every stage, v3-wf included (REVISION_PLAN_5 addendum 2). The SEC contact comes
 # from engine/.env (SEC_USER_AGENT), never from this file.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -77,8 +77,8 @@ if src and src.get("code_digest") != meta["code_digest"]:
     sys.exit(f"code on the server ({meta['code_digest'][:12]}) differs from SOURCE.json ({src['code_digest'][:12]})")
 if src and src.get("dirty") and os.environ.get("FINTWIN_ALLOW_DIRTY") != "1":
     sys.exit(f"SOURCE.json: uncommitted changes {src.get('dirty_files')}: commit first")
-if meta["machine"] not in ("aarch64", "arm64"):
-    sys.exit(f"machine {meta['machine']}: every stage of the plan-5 run is ARM")
+if meta["machine"] != "x86_64":  # addendum 2: no ARM capacity for 20 h, so the run is x86 (rerun 5's platform)
+    sys.exit(f"machine {meta['machine']}: every stage of the plan-5 run is x86_64")
 for f in sorted(Path("out").glob("run_meta_*.json")):
     if f.name == f"run_meta_{sys.argv[1]}.json":
         continue
